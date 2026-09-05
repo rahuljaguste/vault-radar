@@ -1,0 +1,12 @@
+node_modules/
+.env
+.env.*
+!.env.example
+dist/
+.next/
+target/
+*.spkg
+.DS_Store
+*.log
+.claude/
+keys/
