@@ -1,10 +1,10 @@
 # VaultRadar — design spec
 
-Date: 2026-09-05. Event: ETHOnline 2026 (ETHGlobal), Start Fresh pool. Submission deadline: Sunday 2026-09-13, 12:00 EDT. Solo builder plus Claude Code.
+Date: 2026-09-05 (revised after independent review the same day). Event: ETHOnline 2026 (ETHGlobal), Start Fresh pool. Submission deadline: Sunday 2026-09-13, 12:00 EDT. Solo builder plus Claude Code.
 
 ## 1. One-line pitch
 
-VaultRadar is a machine-payable, cross-protocol vault-risk service: one standardized query across every Messari-schema protocol plus a new ERC-4626 Substreams module, sold per request over x402 on Hedera and Arc, consumed by a risk-monitor agent, with post-quantum-signed receipts and sealed (encrypted) requests so the vendor never learns the agent's portfolio.
+VaultRadar is a machine-payable, cross-protocol vault-risk service: one standardized query across every Messari-schema protocol plus a new ERC-4626 Substreams module, sold per request over x402 on Hedera and Arc, consumed by a risk-monitor agent. Requests and responses are sealed with post-quantum KEM so no intermediary learns the portfolio, a privacy tier lets the vendor learn only the protocol, and every receipt and data attestation is signed with ML-DSA-65 so it stays verifiable long after ECDSA is gone.
 
 ## 2. Prize targets and what each judge must see
 
@@ -12,23 +12,24 @@ Three partner picks (ETHGlobal caps a submission at three partners; all of a par
 
 | Partner / track | Must-show |
 |---|---|
-| The Graph — Composable / Standardized | One query template executed across N Messari deployments (yield-aggregator and lending schemas). A new ERC-4626 Substreams module composed from the Pinax `erc4626` package, deployed on two chains via The Graph Market. Explicit "what became easier" section in README. |
-| The Graph — AI Use Case (From Scratch) | Agent reasons over live Graph data and makes decisions; refuses to act on stale data. x402 pay-per-query (agent pays service; optional: service pays The Graph gateway via x402 on Base). One-prompt Substreams deployment using the Substreams Skills, recorded. |
-| Hedera — AI & Agentic Payments | Live x402-gated service on Hedera testnet settled through Blocky402. At least one real paid request end to end in the video. Extras: metered per-call pricing, HTS USDC settlement, ERC-8004 identity plus HCS-14 UAID, UCP discovery profile, HCS audit trail. |
-| Hedera — Improve the Harness | Open PR to `hedera-dev/hedera-harness`: fix ephemeral-signer HTS association (issue #15) and add an x402 probe-and-settle validation tier. Short clip linked from README. |
-| Arc — Agentic Economy | Agent built on Circle's Claude Agent SDK starter kit, pays via Gateway nanopayments on Arc testnet, decision logic tied to real signals (price, balance, freshness, privacy policy). Working frontend plus architecture diagram. |
-| Arc — Launch and Push to Mainnet | Same integration, with a mainnet config path documented and ready by 2026-09-30 (Arc mainnet opens 2026-09-16). |
+| The Graph — Composable / Standardized | One query template executed across N Messari deployments (yield-aggregator and lending schemas), pinned by deployment ID. A new ERC-4626 Substreams module composed from the Pinax `erc4626` package, running on two chains through The Graph Market. README section "what the standards made easier". |
+| The Graph — AI Use Case (From Scratch) | Agent reasons over live Graph data and makes decisions; independently refuses stale data. x402 pay-per-query (agent pays service; optional: service pays The Graph gateway via x402 on Base). One-prompt Substreams generation using the Substreams Skills, recorded honestly (see 5.2). |
+| Hedera — AI & Agentic Payments | Live x402-gated service on Hedera testnet settled through Blocky402. At least one real paid request end to end in the video. Extras: metered per-call pricing, HTS USDC settlement, ERC-8004 identity with the PQ key anchored on-chain, UCP discovery profile, HCS audit trail of commitments. |
+| Hedera — Improve the Harness | Open PR to `hedera-dev/hedera-harness` adding a Tier 3.5 `x402Probe` chain validator, branched from open PR #15 (ephemeral-signer HTS association). Tests, docs section, before/after evidence, 15-second clip inside the main video. |
+| Arc — Agentic Economy | Agent built on Circle's Claude Agent SDK starter kit, pays via Gateway nanopayments on Arc testnet, decision logic tied to real signals (price, balances, attestation age, privacy policy). Working frontend showing a live Arc payment, plus architecture diagram. |
+| Arc — Launch and Push to Mainnet | Same integration with a documented mainnet config path ready by 2026-09-30 (Arc mainnet opens 2026-09-16). |
 
-Finalist criteria (Technicality, Originality, Practicality, Usability, WOW): the PQ receipt and sealed-request layer is the WOW; the standards leverage is the practicality.
+Finalist criteria (Technicality, Originality, Practicality, Usability, WOW): the sealed-channel and PQ-receipt layer is the WOW; the standards leverage is the practicality.
 
 ## 3. Threat model for the privacy and PQ layer
 
-1. **Portfolio disclosure.** The vault list in a scan request reveals holdings to the vendor, to TLS terminators, hosting proxies and logs, and to anyone recording traffic for harvest-now-decrypt-later. Mitigation: sealed requests (ML-KEM based).
-2. **Unverifiable receipts.** Receipts signed with ECDSA cannot promise long-horizon verifiability to an auditor. Mitigation: ML-DSA-65 signatures over every receipt and attestation.
-3. **Audit trail that leaks.** A public HCS log of queries would leak customers' interests. Mitigation: HCS stores commitments (hashes plus signatures), never content.
-4. **Key substitution during discovery.** An attacker serving a fake agent card could swap keys. Mitigation: the ML-DSA public-key hash is bound in the ERC-8004 registration file that the on-chain identity points at; agent cards and receipts chain back to it.
+1. **Portfolio disclosure to intermediaries.** The vault list in a request, and the vault list plus verdicts in a response, pass TLS terminators, hosting proxies, logs, and traffic recorders positioned for harvest-now-decrypt-later. Mitigation: both request and response are sealed with a hybrid post-quantum KEM (section 5.4). The vendor itself does decrypt `scan` requests; only the `table` tier hides holdings from the vendor.
+2. **Replay of a captured envelope.** A third party replays a sealed request with its own payment to obtain the plaintext answer. Mitigation: the response is sealed to a client ephemeral key inside the envelope, the envelope binds the paying account, and the service rejects envelopes outside a 120-second window or with a seen nonce.
+3. **Unverifiable receipts.** ECDSA receipts cannot promise long-horizon verifiability to an auditor. Mitigation: ML-DSA-65 signatures over every receipt and attestation.
+4. **Audit trail that leaks.** A public HCS log of queries would leak customer interests. Mitigation: HCS stores commitments (hashes plus signatures), never content.
+5. **Key substitution during discovery.** A fake agent card could present a fake PQ key, and a registration file served from the same host cannot rule that out. Mitigation: the ML-DSA public-key hash is written on-chain as ERC-8004 metadata under the service's agent id; discovery reads it from the chain.
 
-Stated boundary (goes in README verbatim): x402 payment signatures (ECDSA on Hedera, EIP-3009 on Arc) and chain consensus remain classical. The PQ layer covers request confidentiality, the service's attestations, and the audit trail.
+README boundary statement, verbatim: "The ML-DSA key is anchored on-chain by an ECDSA-controlled account. A verifier that has fetched and pinned the key once can verify receipts indefinitely without trusting ECDSA again. The anchor protects discovery today; it does not stop a future quantum adversary from re-pointing the registry. x402 payment signatures and chain consensus remain classical. There is no forward secrecy against later compromise of the service's KEM seed."
 
 ## 4. Architecture
 
@@ -37,24 +38,25 @@ Stated boundary (goes in README verbatim): x402 payment signatures (ECDSA on Hed
                  │  Messari standardized subgraphs   The Graph Market      │
                  │  (yield 1.3.1, lending 3.1.0)     Substreams endpoint   │
                  └──────────┬──────────────────────────────┬───────────────┘
-                            │ GraphQL (Studio key / x402)  │ erc4626-vault-metrics.spkg
-                            ▼                              ▼  hosted sink → Postgres (Neon)
+                            │ GraphQL by deployment ID     │ erc4626-vault-metrics.spkg
+                            │ (Studio key / x402)          │ hosted sink → Postgres (Neon)
+                            ▼                              ▼
 ┌───────────────────────────────────────────────────────────────────────────┐
 │ packages/service  (Express)                                                │
 │  standardized query layer → unify → freshness → risk                       │
-│  /hedera/v1/*  x402 via @x402/express + Blocky402 (HBAR / HTS USDC)        │
-│  /arc/v1/*     x402 via @circle-fin/x402-batching (Gateway, USDC)          │
-│  PQ: ML-KEM open, ML-DSA-65 sign receipts/attestations/agent card          │
-│  HCS commitments  ·  ERC-8004 registration  ·  /.well-known/{agent,ucp}    │
+│  POST /hedera/v1/*  x402 via @x402/express + Blocky402 (HTS USDC / HBAR)   │
+│  POST /arc/v1/*     x402 via @circle-fin/x402-batching (Gateway, USDC)     │
+│  PQ: seal/open (ML-KEM-768+X25519), ML-DSA-65 receipts, attestations, card │
+│  HCS commitments · ERC-8004 identity + on-chain pq metadata · well-known   │
 └───────────────┬───────────────────────────────────────────┬───────────────┘
-                │ 402 → pay → 200 + receipt                 │ receipts (public commitments)
+                │ 402 → pay → 200 + sealed body + receipt   │ /v1/receipts (public commitments)
                 ▼                                           ▼
 ┌──────────────────────────────┐              ┌──────────────────────────────┐
 │ packages/agent (Claude Agent │              │ packages/dashboard (Next.js) │
-│ SDK, Circle starter kit)     │              │ catalog · freshness · scans  │
+│ SDK, Circle starter kit)     │              │ catalog · freshness · runs   │
 │ discover → quote → choose    │              │ payments per rail · HCS      │
-│ rail+tier → seal → pay →     │              │ receipt verification         │
-│ verify receipt → decide      │              └──────────────────────────────┘
+│ rail+tier → seal → pay →     │              │ receipt verifier             │
+│ open → verify → decide       │              └──────────────────────────────┘
 └──────────────────────────────┘
 ```
 
@@ -62,133 +64,169 @@ Monorepo (bun workspaces for TypeScript; Cargo for the Substreams module):
 
 ```
 vaultradar/
+  LICENSE                             MIT
+  .env.example                        every variable, documented
   substreams/erc4626-vault-metrics/   Rust Substreams package
-  packages/core/                      shared: schema types, query templates, unify, freshness, risk, pq, receipts
+  packages/core/                      schema types, query templates, unify, freshness, risk, pq, receipts
   packages/service/                   x402-gated API, identity, HCS
   packages/agent/                     Claude Agent SDK agent
-  packages/dashboard/                 Next.js thin UI
-  skills/vaultradar/SKILL.md          how an agent uses the service (also installable as a Claude Code skill)
+  packages/dashboard/                 Next.js UI
+  skills/vaultradar/SKILL.md          how an agent uses the service (installable as a Claude Code skill)
   scripts/                            verify-deployments, identity bootstrap, demo
-  docs/                               spec, architecture.md (mermaid diagram), FEEDBACK notes
+  docs/                               spec, architecture.md (mermaid), one-prompt.md
 ```
 
 ## 5. Components
 
 ### 5.1 Standardized data layer (`packages/core/standardized`)
 
-- **Deployment registry** `deployments.json`: curated Messari deployments with `{ protocol, chain, schema: "yield-aggregator" | "lending", subgraphId, status, headLagSeconds, verifiedAt }`. Initial candidates: Aave v3 (Ethereum, Base), Compound v3 (Ethereum), Spark (Ethereum), Morpho-Aave v3 (Ethereum), Euler (Ethereum), Yearn v2 (Ethereum, Arbitrum), Convex, Aura, Arrakis, Gamma. The `verify-deployments` script queries `_meta { block { number timestamp } hasIndexingErrors }` on each and writes `headLagSeconds` and `status`: `live` when lag is at most 60 minutes, `stale` when it is larger, `down` when the query fails or reports indexing errors. Stale and down deployments stay in the registry on purpose so the freshness guard can demonstrate itself on real data. The same 60-minute threshold is used per request (section 5.3).
-- **Query templates**, one per schema family, parameterized only by pagination: `yield.vaults` (Vault plus last 8 VaultDailySnapshot) and `lending.markets` (Market plus last 8 MarketDailySnapshot). Both include `_meta`. Exact field names are confirmed by schema introspection (`get_schema_by_deployment_id` or gateway introspection) in the first implementation task; the fields required are share price or exchange rate, TVL USD, input/output token, supply and deposit limits, snapshot timestamps and block numbers.
-- **Gateway client**: `https://gateway.thegraph.com/api/subgraphs/id/<ID>` with the Studio API key. Optional mode `UPSTREAM_X402=1` uses `@graphprotocol/client-x402` against `https://gateway.thegraph.com/api/x402/subgraphs/id/<ID>` paying USDC on Base ($0.01 per query); used only for the "no API keys anywhere" demo segment.
+- **Deployment registry** `deployments.json`: curated Messari deployments with `{ protocol, chain, schema: "yield-aggregator" | "lending", subgraphId, deploymentId, status, headLagSeconds, verifiedAt }`. Queries always use the pinned `deploymentId` via `https://gateway.thegraph.com/api/deployments/id/<Qm…>` so a subgraph re-point cannot silently change the data. Initial candidates: Aave v3 (Ethereum, Base), Compound v3 (Ethereum), Spark (Ethereum), Morpho-Aave v3 (Ethereum), Euler (Ethereum), Yearn v2 (Ethereum, Arbitrum), Convex, Aura, Arrakis, Gamma.
+- **Verification gate** (`scripts/verify-deployments.ts`, run on Sept 5 and before every demo): queries `_meta { block { number timestamp } hasIndexingErrors }` on each and writes `headLagSeconds` and `status`: `live` when lag is at most 60 minutes, `stale` when larger, `down` when the query fails or reports indexing errors. Stale and down deployments stay in the registry on purpose; the stale-refusal demo uses them. If fewer than three deployments are `live` on Sept 5, the Composable story rests on the Substreams pipeline on two chains plus the standardized query across whatever is live, and success criterion 3 is amended accordingly in the README.
+- **Query templates**, one per schema family, parameterized only by pagination: `yield.vaults` (Vault, last 24 VaultHourlySnapshot, last 8 VaultDailySnapshot) and `lending.markets` (Market, last 24 MarketHourlySnapshot, last 8 MarketDailySnapshot). Both include `_meta`. Exact field names are confirmed by schema introspection in the first implementation task; required fields are share price or exchange rate, TVL USD, input and output token, input token balance, output token supply, deposit limit (yield only), daily deposit and withdraw USD (lending), snapshot timestamps and block numbers.
+- **Gateway client**: bearer Studio API key. Optional mode `UPSTREAM_X402=1` uses `@graphprotocol/client-x402` against the gateway's x402 endpoints, paying USDC on Base ($0.01 per query); used only for the "no API keys anywhere" demo segment.
 
 ### 5.2 ERC-4626 Substreams module (`substreams/erc4626-vault-metrics`)
 
-- Rust package importing Pinax `erc4626` (its `map_events` decodes `Deposit`/`Withdraw` for every ERC-4626 vault by topic, no address list).
+- Rust package importing Pinax `erc4626` as a dependency (its `map_events` decodes `Deposit` and `Withdraw` for every ERC-4626 vault by topic, no address list).
+- `initialBlock` per chain set to about 28 days before head at deploy time (Ethereum: head minus 200k blocks; Base: head minus 1.2M blocks) so backfill fits the Market free tier and finishes in hours.
 - Modules:
-  - `map_vault_events`: consumes Pinax events; emits `VaultEvent { vault, block, timestamp, kind, sender, owner, assets, shares, implied_share_price }` with `implied_share_price = assets / shares` in decimal string form.
-  - `store_vault_state`: per-vault stores for cumulative assets deposited and withdrawn, cumulative shares minted and burned, last implied share price, last event block, and a distinct-depositor counter (set-if-not-exists on `vault:owner` plus a per-vault add store).
-  - `map_vault_metrics`: for vaults touched in the block, emits `VaultMetrics { chain_id, vault, block, timestamp, share_price, total_assets_est, total_shares_est, net_flow_assets, depositor_count, last_event_block }`. Every 300 blocks, for touched vaults, an `eth_call` batch to `totalAssets()` and `totalSupply()` refreshes an exact share price; results override the event-implied estimate.
-  - `db_out`: `DatabaseChanges` for `substreams-sink-sql` with `schema.sql` defining `vault_metrics` (primary key `chain_id, vault, block`) and `vault_latest` (primary key `chain_id, vault`).
-- Deployment: The Graph Market hosted sink to a Neon Postgres for Ethereum mainnet and Base. Fallback: `substreams-sink-sql` run locally against the same Market endpoint. Package published to substreams.dev as `erc4626-vault-metrics`.
-- Build path for the demo: generated with the Substreams Skills from a single prompt, then reviewed and tested; the prompt and the diff after review are both kept in `docs/one-prompt.md`.
+  - `map_vault_events`: consumes Pinax events; emits `VaultEvent { vault, block, timestamp, kind, sender, owner, assets, shares, implied_share_price }` with `implied_share_price = assets / shares` as a decimal string.
+  - `store_vault_meta` (set-if-not-exists, keyed by vault): on first sight of a vault, `eth_call` `asset()`, then `decimals()` and `symbol()` on the asset, and `decimals()` on the vault; stores `{ asset, asset_symbol, asset_decimals, share_decimals }`.
+  - `store_depositor_seen` (set-if-not-exists, keyed `vault:owner`) and `map_new_depositors` (reads that store's deltas, emits one record per CREATE) feeding `store_depositor_count` (add, keyed by vault). Two chained stores because a store module cannot read its own deltas.
+  - `store_vault_flows` (add, keyed by vault): cumulative assets deposited, assets withdrawn, shares minted, shares burned; plus `store_last_call_block` (set, keyed by vault).
+  - `map_vault_metrics`: for vaults touched in the block, emits `VaultMetrics { chain_id, vault, block, timestamp, share_price, share_price_source: "event" | "call", total_assets, total_supply, net_deposited_assets, net_flow_assets, depositor_count, last_event_block }`. When a vault is touched and `block − last_call_block ≥ 300`, an `eth_call` batch to `totalAssets()` and `totalSupply()` refreshes exact `share_price = totalAssets / totalSupply` (decimals-aware) and updates the store; otherwise `total_assets` and `total_supply` are null and `share_price` is event-implied. `net_deposited_assets` is cumulative deposits minus withdrawals and is never presented as TVL.
+  - `db_out`: `DatabaseChanges` for `substreams-sink-sql` with `schema.sql` defining `vault_metrics` (primary key `chain_id, vault, block`), `vault_latest` (primary key `chain_id, vault`), and `vault_meta`.
+- Deployment: The Graph Market hosted sink to a Neon Postgres for Ethereum mainnet and Base. Fallback: `substreams-sink-sql` run on the service host against the same Market endpoint. Package published to substreams.dev as `erc4626-vault-metrics` by Sept 7, because the hosted sink may require a published package.
+- Sink freshness comes from the sink's cursor block (stored in the sink's cursor table), not from a vault's `last_event_block`, so quiet vaults are not misreported as stale.
+- One-prompt demo, recorded honestly: the first generation from a single prompt (events plus SQL sink) is recorded as the one-prompt run and committed as-is; the stores, eth_calls and review fixes follow in later commits. `docs/one-prompt.md` keeps the prompt, the generated diff, and the follow-up diff. The README never claims the final module is one prompt.
 
 ### 5.3 Unified view, freshness, risk (`packages/core`)
 
-- `UnifiedVault { id: "<chainId>:<address>", kind: "yield-vault" | "lending-market" | "erc4626", protocol, chain, asset { symbol, decimals }, sharePrice, tvlUsd, history: [{ block, timestamp, sharePrice, tvlUsd }], sources: [{ kind: "messari" | "substreams", ref, block, timestamp, ageSeconds }], freshness: "fresh" | "stale" | "unavailable" }`.
-- Freshness: `fresh` if the newest source block is at most 60 minutes behind chain head for Messari and 5 minutes for Substreams; `stale` otherwise; `unavailable` if the query failed or `_meta.hasIndexingErrors` is true. Chain head comes from the JSON-RPC provider per chain, cached 15 s.
-- Risk flags: `share_price_drawdown` (1 h, 24 h, 7 d windows with thresholds 0.5 %, 2 %, 5 %), `tvl_outflow_24h` (net outflow above 20 % of TVL), `deposit_limit_reached`, `stale_data`. `RiskReport { vaultId, flags[], score 0–100, verdict: "ok" | "watch" | "alert" | "unavailable", evidence[] }`. Hard rule: if any source needed for a flag is `stale` or `unavailable`, the verdict is `unavailable` and evidence names the source and its age. No verdict is ever inferred from partial data.
+- `UnifiedVault { id: "<chainId>:<address>", kind: "yield-vault" | "lending-market" | "erc4626", protocol, chain, asset: { symbol, decimals } | null, sharePrice, tvlUsd: string | null, history: [{ block, timestamp, sharePrice, tvlUsd | null, netFlowAssets | null }], sources: [{ kind: "messari" | "substreams", ref, block, timestamp, ageSeconds }], freshness: "fresh" | "stale" | "unavailable" }`. All numerics are decimal strings.
+- Freshness: `fresh` if the source's reference block is at most 60 minutes behind chain head for Messari and 5 minutes for Substreams; `stale` otherwise; `unavailable` if the query failed or `_meta.hasIndexingErrors` is true. The Messari reference block is `_meta.block`; the Substreams reference block is the sink cursor. Chain head comes from the JSON-RPC provider per chain, cached 15 seconds; RPC failure marks every source on that chain `stale`.
+- Risk flags and per-schema definitions:
+  - `share_price_drawdown_1h`, `_24h`, `_7d`: relative drop in share price (yield `pricePerShare`, lending `exchangeRate`, erc4626 `share_price`) over the window, thresholds 0.5 %, 2 %, 5 %. The 1 h flag requires hourly data (hourly snapshots or Substreams history); without it the flag is skipped, not guessed.
+  - `tvl_outflow_24h`: yield uses the 24 h change in `inputTokenBalance` relative to the current balance; lending uses `dailyWithdrawUSD − dailyDepositUSD` relative to `totalDepositBalanceUSD`; erc4626 uses `net_flow_assets` over 24 h relative to `total_assets` (skipped when `total_assets` is null). Threshold 20 %.
+  - `deposit_limit_reached`: yield only, `inputTokenBalance ≥ depositLimit` when a limit is set.
+  - `stale_data`: any source not `fresh`.
+- Score: drawdown 1 h 30, 24 h 25, 7 d 20; outflow 25; deposit limit 10; sum capped at 100. Verdict: `ok` below 20, `watch` 20–49, `alert` 50 and above. Hard rule: if any source needed for a flag is `stale` or `unavailable`, the verdict is `unavailable` and evidence names the source and its age. No verdict is ever inferred from partial data.
+- `RiskReport { vaultId, flags: [{ name, value, threshold, window }], score, verdict, evidence: [{ source, block, timestamp, ageSeconds }] }`.
 
-### 5.4 PQ and receipt layer (`packages/core/pq`)
+### 5.4 PQ, sealing, and receipt layer (`packages/core/pq`)
 
 - Library: `@noble/post-quantum` 0.7.x only (public library; no code from prior projects).
-- Signatures: ML-DSA-65 (default; `PQ_SIG_ALG=falcon512` selectable). Service signing key generated at first boot, stored in `keys/` with mode 0600, public key and its SHA-256 hash published.
-- Sealed requests: service publishes a KEM public key. If the library exposes the X-Wing hybrid, use it; otherwise ML-KEM-768. Envelope `{ v: 1, kem: "xwing" | "ml-kem-768", ct, nonce, body }` where `body` is AES-256-GCM over canonical JSON of the request, key derived from the shared secret with HKDF-SHA-256 and info `"vaultradar/seal/v1"`. The vault count travels in a clear header `X-VR-Count` for pricing; identities stay sealed.
-- Canonical JSON: deterministic key ordering and no whitespace (RFC 8785 style) via a small internal canonicalizer; hashes are SHA-256 over canonical bytes.
-- Receipt: `{ v: 1, service: { erc8004: [{ chainId, agentId }], uaid }, request_hash, response_hash, sources: [{ ref, chainId, block, timestamp }], price: { amount, asset, rail }, payment: { rail: "hedera" | "arc", txId }, tier: "scan" | "table", issued_at, nonce, hcs: { topicId, sequence | null } }` plus `sig: { alg, pub_hash, value }`.
-- Attestation (one per vault in a response): `{ v: 1, vaultId, chainId, block, timestamp, sharePrice, tvlUsd, source }` plus `sig`. Portable: a second agent verifies against the published key without buying.
-- Verification tool: `bun run verify <receipt.json>` and an agent tool; both check signature, pub-hash binding to the ERC-8004 registration file, and recompute `response_hash` when the response body is present.
+- Keys: derived at boot from secrets `PQ_SIG_SEED` (32 bytes hex) and `PQ_KEM_SEED` (64 bytes hex) using the library's seeded key generation. No key material touches disk, so redeploys on Fly or Railway keep the same keys. Public keys and their SHA-256 hashes are published; `kid = SHA-256(kem_pk)[0..8]` identifies the KEM key in envelopes. KEM rotation is out of scope.
+- Signatures: ML-DSA-65 (FIPS 204), signature about 3.3 KB, public key about 2 KB. Signatures always travel in JSON bodies, never headers.
+- Sealing: hybrid KEM `ml_kem768_x25519` as exported by the library (the X-Wing style combiner), named `"ml-kem768-x25519"` in envelopes. Shared secret → HKDF-SHA-256 with info `"vaultradar/seal/v1"` → AES-256-GCM.
+- Request envelope: `{ v: 1, kem: "ml-kem768-x25519", kid, ct, nonce, body }` where `body` encrypts canonical JSON of `{ request, reply_pk, payer, ts, req_nonce }`. `reply_pk` is a client ephemeral KEM public key; `payer` is the paying account (Hedera account id or Arc address); `ts` is a Unix timestamp; `req_nonce` is 16 random bytes. The clear header `X-VR-Count` carries the vault count for pricing.
+- Response envelope: `{ sealed: { kem, ct, nonce, body }, receipt }` where `body` encrypts canonical JSON of `{ vaults, reports, attestations }` to `reply_pk`. In clear mode (no sealing), the response is `{ vaults, reports, attestations, receipt }` and the receipt records `sealed: false`.
+- Service checks before answering: `ts` within 120 seconds of server time, `req_nonce` not seen in the last 10 minutes, `payer` equals the payer in the verified payment payload the x402 middleware attaches to the request, and `X-VR-Count` equals `request.vaults.length`. Any failure returns 422 before settlement, so nothing is charged.
+- Canonical JSON: deterministic key ordering, no whitespace, all numerics as strings (avoids RFC 8785 float rules); a small internal canonicalizer. Hashes are SHA-256 over canonical bytes.
+- Receipt (signed): `{ v: 1, service: { erc8004: [{ chainId, agentId }] }, request_hash, response_hash, sealed, sources: [{ ref, chainId, block, timestamp }], price: { amount, asset, rail }, payment: { rail: "hedera" | "arc", txId }, tier: "scan" | "table", issued_at, nonce, hcs: { topicId } }` plus `sig: { alg, pub_hash, value }`. `request_hash` is SHA-256 of the canonical plaintext `request`, so the agent can recompute it; `response_hash` is SHA-256 of canonical `{ vaults, reports, attestations }`; `receipt_hash` is SHA-256 of the canonical receipt without `sig`. The HCS sequence number is not in the signed receipt; it is looked up by `receipt_hash`.
+- Attestation (one per vault in a response): `{ v: 1, vaultId, chainId, block, timestamp, sharePrice, tvlUsd, source }` plus `sig`. Individually signed, so it stays portable after the sealed response is opened.
+- Verification tool: `bun run verify <receipt.json> [response.json]` and an agent tool; both check the signature, the `pub_hash` against the on-chain ERC-8004 metadata, and recompute `response_hash` when the response body is present.
 
 ### 5.5 Service (`packages/service`)
 
-- Express, bun runtime, Node 22 compatible.
-- Public unpaid routes: `GET /.well-known/agent.json` (signed agent card: endpoints, prices, rails, PQ keys, ERC-8004 ids, UAID; signature in `X-VR-Signature`), `GET /.well-known/ucp` (UCP profile listing services and two x402 payment handlers), `GET /.well-known/erc8004.json` (registration file including `pq: { alg, pub_hash }`), `GET /v1/catalog` (covered protocols, vault count, prices), `GET /v1/receipts/:hash` (public commitment status including HCS sequence).
-- Paid routes, mounted twice under `/hedera/v1` and `/arc/v1`, same handlers:
-  - `POST /scan`: body is a sealed envelope or `{ vaults: ["<chainId>:<address>", ...] }` (clear mode allowed, flagged in the receipt). Price on Hedera: `$0.001 + $0.0005 × count` computed by the x402 v2 per-request price function reading `X-VR-Count`; the function also validates envelope structure so malformed sealed requests fail before payment. Price on Arc: Circle's middleware is static per route, so three bucketed routes `/scan/s` (1–5), `/scan/m` (6–20), `/scan/l` (21–100) at `$0.003`, `$0.01`, `$0.05`. Response: `{ vaults, reports, attestations, receipt }`.
-  - `POST /table`: body `{ protocol, chainId }`, flat `$0.01` on both rails. Returns every vault of that protocol with reports, attestations and receipt. Privacy tier: the vendor learns only the protocol.
-- Hedera rail: `@x402/express` + `@x402/core` + `@x402/hedera` at one pinned 2.x version; facilitator `https://api.testnet.blocky402.com`; settlement asset HTS USDC `0.0.429274` (HBAR route variant kept for the harness test). Arc rail: `@circle-fin/x402-batching` `createGatewayMiddleware` against Circle's testnet Gateway facilitator, network `eip155:5042002`.
-- After settlement: build and sign receipt, respond, then enqueue an HCS message `{ receipt_hash, sig, issued_at }` to the service topic via `TopicMessageSubmitTransaction`; retry with backoff; `GET /v1/receipts/:hash` reports the sequence number when confirmed.
-- Identity bootstrap `scripts/identity.ts`: create HCS topic; register in ERC-8004 IdentityRegistry `0x8004A818BFB912233c491871b3d84c89A494BD9e` on Hedera testnet (chain 296) and Arc testnet (chain 5042002) with `agentURI` pointing at `/.well-known/erc8004.json`; compute HCS-14 UAID with `@hashgraphonline/standards-sdk`; write ids to `service.config.json`.
+- Express on bun, Node 22 compatible. `express.json()` runs before every payment middleware so the x402 v2 request adapter's `getBody()` can validate envelopes in the price function.
+- Public unpaid routes (CORS `*` on these only): `GET /.well-known/agent.json` (agent card with endpoints, prices, rails, PQ public keys and hashes, ERC-8004 ids, UAID when present; `sig` inside the JSON body), `GET /.well-known/ucp` (UCP profile listing services and two x402 payment handlers), `GET /.well-known/erc8004.json` (registration file), `GET /v1/catalog`, `GET /v1/receipts/:hash` returning `{ receipt_hash, topicId, sequence | null, consensus_timestamp | null, initial_transaction_id | null }`.
+- Paid routes are registered by full path (`"POST /hedera/v1/scan"`, `"POST /arc/v1/scan/s"`, …) because the x402 adapter matches on the request path; handlers are shared functions.
+  - Hedera `POST /hedera/v1/scan`: price `$0.001 + $0.0005 × count` from the x402 v2 per-request price function reading `X-VR-Count`; the function also validates envelope structure. Asset HTS USDC `0.0.429274`. A `POST /hedera/v1/scan-hbar` variant prices in tinybars for the harness validator.
+  - Arc `POST /arc/v1/scan/s|m|l` for counts 1–5, 6–20, 21–100 at `$0.003`, `$0.01`, `$0.05`, because Circle's middleware is static per route.
+  - `POST /{hedera,arc}/v1/table`: body `{ protocol, chainId }` (sealed or clear), flat `$0.03` on both rails, a deliberate privacy premium so `table` is never cheaper than a sealed `scan`. Returns every vault of that protocol.
+- x402 v2 order of operations: the middleware verifies the payment before the handler and settles only after a 2xx. Consequence: 4xx from the handler costs the payer nothing, and the signed Hedera transfer's validity window bounds handler time, so upstream work is capped at 60 seconds and returns 504 (unsettled) beyond that.
+- Hedera rail: `@x402/express`, `@x402/core`, `@x402/hedera` pinned to one 2.x version; facilitator `https://api.testnet.blocky402.com`. Arc rail: `@circle-fin/x402-batching` `createGatewayMiddleware` against Circle's testnet Gateway facilitator, network `eip155:5042002`.
+- After settlement: enqueue an HCS message `{ receipt_hash, sig, issued_at }` (about 4.6 KB, five chunks) to the service topic via `TopicMessageSubmitTransaction`, retry with backoff; the mirror node's `chunk_info.initial_transaction_id` reassembles chunks. The receipt lookup reports the sequence when confirmed.
+- Identity bootstrap `scripts/identity.ts`: create the HCS topic; register in the ERC-8004 IdentityRegistry `0x8004A818BFB912233c491871b3d84c89A494BD9e` on Hedera testnet (chain 296, via Hashio with an ECDSA-alias account and explicit gas limit) and Arc testnet (chain 5042002, gas paid in native USDC) with `agentURI` pointing at `/.well-known/erc8004.json` and metadata `pq.sig.pubhash = <hex>` set in the same flow; compute an HCS-14 UAID with `@hashgraphonline/standards-sdk` if time allows; write ids to `service.config.json`.
 - Logging never includes decrypted bodies. Rate limit 60 requests per minute per IP on paid routes.
-- Hosting: any public host with a stable URL (Fly.io or Railway); testnet keys via environment variables; `.env.example` documents every variable.
+- Hosting: Fly.io or Railway with a stable public URL; all secrets via environment variables documented in `.env.example`.
 
 ### 5.6 Agent (`packages/agent`)
 
 - Derived from `circlefin/agent-stack-starter-kits` Claude Agent SDK variant (public starter kit). Model: latest Claude via the Anthropic API.
-- Wallets: Hedera testnet ECDSA account (`@x402/fetch` + `@x402/hedera` signer) and Arc testnet key with a Gateway deposit (`GatewayClient`). Circle CLI is used for the Arc wallet setup and balance checks.
-- Tools: `discover(url)` (fetch card, verify PQ signature, cross-check pub hash against the registration file and the on-chain `agentURI`), `quote(request)` (unpaid 402 probe per rail), `pay_and_scan(request, policy)` (choose rail by `rail_preference` and balances, choose tier by `privacy`, seal, pay, verify receipt, persist), `verify_receipt`, `explain`.
-- Policy file `policy.json`: `{ budget: { hbar, usdc_hedera, usdc_arc }, privacy: "strict" | "balanced" | "cheap", rail_preference: "cheapest" | "hedera" | "arc" }`. `strict` always buys `table`; `balanced` seals `scan`; `cheap` allows clear `scan`.
-- Behavior: given a watchlist or wallet, budget the session, buy data, reason over `RiskReport`s, and output a decision per vault (`hold`, `withdraw`, `rebalance`, `insufficient data`) with citations: block numbers, deployment or package refs, payment tx ids, receipt hash, HCS sequence. Any `unavailable` verdict yields `insufficient data`, never a guess.
-- Interfaces: CLI (`bun run agent watch --vaults ... --policy policy.json`) and an interactive chat mode. Optional tool: the official Subgraph MCP for ad-hoc deployment discovery.
+- Wallets: Hedera testnet ECDSA account (`@x402/fetch` + `@x402/hedera` signer) and Arc testnet key with a Gateway deposit (`GatewayClient`); the Circle CLI handles Arc wallet setup and balance checks.
+- Tools: `discover(url)` (fetch the card, verify its ML-DSA signature, read `pq.sig.pubhash` from ERC-8004 metadata on Hedera and Arc RPC, compare), `quote(request)` (unpaid 402 probe per rail), `pay_and_scan(request, policy)` (choose rail by `rail_preference` and balances, choose tier by `privacy`, seal with a fresh `reply_pk`, pay, open the response, verify the receipt and attestations, persist to `runs/<id>.json`), `verify_receipt`, `explain`.
+- Policy file `policy.json`: `{ budget: { hbar, usdc_hedera, usdc_arc }, privacy: "strict" | "balanced" | "cheap", rail_preference: "cheapest" | "hedera" | "arc", max_age_seconds }`. `strict` always buys `table`; `balanced` seals `scan`; `cheap` allows clear `scan`.
+- Independent freshness: the agent rejects any attestation whose `timestamp` is older than `max_age_seconds` by its own clock, regardless of the service's `freshness` field, and records the rejection as `insufficient data`.
+- Behavior: given a watchlist or wallet, budget the session, buy data, reason over `RiskReport`s, and output a decision per vault (`hold`, `withdraw`, `rebalance`, `insufficient data`) with citations: block numbers, deployment or package refs, payment tx ids, receipt hash, HCS sequence. Any `unavailable` verdict or rejected attestation yields `insufficient data`, never a guess.
+- Interfaces: CLI (`bun run agent watch --vaults … --policy policy.json`) and an interactive chat mode. Optional tool: the official Subgraph MCP for ad-hoc deployment discovery.
 
 ### 5.7 Dashboard (`packages/dashboard`)
 
-Next.js app reading the service's public endpoints and the agent's local JSON log. Pages: catalog and freshness per source, scans with verdicts and evidence, payments per rail with HashScan and Arcscan links, HCS commitments, and a receipt verifier (paste a receipt, see the PQ check). No auth. Satisfies Arc's "working frontend".
+Next.js app. Data sources: the service's public endpoints (catalog, receipts) fetched live, and agent runs from `runs/<id>.json` served by a route handler when run locally; for the hosted demo a sanitized run is committed as `public/demo-run.json`. Pages: catalog and freshness per source, runs with verdicts and evidence, payments per rail with HashScan and Arcscan links (must show a live Arc payment from `/v1/receipts`), HCS commitments, and a receipt verifier. No auth. Satisfies Arc's "working frontend".
 
 ### 5.8 Hedera Harness PR
 
-Fork `hedera-dev/hedera-harness`. Changes: associate HTS tokens for the ephemeral signer (issue #15); add a validation check that, given a URL, asserts an x402 v2 `PAYMENT-REQUIRED` for `hedera:testnet`, pays with the ephemeral signer through Blocky402, and confirms the settlement tx on the mirror node. Tests and README section included. PR opened before submission; link and a short clip in the VaultRadar README.
+Fork `hedera-dev/hedera-harness`, branch from open PR #15 (rebase when it merges). Add a Tier 3.5 `x402Probe` chain validator: given a URL, assert an x402 v2 `PAYMENT-REQUIRED` for `hedera:testnet`, pay with the ephemeral signer through Blocky402 (HBAR route), and confirm settlement on the mirror node. Include tests, a section in `docs/authoring-a-recipe.md`, and before/after evidence: a recipe whose x402 endpoint could not be validated before passes with the validator. Opened before submission; linked from the README with a 15-second segment in the main video.
 
-## 6. Data flow for one paid request
+## 6. Data flow for one paid request (Hedera rail)
 
-1. Agent calls `discover`; verifies the card's ML-DSA signature and the key binding via the ERC-8004 registration file and on-chain `agentURI`.
-2. Agent builds the scan request, seals it, and POSTs to `/hedera/v1/scan` with `X-VR-Count`.
-3. Service returns 402 with `PAYMENT-REQUIRED` (exact scheme, `hedera:testnet`, HTS USDC, amount from the price function).
-4. Agent signs a Hedera `TransferTransaction` whose transaction id names the Blocky402 fee payer, retries with `PAYMENT-SIGNATURE`.
-5. Middleware calls Blocky402 `/verify` and `/settle`; on success the handler runs.
-6. Handler opens the envelope, runs the standardized queries and the Postgres read, unifies, computes freshness and risk, signs attestations and the receipt, responds with `PAYMENT-RESPONSE` and the payload.
-7. Service enqueues the HCS commitment; agent verifies the receipt, stores it, reasons, and prints the decision.
+1. Agent calls `discover`; verifies the card's ML-DSA signature and the key binding against on-chain ERC-8004 metadata.
+2. Agent builds the request, generates `reply_pk`, seals `{ request, reply_pk, payer, ts, req_nonce }`, POSTs to `/hedera/v1/scan` with `X-VR-Count`.
+3. Middleware's price function validates envelope structure and returns 402 with `PAYMENT-REQUIRED` (exact scheme, `hedera:testnet`, HTS USDC, computed amount).
+4. Agent signs a Hedera `TransferTransaction` whose transaction id names the Blocky402 fee payer and retries with `PAYMENT-SIGNATURE`.
+5. Middleware calls Blocky402 `/verify`; on success the handler runs.
+6. Handler opens the envelope, checks `ts`, `req_nonce`, `payer` and count, runs standardized queries and the Postgres read (60-second cap), unifies, computes freshness and risk, signs attestations, seals `{ vaults, reports, attestations }` to `reply_pk`, signs the receipt, and responds 200.
+7. Middleware settles via Blocky402 `/settle` and adds `PAYMENT-RESPONSE` with the tx id.
+8. Service enqueues the HCS commitment; agent opens the response, verifies receipt and attestations, applies its own age check, reasons, and prints the decision.
 
-The Arc path differs only in steps 3 to 5: Gateway middleware, EIP-3009 authorization, batched settlement.
+The Arc path differs in steps 3 to 7: Gateway middleware, EIP-3009 authorization, batched settlement.
 
 ## 7. Error handling
 
-- Upstream subgraph error, timeout, or indexing errors: source marked `unavailable`; verdicts depending on it become `unavailable`; the receipt lists the failed source.
-- Substreams sink lag beyond 5 minutes: source `stale`; same rule.
-- Payment verify or settle failure: standard x402 402/4xx; agent retries once on transient errors, then reports.
-- Sealed envelope malformed: rejected at quote time (before payment). Decryption failure after payment: HTTP 422 with a receipt marked `error`; no refund path (documented limitation).
-- HCS submit failure: retried with backoff; the response is never blocked on HCS; `hcs.sequence` is null until confirmed.
-- Chain head RPC failure: freshness falls back to `stale` for all sources on that chain.
+- Upstream subgraph error, timeout, or indexing errors: source `unavailable`; dependent verdicts `unavailable`; the receipt lists the failed source.
+- Sink cursor more than 5 minutes behind head: Substreams source `stale`; same rule.
+- Envelope malformed at quote time: 400 before payment. Envelope fails `ts`, nonce, payer or count checks after verify: 422, no settlement, nothing charged.
+- Handler exceeds 60 seconds: 504, no settlement.
+- Payment verify or settle failure: standard x402 4xx; agent retries once on transient errors, then reports.
+- HCS submit failure: retried with backoff; responses never block on HCS; `sequence` stays null until confirmed.
+- Chain head RPC failure: every source on that chain `stale`.
 
 ## 8. Testing
 
-- Unit (bun test): canonical JSON, PQ sign/verify and seal/open round trips, freshness thresholds, risk rules including the "unavailable on partial data" rule, price function, receipt hash recomputation.
-- Substreams: `substreams run` over a fixed block range with a snapshot of expected `VaultMetrics` for two known vaults; `substreams gui` used for manual checks.
-- Integration (env-gated, live testnets): one paid `scan` on Hedera, one on Arc, receipt verification, HCS sequence confirmed via mirror node.
+- Unit (bun test): canonical JSON, seeded key derivation determinism, sign/verify and seal/open round trips for request and response, replay rejection (old `ts`, reused nonce, payer mismatch, count mismatch), freshness thresholds, risk rules including "unavailable on partial data", price function, receipt and response hash recomputation.
+- Substreams: `substreams run` over a fixed block range with a snapshot of expected `VaultMetrics` for two known vaults, one with an eth_call refresh; `substreams gui` for manual checks.
+- Integration (env-gated, live testnets): one paid sealed `scan` on Hedera, one on Arc, one `table`, receipt verification, HCS sequence confirmed via mirror node.
 - End to end: `scripts/demo.sh` runs discover, quote, paid scan on each rail, verification, and prints the decision; used for the video.
 
 ## 9. Deliverables and success criteria
 
 1. Real paid request on Hedera testnet via Blocky402, visible on HashScan, with an HCS commitment.
-2. Real paid request on Arc testnet via Gateway, visible on Arcscan.
-3. A scan returning at least three Messari-covered protocols plus at least one ERC-4626 vault not covered by Messari, all from live sources, with per-source block heights.
+2. Real paid request on Arc testnet via Gateway, visible on Arcscan and in the dashboard.
+3. A scan returning at least three Messari-covered protocols plus at least one ERC-4626 vault not covered by Messari, all from live sources with per-source block heights (amended per the Sept 5 verification gate if fewer than three Messari deployments are live).
 4. `erc4626-vault-metrics` published on substreams.dev and running through The Graph Market on two chains.
-5. ML-DSA-65 receipt verification and sealed-request round trip demonstrated.
-6. Agent decision with citations, and a demonstrated refusal on a stale deployment.
+5. Sealed request and sealed response round trip, ML-DSA-65 receipt verification, and on-chain key binding demonstrated.
+6. Agent decision with citations, and a demonstrated refusal on a stale deployment using the agent's own age check.
 7. Harness PR opened.
-8. README with architecture diagram, payment flow, "what the standards made easier", PQ boundary statement, run instructions; `SKILL.md`; 2–4 minute video with no AI voiceover; continuous commit history from 2026-09-04.
+8. README with architecture diagram, payment flow, "what the standards made easier", the boundary statement, run instructions; `LICENSE` (MIT); `.env.example`; `SKILL.md`; 2–4 minute video with no AI voiceover; continuous commit history from 2026-09-04.
 
-## 10. Schedule and cut order
+## 10. Schedule, day-one de-risking, cut order
 
 | Date | Focus |
 |---|---|
-| Sept 5 | Accounts and keys (Studio, Hedera, Arc, Circle CLI, Neon), verify deployments, hello-x402 paid request on Hedera, repo skeleton |
-| Sept 6–7 | Substreams module and hosted sink ∥ service data layer, Hedera rail, PQ receipts |
-| Sept 8–9 | Agent, sealed requests, policy ∥ dashboard ∥ Arc rail |
-| Sept 10 | HCS, identity, UCP, privacy tiers, harness PR |
-| Sept 11 | README, SKILL.md, diagram, tests, spkg publish, dry run |
+| Sept 5 | Accounts, keys and funding (section 12); repo skeleton; verify-deployments gate; HTS-USDC paid request through Blocky402 including association; `substreams run` with one eth_call against the Market endpoint and a hosted-sink deploy of any spkg into Neon |
+| Sept 6 | Arc hello-402 through Gateway; service data layer and unify ∥ Substreams events module (one-prompt run recorded) |
+| Sept 7 | Substreams stores, eth_calls, sink, spkg publish ∥ Hedera rail, PQ seal/open, receipts |
+| Sept 8 | Agent: discover, quote, pay, open, verify, policy ∥ dashboard skeleton ∥ Arc rail wired to shared handlers |
+| Sept 9 | HCS commitments, ERC-8004 registration with metadata, UCP profile, `table` tier; harness PR in the evening |
+| Sept 10 | Integration tests on live testnets, dashboard live data, SKILL.md, README draft |
+| Sept 11 | Architecture diagram, docs, dry run of `demo.sh`, fixes |
 | Sept 12 | Video, submission |
 
-Cut order if behind: harness PR, then privacy `table` tier, then Arc rail and dashboard, then sealed requests. PQ receipts are never cut.
+Day-one de-risk items, in order: the HTS-USDC paid request through Blocky402; a Substreams run with an eth_call plus a hosted-sink deploy into Neon; the count of live Messari deployments.
+
+Cut order if behind: HCS-14 UAID and the Falcon option; then the harness PR; then dashboard extras beyond the Arc requirement; then the Arc rail, only if its hello-402 has not succeeded by Sept 7. Never cut: `table`, receipts, sealing.
 
 ## 11. Out of scope
 
-On-chain PQ payment signatures; zero-knowledge proofs of risk computation; A2A negotiation; scheduled or streamed payments; ENS; mainnet money beyond a few dollars of USDC on Base for the optional upstream x402 demo.
+On-chain PQ payment signatures; zero-knowledge proofs of risk computation; A2A negotiation; scheduled or streamed payments; ENS; KEM key rotation and forward secrecy; mainnet money beyond a few dollars of USDC on Base for the optional upstream x402 demo.
+
+## 12. Account and funding prerequisites (Sept 5, builder)
+
+1. Subgraph Studio API key.
+2. Two Hedera testnet ECDSA accounts (service payTo and agent) from the portal faucet; both associate HTS USDC `0.0.429274`; agent account funded with testnet USDC from Circle's faucet (20 USDC per two hours).
+3. Circle developer account and CLI login; Arc testnet USDC from Circle's faucet for the agent, deposited to Gateway; separate native Arc testnet USDC in the ERC-8004 deployer account for gas.
+4. Hashio JSON-RPC access for the Hedera ECDSA-alias deployer, gas limit set explicitly (300k).
+5. Neon Postgres database, publicly reachable, for the hosted sink.
+6. substreams.dev login via GitHub for publishing; The Graph Market API key.
+7. Anthropic API key for the agent; Fly.io or Railway account for hosting.
