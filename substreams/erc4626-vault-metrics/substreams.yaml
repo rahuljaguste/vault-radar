@@ -31,12 +31,25 @@ modules:
       - map: erc4626:map_events
     output:
       type: proto:vaultradar.v1.VaultEvents
+  - name: store_vault_seen
+    kind: store
+    updatePolicy: set_if_not_exists
+    valueType: string
+    inputs:
+      - map: map_vault_events
+  - name: map_new_vaults
+    kind: map
+    inputs:
+      - store: store_vault_seen
+        mode: deltas
+    output:
+      type: proto:vaultradar.v1.NewDepositors
   - name: store_vault_meta
     kind: store
     updatePolicy: set_if_not_exists
     valueType: proto:vaultradar.v1.VaultMeta
     inputs:
-      - map: map_vault_events
+      - map: map_new_vaults
   - name: store_depositor_seen
     kind: store
     updatePolicy: set_if_not_exists

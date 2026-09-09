@@ -121,13 +121,41 @@ fn map_vault_events(
 }
 
 #[substreams::handlers::store]
-fn store_vault_meta(events: VaultEvents, s: StoreSetIfNotExistsProto<VaultMeta>) {
+fn store_vault_seen(events: VaultEvents, s: StoreSetIfNotExistsString) {
     let mut seen = HashSet::new();
     for e in events.events {
         if !seen.insert(e.vault.clone()) {
             continue;
         }
-        let v = addr(&e.vault);
+        s.set_if_not_exists(0, e.vault.clone(), &"1".to_string());
+    }
+}
+
+/// Reuses `NewDepositors`'s `{keys}` shape for a different payload: bare vault addresses seen
+/// for the first time this block, not `<vault>:<owner>` depositor composite keys. Same pattern
+/// as `map_new_depositors` (a `store_*_seen` set_if_not_exists store, read here in deltas mode
+/// and filtered to `Create`), applied to vaults instead of depositors so `store_vault_meta`
+/// below only ever attempts its eth_call batch once per vault, ever.
+#[substreams::handlers::map]
+fn map_new_vaults(deltas: Deltas<DeltaString>) -> Result<NewDepositors, substreams::errors::Error> {
+    Ok(NewDepositors {
+        keys: deltas
+            .into_iter()
+            .filter(|d| d.operation == substreams::pb::substreams::store_delta::Operation::Create)
+            .map(|d| d.key)
+            .collect(),
+    })
+}
+
+/// Fetches and caches `VaultMeta` the first (and only) time a vault is seen — see
+/// `map_new_vaults`. A vault whose `asset()` or `decimals()` call fails is never retried: this
+/// deliberately filters out topic-matched contracts that share the Deposit/Withdraw event
+/// signature but aren't actually ERC-4626 vaults, rather than polluting the store with a
+/// permanent garbage entry (`set_if_not_exists` can never be corrected later).
+#[substreams::handlers::store]
+fn store_vault_meta(new_vaults: NewDepositors, s: StoreSetIfNotExistsProto<VaultMeta>) {
+    for vault in new_vaults.keys {
+        let v = addr(&vault);
         let Ok(r) = RpcBatch::new()
             .add(f::Asset {}, v.clone())
             .add(f::Decimals {}, v)
@@ -135,26 +163,42 @@ fn store_vault_meta(events: VaultEvents, s: StoreSetIfNotExistsProto<VaultMeta>)
         else {
             continue;
         };
-        let asset = RpcBatch::decode::<_, f::Asset>(&r.responses[0]).unwrap_or_default();
-        let share_dec = RpcBatch::decode::<_, f::Decimals>(&r.responses[1])
-            .unwrap_or_else(|| BigInt::from(18u64));
-        let (sym, adec) = match RpcBatch::new()
+        let Some(asset) = RpcBatch::decode::<_, f::Asset>(&r.responses[0]) else {
+            substreams::log::info!("vault {}: asset() call failed, not caching meta", vault);
+            continue;
+        };
+        let Some(share_dec) = RpcBatch::decode::<_, f::Decimals>(&r.responses[1]) else {
+            substreams::log::info!("vault {}: decimals() call failed, not caching meta", vault);
+            continue;
+        };
+        let Ok(a) = RpcBatch::new()
             .add(f::Symbol {}, asset.clone())
             .add(f::Decimals {}, asset.clone())
             .execute()
-        {
-            Ok(a) => (
-                RpcBatch::decode::<_, f::Symbol>(&a.responses[0]).unwrap_or_default(),
-                RpcBatch::decode::<_, f::Decimals>(&a.responses[1])
-                    .unwrap_or_else(|| BigInt::from(18u64)),
-            ),
-            Err(_) => (String::new(), BigInt::from(18u64)),
+        else {
+            continue;
+        };
+        let Some(sym) = RpcBatch::decode::<_, f::Symbol>(&a.responses[0]) else {
+            substreams::log::info!(
+                "vault {}: asset {} symbol() call failed, not caching meta",
+                vault,
+                hex0x(&asset)
+            );
+            continue;
+        };
+        let Some(adec) = RpcBatch::decode::<_, f::Decimals>(&a.responses[1]) else {
+            substreams::log::info!(
+                "vault {}: asset {} decimals() call failed, not caching meta",
+                vault,
+                hex0x(&asset)
+            );
+            continue;
         };
         s.set_if_not_exists(
             0,
-            format!("meta:{}", e.vault),
+            format!("meta:{}", vault),
             &VaultMeta {
-                vault: e.vault.clone(),
+                vault: vault.clone(),
                 asset: hex0x(&asset),
                 asset_symbol: sym,
                 asset_decimals: adec.to_u64() as u32,
@@ -239,10 +283,27 @@ fn store_last_call(
         else {
             continue;
         };
-        let ta =
-            RpcBatch::decode::<_, f::TotalAssets>(&r.responses[0]).unwrap_or_else(BigInt::zero);
-        let tsup =
-            RpcBatch::decode::<_, f::TotalSupply>(&r.responses[1]).unwrap_or_else(BigInt::zero);
+        let Some(ta) = RpcBatch::decode::<_, f::TotalAssets>(&r.responses[0]) else {
+            substreams::log::info!(
+                "vault {}: totalAssets() call failed, not refreshing",
+                e.vault
+            );
+            continue;
+        };
+        let Some(tsup) = RpcBatch::decode::<_, f::TotalSupply>(&r.responses[1]) else {
+            substreams::log::info!(
+                "vault {}: totalSupply() call failed, not refreshing",
+                e.vault
+            );
+            continue;
+        };
+        if tsup.is_zero() {
+            // A zero-supply vault has no meaningful share price; writing "0" here would let
+            // map_vault_metrics report it as an eth_call-verified reading instead of what it
+            // actually is (no valid price to verify).
+            substreams::log::info!("vault {}: totalSupply() is zero, not refreshing", e.vault);
+            continue;
+        }
         let price = ratio(&ta.to_string(), &tsup.to_string())
             .expect("ratio: BigInt::to_string() output is always a valid decimal integer");
         s.set(
