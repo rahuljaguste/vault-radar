@@ -13,9 +13,9 @@ use num_bigint::BigUint;
 use num_traits::Zero;
 use substreams::scalar::BigInt;
 use substreams::store::{
-    DeltaString, Deltas, StoreAdd, StoreAddBigInt, StoreAddInt64, StoreGet, StoreGetBigInt,
-    StoreGetInt64, StoreGetProto, StoreGetString, StoreNew, StoreSet, StoreSetIfNotExists,
-    StoreSetIfNotExistsProto, StoreSetIfNotExistsString, StoreSetString,
+    DeltaProto, DeltaString, Deltas, StoreAdd, StoreAddBigInt, StoreAddInt64, StoreGet,
+    StoreGetBigInt, StoreGetInt64, StoreGetProto, StoreGetString, StoreNew, StoreSet,
+    StoreSetIfNotExists, StoreSetIfNotExistsProto, StoreSetIfNotExistsString, StoreSetString,
 };
 use substreams_ethereum::pb::eth::v2::Block;
 use substreams_ethereum::rpc::RpcBatch;
@@ -26,7 +26,8 @@ use pb::vaultradar::v1::{
     NewDepositors, VaultEvent, VaultEvents, VaultMeta, VaultMetrics, VaultMetricsList,
 };
 
-/// A vault gets a fresh `totalAssets`/`totalSupply` eth_call at most once every this many blocks.
+/// A vault gets a fresh `totalAssets`/`totalSupply` eth_call on first sight, and then at most
+/// once every this many blocks thereafter (see `store_last_call`).
 const CALL_EVERY: u64 = 300;
 
 fn hex0x(b: &[u8]) -> String {
@@ -38,15 +39,19 @@ fn addr(v: &str) -> Vec<u8> {
     hex::decode(v.trim_start_matches("0x")).unwrap_or_default()
 }
 
-/// Deterministic per-vault phase in `[0, CALL_EVERY)`.
+/// Deterministic per-vault phase in `[0, CALL_EVERY)`: the periodic (non-first-sight) trigger
+/// used by `store_last_call`.
 ///
 /// A `store` module is not allowed to depend on itself (Substreams rejects that as a graph
 /// cycle: https://docs.substreams.dev/reference-material/manifest-and-components/inputs), so
 /// `store_last_call` cannot read back "the block I last called this vault at" to throttle
 /// itself. This computes a stand-in that needs no memory at all: each vault gets a fixed slot
-/// mod `CALL_EVERY` derived from its own address, so `store_last_call` refreshes it at most
-/// once every `CALL_EVERY` blocks (whenever it next has an event on its slot), and different
-/// vaults land on different blocks instead of all refreshing in lockstep.
+/// mod `CALL_EVERY` derived from its own address, so the periodic trigger fires at most once
+/// every `CALL_EVERY` blocks (whenever it next has an event on its slot), and different vaults
+/// land on different blocks instead of all refreshing in lockstep. On its own this starves
+/// rarely-touched vaults (a vault touched once a day has only a 1-in-`CALL_EVERY` chance per
+/// touch of landing on its slot), so `store_last_call` also fires unconditionally on a vault's
+/// first sighting — see there.
 fn call_phase(vault: &str) -> u64 {
     addr(vault)
         .iter()
@@ -200,14 +205,30 @@ fn store_vault_flows(events: VaultEvents, s: StoreAddBigInt) {
     }
 }
 
+/// Refreshes a vault's cached `totalAssets`/`totalSupply`/share price via eth_call when either:
+/// (a) this block contains a CREATE delta for the vault's `store_vault_meta` key
+///     (`meta:<vault>`) — i.e. this is the first block the vault has ever been seen in, so
+///     every vault gets at least one ground-truth reading instead of relying purely on chance
+///     alignment with `call_phase`; or
+/// (b) `call_phase(vault)` says this block is the vault's periodic refresh slot.
 #[substreams::handlers::store]
-fn store_last_call(events: VaultEvents, s: StoreSetString) {
+fn store_last_call(
+    events: VaultEvents,
+    meta_deltas: Deltas<DeltaProto<VaultMeta>>,
+    s: StoreSetString,
+) {
+    let first_sight: HashSet<String> = meta_deltas
+        .into_iter()
+        .filter(|d| d.operation == substreams::pb::substreams::store_delta::Operation::Create)
+        .filter_map(|d| d.key.strip_prefix("meta:").map(str::to_string))
+        .collect();
     let mut done = HashSet::new();
     for e in events.events {
         if !done.insert(e.vault.clone()) {
             continue;
         }
-        if e.block % CALL_EVERY != call_phase(&e.vault) {
+        let due = first_sight.contains(&e.vault) || e.block % CALL_EVERY == call_phase(&e.vault);
+        if !due {
             continue;
         }
         let v = addr(&e.vault);

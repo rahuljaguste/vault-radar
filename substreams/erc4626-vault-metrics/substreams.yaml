@@ -68,6 +68,8 @@ modules:
     valueType: string
     inputs:
       - map: map_vault_events
+      - store: store_vault_meta
+        mode: deltas
   - name: map_vault_metrics
     kind: map
     inputs:
