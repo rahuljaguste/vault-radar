@@ -38,3 +38,11 @@ test("deposit limit reached adds 10", () => {
   const r = computeRisk(mk({ inputTokenBalance: "100", depositLimit: "100" }), now);
   expect(r.score).toBe(10); expect(r.flags[0].name).toBe("deposit_limit_reached");
 });
+test("deposit limit flag echoes exact atomic strings beyond Number.MAX_SAFE_INTEGER", () => {
+  const bigBal = "123456789012345678901234567890";
+  const bigLim = "100000000000000000000000000000";
+  const r = computeRisk(mk({ inputTokenBalance: bigBal, depositLimit: bigLim }), now);
+  const flag = r.flags.find(f => f.name === "deposit_limit_reached");
+  expect(flag?.value).toBe(bigBal);
+  expect(flag?.threshold).toBe(bigLim);
+});

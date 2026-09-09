@@ -26,6 +26,15 @@ const WINDOWS: { name: FlagName; min: number; max: number; threshold: number; we
 
 const num = (s: string | null | undefined) => (s == null ? null : Number(s));
 const fmt = (n: number) => n.toFixed(6);
+const isPlainInt = (s: string) => /^\d+$/.test(s);
+// bal/lim are Number()-parsed above for the outflow ratio and the >= check,
+// which loses precision for atomic balances beyond Number.MAX_SAFE_INTEGER
+// (e.g. an 18-decimal token). The deposit-limit flag both compares and
+// echoes these values, so compare the raw strings exactly via BigInt when
+// both are plain non-negative integers (the normal case for atomic-unit
+// balances); fall back to the Number comparison used elsewhere only if
+// either string isn't a plain integer.
+const gteExact = (a: string, b: string): boolean => (isPlainInt(a) && isPlainInt(b) ? BigInt(a) >= BigInt(b) : Number(a) >= Number(b));
 
 export function computeRisk(v: UnifiedVault, nowTs: number): RiskReport {
   const evidence = v.sources.map(s => ({ source: `${s.kind}:${s.ref}`, block: s.block, timestamp: s.timestamp, ageSeconds: s.ageSeconds }));
@@ -50,7 +59,7 @@ export function computeRisk(v: UnifiedVault, nowTs: number): RiskReport {
     if (out >= 0.2) { flags.push({ name: "tvl_outflow_24h", value: fmt(out), threshold: "0.200000", window: "24h" }); score += 25; }
   }
   const lim = num(v.depositLimit);
-  if (lim && bal != null && bal >= lim) { flags.push({ name: "deposit_limit_reached", value: fmt(bal), threshold: fmt(lim), window: "now" }); score += 10; }
+  if (lim && bal != null && gteExact(v.inputTokenBalance!, v.depositLimit!)) { flags.push({ name: "deposit_limit_reached", value: v.inputTokenBalance!, threshold: v.depositLimit!, window: "now" }); score += 10; }
   score = Math.min(100, score);
   const verdict: Verdict = score >= 50 ? "alert" : score >= 20 ? "watch" : "ok";
   return { vaultId: v.id, flags, score, verdict, evidence };
