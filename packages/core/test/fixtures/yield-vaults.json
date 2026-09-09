@@ -1,0 +1,25 @@
+{
+  "_meta": { "block": { "number": 19000000, "timestamp": 1760000000 }, "hasIndexingErrors": false },
+  "vaults": [
+    {
+      "id": "0xabc0000000000000000000000000000000000a",
+      "name": "Test Yield Vault",
+      "inputToken": { "id": "0xdef1000000000000000000000000000000000b", "symbol": "USDC", "decimals": 6 },
+      "outputToken": { "id": "0xout1000000000000000000000000000000000c", "symbol": "yvUSDC" },
+      "pricePerShare": "1.05",
+      "outputTokenPriceUSD": "1.05",
+      "totalValueLockedUSD": "1050000.00",
+      "inputTokenBalance": "1000000000000",
+      "outputTokenSupply": "952380952380",
+      "depositLimit": "5000000000000",
+      "hourlySnapshots": [
+        { "blockNumber": "19000100", "timestamp": "1759999900", "pricePerShare": "1.0499", "totalValueLockedUSD": "1049800.00", "inputTokenBalance": "999900000000" },
+        { "blockNumber": "19000050", "timestamp": "1759996300", "pricePerShare": "1.0495", "totalValueLockedUSD": "1049000.00", "inputTokenBalance": "999500000000" }
+      ],
+      "dailySnapshots": [
+        { "blockNumber": "18999000", "timestamp": "1759913600", "pricePerShare": "1.048", "totalValueLockedUSD": "1040000.00", "inputTokenBalance": "995000000000" },
+        { "blockNumber": "18995000", "timestamp": "1759827200", "pricePerShare": "1.045", "totalValueLockedUSD": "1030000.00", "inputTokenBalance": "990000000000" }
+      ]
+    }
+  ]
+}

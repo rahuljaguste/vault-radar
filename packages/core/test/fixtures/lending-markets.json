@@ -1,0 +1,24 @@
+{
+  "_meta": { "block": { "number": 19000000, "timestamp": 1760000000 }, "hasIndexingErrors": false },
+  "markets": [
+    {
+      "id": "0xdef0000000000000000000000000000000000d",
+      "name": "Test Lending Market",
+      "inputToken": { "id": "0xusdc00000000000000000000000000000000e", "symbol": "USDC", "decimals": 6 },
+      "outputToken": { "id": "0xausdc0000000000000000000000000000000f", "symbol": "aUSDC" },
+      "exchangeRate": "1.023",
+      "totalValueLockedUSD": "2050000.00",
+      "totalDepositBalanceUSD": "2200000.00",
+      "totalBorrowBalanceUSD": "150000.00",
+      "inputTokenBalance": "2200000000000",
+      "hourlySnapshots": [
+        { "blockNumber": "19000100", "timestamp": "1759999900", "exchangeRate": "1.0229", "totalValueLockedUSD": "2049500.00", "totalDepositBalanceUSD": "2199500.00", "hourlyDepositUSD": "5000.00", "hourlyWithdrawUSD": "3000.00" },
+        { "blockNumber": "19000050", "timestamp": "1759996300", "exchangeRate": "1.0227", "totalValueLockedUSD": "2048000.00", "totalDepositBalanceUSD": "2198000.00", "hourlyDepositUSD": "4000.00", "hourlyWithdrawUSD": "4500.00" }
+      ],
+      "dailySnapshots": [
+        { "blockNumber": "18999000", "timestamp": "1759913600", "exchangeRate": "1.020", "totalValueLockedUSD": "2040000.00", "totalDepositBalanceUSD": "2190000.00", "dailyDepositUSD": "50000.00", "dailyWithdrawUSD": "30000.00" },
+        { "blockNumber": "18995000", "timestamp": "1759827200", "exchangeRate": "1.018", "totalValueLockedUSD": "2030000.00", "totalDepositBalanceUSD": "2180000.00", "dailyDepositUSD": "40000.00", "dailyWithdrawUSD": "45000.00" }
+      ]
+    }
+  ]
+}
