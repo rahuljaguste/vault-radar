@@ -3,3 +3,4 @@ export * from "./canonical";
 export * from "./util/bytes";
 export * from "./pq/keys";
 export * from "./pq/sign";
+export * from "./pq/seal";
