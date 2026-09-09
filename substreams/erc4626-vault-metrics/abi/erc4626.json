@@ -1,0 +1,7 @@
+[
+ {"type":"function","name":"asset","inputs":[],"outputs":[{"name":"","type":"address"}],"stateMutability":"view"},
+ {"type":"function","name":"totalAssets","inputs":[],"outputs":[{"name":"","type":"uint256"}],"stateMutability":"view"},
+ {"type":"function","name":"totalSupply","inputs":[],"outputs":[{"name":"","type":"uint256"}],"stateMutability":"view"},
+ {"type":"function","name":"decimals","inputs":[],"outputs":[{"name":"","type":"uint8"}],"stateMutability":"view"},
+ {"type":"function","name":"symbol","inputs":[],"outputs":[{"name":"","type":"string"}],"stateMutability":"view"}
+]

@@ -1,0 +1,33 @@
+specVersion: v0.1.0
+package:
+  name: erc4626_vault_metrics
+  version: v0.1.0
+  url: https://github.com/rahuljaguste/vaultradar
+  doc: ERC-4626 vault share price, flows and depositor metrics composed from the Pinax erc4626 events package.
+imports:
+  erc4626: https://github.com/pinax-network/substreams-evm/raw/main/spkg/erc4626-v0.1.0.spkg
+  # sql protodefs intentionally omitted here: substreams-sink-sql-protodefs-v1.0.7.spkg (the
+  # latest protodefs release, Nov 2023) fails `substreams protogen` on its own, with no other
+  # imports present, under substreams CLI 1.22.0: "could not reparse image: proto:
+  # google.protobuf.FieldOptions: unable to resolve extension 2200: file
+  # sf/substreams/sink/sql/v1/deprecated.proto has a name conflict over
+  # sf.substreams.sink.sql.v1.Service". Task 13 (db_out / SQL sink) should build DatabaseChanges
+  # with the `substreams-database-change` crate (crates.io, v4.x) instead of importing this spkg,
+  # or re-check for a newer protodefs release before reintroducing the import.
+protobuf:
+  files: [vaultradar/v1/vault.proto]
+  importPaths: [./proto]
+binaries:
+  default:
+    type: wasm/rust-v1
+    file: ./target/wasm32-unknown-unknown/release/erc4626_vault_metrics.wasm
+network: mainnet
+modules:
+  - name: map_vault_events
+    kind: map
+    initialBlock: 25742000
+    inputs:
+      - source: sf.ethereum.type.v2.Block
+      - map: erc4626:map_events
+    output:
+      type: proto:vaultradar.v1.VaultEvents

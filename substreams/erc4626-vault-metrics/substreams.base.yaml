@@ -1,0 +1,27 @@
+specVersion: v0.1.0
+package:
+  name: erc4626_vault_metrics
+  version: v0.1.0
+  url: https://github.com/rahuljaguste/vaultradar
+  doc: ERC-4626 vault share price, flows and depositor metrics composed from the Pinax erc4626 events package.
+imports:
+  erc4626: https://github.com/pinax-network/substreams-evm/raw/main/spkg/erc4626-v0.1.0.spkg
+  # sql protodefs intentionally omitted: see substreams.yaml for why (protodefs-v1.0.7 fails
+  # `substreams protogen` standalone under substreams CLI 1.22.0).
+protobuf:
+  files: [vaultradar/v1/vault.proto]
+  importPaths: [./proto]
+binaries:
+  default:
+    type: wasm/rust-v1
+    file: ./target/wasm32-unknown-unknown/release/erc4626_vault_metrics.wasm
+network: base
+modules:
+  - name: map_vault_events
+    kind: map
+    initialBlock: 49899000
+    inputs:
+      - source: sf.ethereum.type.v2.Block
+      - map: erc4626:map_events
+    output:
+      type: proto:vaultradar.v1.VaultEvents
