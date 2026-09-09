@@ -26,6 +26,30 @@ test("lending market uses exchangeRate and net flow from withdraw−deposit", ()
   expect(m.history[0].netFlowAssets).toBe("2000.00");
 });
 
+test("lending history stays timestamp-descending after merging hourly and daily series", () => {
+  const [m] = mapLendingMarkets(d("lending"), lendFx, Number(lendFx._meta.block.timestamp) + 10);
+  expect(m.history.map(h => h.timestamp)).toEqual(["1759999900", "1759996300", "1759913600", "1759827200"]);
+  expect(m.history.map(h => h.netFlowAssets)).toEqual(["2000.00", "-500.00", "20000.00", "-5000.00"]);
+});
+
+test("yield net flow is diffed within each series (hourly-vs-hourly, daily-vs-daily), never across the hourly/daily boundary", () => {
+  const [v] = mapYieldVaults(d("yield-aggregator"), yieldFx, Number(yieldFx._meta.block.timestamp) + 10);
+  expect(v.history.map(h => h.timestamp)).toEqual(["1759999900", "1759996300", "1759913600", "1759827200"]);
+  // Newest hourly point diffs against the previous (older) hourly point, same series.
+  expect(v.history[0].netFlowAssets).toBe("400000000");
+  // Oldest hourly point has no older hourly point to diff against: null, NOT a value
+  // computed against the newest daily point (999500000000 - 995000000000 = 4500000000
+  // is what the old cross-series-by-array-position bug would have produced here).
+  expect(v.history[1].netFlowAssets).toBeNull();
+  // Newest daily point diffs against the previous (older) daily point, same series.
+  expect(v.history[2].netFlowAssets).toBe("5000000000");
+  // Oldest daily point has no older daily point to diff against.
+  expect(v.history[3].netFlowAssets).toBeNull();
+  for (let i = 1; i < v.history.length; i++) {
+    expect(Number(v.history[i - 1].timestamp)).toBeGreaterThanOrEqual(Number(v.history[i].timestamp));
+  }
+});
+
 test("missing snapshot arrays degrade to empty history instead of throwing", () => {
   const noSnaps = { ...yieldFx, vaults: [{ ...yieldFx.vaults[0], hourlySnapshots: undefined, dailySnapshots: undefined }] };
   const [v] = mapYieldVaults(d("yield-aggregator"), noSnaps, Number(yieldFx._meta.block.timestamp) + 10);

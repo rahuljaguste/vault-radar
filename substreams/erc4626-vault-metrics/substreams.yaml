@@ -1,0 +1,129 @@
+specVersion: v0.1.0
+package:
+  name: erc4626_vault_metrics
+  version: v0.1.0
+  url: https://github.com/rahuljaguste/vaultradar
+  doc: ERC-4626 vault share price, flows and depositor metrics composed from the Pinax erc4626 events package.
+imports:
+  erc4626: https://github.com/pinax-network/substreams-evm/raw/main/spkg/erc4626-v0.1.0.spkg
+  database_change: https://github.com/streamingfast/substreams-sink-database-changes/releases/download/v2.1.1/substreams-sink-database-changes-v2.1.1.spkg
+  # sql/sink_sql protodefs intentionally omitted: substreams-sink-sql-protodefs-v1.0.7.spkg (the
+  # latest protodefs release, Nov 2023) fails `substreams protogen` on its own, with no other
+  # imports present, under substreams CLI 1.22.0: "could not reparse image: proto:
+  # google.protobuf.FieldOptions: unable to resolve extension 2200: file
+  # sf/substreams/sink/sql/v1/deprecated.proto has a name conflict over
+  # sf.substreams.sink.sql.v1.Service" (see Task 11/12 reports). `db_out` below builds
+  # DatabaseChanges via the `substreams-database-change` crate + the `database_change` import
+  # above, which sidesteps that broken spkg entirely. `sink.type` below is a plain config
+  # string consumed by the sink tooling, not a `proto:`-prefixed type reference, so it needs no
+  # matching import.
+  #
+  # Pinned to v2.1.1, not the v1.3.1/v1.2.1 the task brief's controller ruling named: v1.x's
+  # `Tables` type has no `upsert_row` (only `update_row`, which the sink's proto documents as a
+  # real SQL UPDATE with no upsert fallback — wrong for `vault_latest`, see src/lib.rs), and more
+  # fundamentally, `substreams-database-change` 1.3.1 depends on `substreams 0.5`/`prost 0.11`,
+  # which collide with this package's own `substreams 0.6`/`prost 0.13` (see Cargo.toml): the
+  # `#[substreams::handlers::map]` macro requires `db_out`'s return type to implement *our*
+  # `prost::Message`, which a 1.3.1-built `DatabaseChanges` categorically cannot (verified via a
+  # real `cargo build` failure, not a version guess). `substreams-database-change` 2.1.x is the
+  # oldest line that depends on `substreams ^0.6`/`prost ^0.13` (matching ours exactly, confirmed
+  # via crates.io dependency metadata) and has `upsert_row`; 3.0.0+ requires `substreams ^0.7`,
+  # a wider bump than this task should make to shared dependencies. The spkg here is pinned to
+  # the same 2.1.1 release as the Cargo.toml crate so the manifest-side proto type and the
+  # runtime wire encoding are generated from identical sources, not just wire-compatible ones.
+protobuf:
+  files: [vaultradar/v1/vault.proto]
+  importPaths: [./proto]
+binaries:
+  default:
+    type: wasm/rust-v1
+    file: ./target/wasm32-unknown-unknown/release/erc4626_vault_metrics.wasm
+network: mainnet
+modules:
+  - name: map_vault_events
+    kind: map
+    initialBlock: 25742000
+    inputs:
+      - source: sf.ethereum.type.v2.Block
+      - map: erc4626:map_events
+    output:
+      type: proto:vaultradar.v1.VaultEvents
+  - name: store_vault_seen
+    kind: store
+    updatePolicy: set_if_not_exists
+    valueType: string
+    inputs:
+      - map: map_vault_events
+  - name: map_new_vaults
+    kind: map
+    inputs:
+      - store: store_vault_seen
+        mode: deltas
+    output:
+      type: proto:vaultradar.v1.NewDepositors
+  - name: store_vault_meta
+    kind: store
+    updatePolicy: set_if_not_exists
+    valueType: proto:vaultradar.v1.VaultMeta
+    inputs:
+      - map: map_new_vaults
+  - name: store_depositor_seen
+    kind: store
+    updatePolicy: set_if_not_exists
+    valueType: string
+    inputs:
+      - map: map_vault_events
+  - name: map_new_depositors
+    kind: map
+    inputs:
+      - store: store_depositor_seen
+        mode: deltas
+    output:
+      type: proto:vaultradar.v1.NewDepositors
+  - name: store_depositor_count
+    kind: store
+    updatePolicy: add
+    valueType: int64
+    inputs:
+      - map: map_new_depositors
+  - name: store_vault_flows
+    kind: store
+    updatePolicy: add
+    valueType: bigint
+    inputs:
+      - map: map_vault_events
+  - name: store_last_call
+    kind: store
+    updatePolicy: set
+    valueType: string
+    inputs:
+      - map: map_vault_events
+      - store: store_vault_meta
+        mode: deltas
+  - name: map_vault_metrics
+    kind: map
+    inputs:
+      - map: map_vault_events
+      - store: store_vault_meta
+      - store: store_depositor_count
+      - store: store_vault_flows
+      - store: store_last_call
+    output:
+      type: proto:vaultradar.v1.VaultMetricsList
+  - name: db_out
+    kind: map
+    inputs:
+      - params: string
+      - map: map_vault_metrics
+      - store: store_vault_meta
+        mode: deltas
+    output:
+      type: proto:sf.substreams.sink.database.v1.DatabaseChanges
+params:
+  db_out: "1"
+sink:
+  module: db_out
+  type: sf.substreams.sink.sql.v1.Service
+  config:
+    schema: "./schema.sql"
+    engine: postgres

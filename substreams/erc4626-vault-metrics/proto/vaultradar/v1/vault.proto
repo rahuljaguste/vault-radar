@@ -1,0 +1,16 @@
+syntax = "proto3";
+package vaultradar.v1;
+message VaultEvents { repeated VaultEvent events = 1; }
+message VaultEvent {
+  string vault = 1; uint64 block = 2; uint64 timestamp = 3; string kind = 4;
+  string sender = 5; string owner = 6; string assets = 7; string shares = 8;
+  string implied_share_price = 9; string tx_hash = 10; uint32 log_index = 11;
+}
+message VaultMetricsList { repeated VaultMetrics metrics = 1; }
+message VaultMetrics {
+  string vault = 1; uint64 block = 2; uint64 timestamp = 3; string share_price = 4; string share_price_source = 5;
+  string total_assets = 6; string total_supply = 7; string net_deposited_assets = 8; string net_flow_assets = 9;
+  uint64 depositor_count = 10; uint64 last_event_block = 11;
+}
+message VaultMeta { string vault = 1; string asset = 2; string asset_symbol = 3; uint32 asset_decimals = 4; uint32 share_decimals = 5; }
+message NewDepositors { repeated string keys = 1; }
