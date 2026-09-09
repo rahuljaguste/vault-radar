@@ -12,6 +12,10 @@ function enc(v: unknown): string {
   if (typeof v === "bigint") return v.toString();
   if (Array.isArray(v)) return "[" + v.map(x => enc(x === undefined ? null : x)).join(",") + "]";
   if (typeof v === "object") {
+    const proto = Object.getPrototypeOf(v);
+    if (proto !== Object.prototype && proto !== null) {
+      throw new Error("canonical JSON: unsupported object type");
+    }
     const o = v as Record<string, unknown>;
     const keys = Object.keys(o).filter(k => o[k] !== undefined).sort();
     return "{" + keys.map(k => JSON.stringify(k) + ":" + enc(o[k])).join(",") + "}";
