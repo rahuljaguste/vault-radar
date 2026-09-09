@@ -10,3 +10,8 @@ target/
 *.log
 .claude/
 keys/
+.worktrees/
+.superpowers/
+runs/
+substreams/**/target/
+packages/dashboard/.next/
