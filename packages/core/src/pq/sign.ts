@@ -13,8 +13,8 @@ export function attachSig<T extends object>(obj: T, keys: { secretKey: Uint8Arra
   const { sig: _drop, ...body } = obj as T & { sig?: Sig };
   return { ...(body as T), sig: { alg: SIG_ALG, pub_hash: keys.pubHash, value: signJson(body, keys.secretKey) } };
 }
-export function checkSig<T extends { sig?: Sig }>(obj: T, publicKey: Uint8Array): boolean {
-  if (!obj.sig || obj.sig.alg !== SIG_ALG) return false;
+export function checkSig<T extends { sig?: Sig }>(obj: T | null | undefined, publicKey: Uint8Array): boolean {
+  if (!obj || typeof obj !== "object" || !obj.sig || obj.sig.alg !== SIG_ALG) return false;
   const { sig, ...body } = obj;
   return verifyJson(body, sig.value, publicKey);
 }
