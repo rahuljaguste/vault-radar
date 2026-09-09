@@ -6,8 +6,13 @@ package:
   doc: ERC-4626 vault share price, flows and depositor metrics composed from the Pinax erc4626 events package.
 imports:
   erc4626: https://github.com/pinax-network/substreams-evm/raw/main/spkg/erc4626-v0.1.0.spkg
-  # sql protodefs intentionally omitted: see substreams.yaml for why (protodefs-v1.0.7 fails
-  # `substreams protogen` standalone under substreams CLI 1.22.0).
+  database_change: https://github.com/streamingfast/substreams-sink-database-changes/releases/download/v2.1.1/substreams-sink-database-changes-v2.1.1.spkg
+  # sql/sink_sql protodefs intentionally omitted: see substreams.yaml for why (protodefs-v1.0.7
+  # fails `substreams protogen` standalone under substreams CLI 1.22.0). `db_out` below builds
+  # DatabaseChanges via the `substreams-database-change` crate + the `database_change` import
+  # above instead. Pinned to v2.1.1 (not the brief's v1.x): see substreams.yaml for why (no
+  # `upsert_row` in 1.x, and 1.x's `substreams 0.5`/`prost 0.11` collide with this package's own
+  # `substreams 0.6`/`prost 0.13`, a real `cargo build` failure, not a preference).
 protobuf:
   files: [vaultradar/v1/vault.proto]
   importPaths: [./proto]
@@ -87,3 +92,20 @@ modules:
       - store: store_last_call
     output:
       type: proto:vaultradar.v1.VaultMetricsList
+  - name: db_out
+    kind: map
+    inputs:
+      - params: string
+      - map: map_vault_metrics
+      - store: store_vault_meta
+        mode: deltas
+    output:
+      type: proto:sf.substreams.sink.database.v1.DatabaseChanges
+params:
+  db_out: "8453"
+sink:
+  module: db_out
+  type: sf.substreams.sink.sql.v1.Service
+  config:
+    schema: "./schema.sql"
+    engine: postgres
