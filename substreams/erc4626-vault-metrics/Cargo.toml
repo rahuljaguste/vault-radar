@@ -18,6 +18,13 @@ num-traits = "0.2"
 # ethabi::{encode,decode,ParamType} by crate name. Pinned to the same 17.x line that
 # substreams-ethereum 0.10 pulls in transitively, so only one ethabi version is compiled.
 ethabi = "17"
+# Pinned to the same 2.1.1 release as the `database_change` spkg import in the manifests (see
+# the comment there): 2.1.x is the oldest line with both `upsert_row` (needed for `vault_latest`)
+# and a `substreams ^0.6`/`prost ^0.13` dependency matching our own pins above exactly, so there
+# is only one copy of each in the build (a 1.x/0.5/0.11 pin fails to compile at all, since our
+# `#[substreams::handlers::map]` macro requires `db_out`'s return type to implement *our*
+# `prost::Message`).
+substreams-database-change = "2.1.1"
 
 [build-dependencies]
 substreams-ethereum = "0.10"
@@ -26,3 +33,15 @@ substreams-ethereum = "0.10"
 lto = true
 opt-level = "s"
 strip = "debuginfo"
+
+[lints.clippy]
+# db_out (src/lib.rs) takes a `params: string` input, i.e. a plain `String` handler argument.
+# substreams-macro 0.6.4 expands any `String`-typed argument into an `unsafe { String::from_raw_
+# parts(...) }` block inside the macro-generated `pub extern "C" fn` wrapper, which is sound
+# (it's the same pointer/length marshalling every other decoded argument goes through, just via
+# a different, safe-looking-at-the-call-site helper for non-String types) but trips this lint
+# because the wrapper itself isn't marked `unsafe fn`. It cannot be silenced with a function-level
+# `#[allow(...)]` on the handler: the macro never forwards the original function's attributes onto
+# the item it generates (confirmed by reading substreams-macro-0.6.4/src/handler.rs), so this is
+# the only place the suppression can actually attach.
+not_unsafe_ptr_arg_deref = "allow"

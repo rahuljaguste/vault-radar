@@ -17,6 +17,8 @@ use substreams::store::{
     StoreGetBigInt, StoreGetInt64, StoreGetProto, StoreGetString, StoreNew, StoreSet,
     StoreSetIfNotExists, StoreSetIfNotExistsProto, StoreSetIfNotExistsString, StoreSetString,
 };
+use substreams_database_change::pb::database::DatabaseChanges;
+use substreams_database_change::tables::Tables;
 use substreams_ethereum::pb::eth::v2::Block;
 use substreams_ethereum::rpc::RpcBatch;
 
@@ -372,4 +374,109 @@ fn map_vault_metrics(
         });
     }
     Ok(VaultMetricsList { metrics: out })
+}
+
+/// Builds the SQL sink's `DatabaseChanges` for one block: an append-only `vault_metrics` history
+/// row per touched vault this block, an upserted `vault_latest` snapshot per touched vault, and a
+/// `vault_meta` row the one time each vault's metadata is first cached.
+///
+/// `vault_latest` uses `upsert_row` (native `OPERATION_UPSERT`, backed by Postgres
+/// `INSERT ... ON CONFLICT DO UPDATE`), not `create_row`/`update_row`: a vault's very first touch
+/// needs an insert and every touch after that needs an update against the same `(chain_id,
+/// vault)` primary key, and `db_out` has no cheap local signal for which case it is. This is why
+/// the crate is pinned to 2.1.1 rather than the 1.x line — see Cargo.toml and the manifest's
+/// `database_change` import comment for the (real, compile-error-verified) reason 1.x can't do
+/// this at all.
+//
+// `db_out` is this package's only handler with a plain `String` argument (the `params: string`
+// input, i.e. `chain_id`). `substreams-macro` 0.6.4 expands any `String`-typed handler parameter
+// to `let chain_id: String = ManuallyDrop::new(unsafe { String::from_raw_parts(ptr, len, len) })
+// .to_string();` inside the generated `pub extern "C" fn` wrapper (confirmed by reading
+// substreams-macro-0.6.4/src/handler.rs's `is_string` branch directly) — an inner `unsafe` block
+// operating on a raw pointer, inside an outer function that isn't itself marked `unsafe`. Every
+// other handler here decodes its arguments via `substreams::proto::decode_ptr`, a safe function
+// call with no caller-visible `unsafe`, so this is the first (and only) function in the crate to
+// hit clippy's `not_unsafe_ptr_arg_deref`. `cargo build` succeeds and the generated code is sound
+// standard FFI string marshalling (the pointer/length pair comes straight from the Substreams
+// WASM host, exactly like every other decoded argument) — this is a macro/lint interaction we
+// don't control the generated code for, not a real unsafety finding. A function-level
+// `#[allow(...)]` here cannot fix it: `build_map_handler` in the macro never forwards the
+// original function's attributes onto the generated wrapper item, so the lint is suppressed
+// crate-wide instead, in Cargo.toml's `[lints.clippy]` table (see the comment there).
+#[substreams::handlers::map]
+fn db_out(
+    chain_id: String,
+    m: VaultMetricsList,
+    meta: Deltas<DeltaProto<VaultMeta>>,
+) -> Result<DatabaseChanges, substreams::errors::Error> {
+    let mut t = Tables::new();
+    for x in m.metrics {
+        let history = t.create_row(
+            "vault_metrics",
+            [
+                ("chain_id", chain_id.clone()),
+                ("vault", x.vault.clone()),
+                ("block", x.block.to_string()),
+            ],
+        );
+        history
+            .set("timestamp", x.timestamp)
+            .set("share_price", &x.share_price)
+            .set("share_price_source", &x.share_price_source)
+            .set("net_deposited_assets", &x.net_deposited_assets)
+            .set("net_flow_assets", &x.net_flow_assets)
+            .set("depositor_count", x.depositor_count)
+            .set("last_event_block", x.last_event_block);
+        // total_assets/total_supply are only populated when map_vault_metrics sourced this row
+        // from an eth_call; an empty string means "no call this block" and must land as SQL NULL.
+        if !x.total_assets.is_empty() {
+            history.set("total_assets", &x.total_assets);
+        }
+        if !x.total_supply.is_empty() {
+            history.set("total_supply", &x.total_supply);
+        }
+
+        let key = [("chain_id", chain_id.clone()), ("vault", x.vault.clone())];
+        let latest = t.upsert_row("vault_latest", key);
+        latest
+            .set("block", x.block)
+            .set("timestamp", x.timestamp)
+            .set("share_price", &x.share_price)
+            .set("net_deposited_assets", &x.net_deposited_assets)
+            .set("depositor_count", x.depositor_count)
+            .set("last_event_block", x.last_event_block);
+        // Unlike vault_metrics above, skipping .set() here on an event-sourced (empty) reading
+        // does NOT null out a previous call-sourced value already in vault_latest: the sink's
+        // upsert only assigns columns present in this change (`ON CONFLICT DO UPDATE SET
+        // total_assets=EXCLUDED.total_assets, ...` simply omits total_assets/total_supply from
+        // that list when we never called .set), so an older figure is left in place rather than
+        // cleared. That's the desired behavior for a "latest known state" table — call-sourced
+        // reads happen roughly every 300 blocks (see store_last_call), so always nulling this on
+        // the many event-sourced blocks in between would make the column useless for a live
+        // dashboard. Verified against a real Postgres instance: two upserts on the same primary
+        // key produce exactly one row holding the most recent explicitly-set values.
+        if !x.total_assets.is_empty() {
+            latest.set("total_assets", &x.total_assets);
+        }
+        if !x.total_supply.is_empty() {
+            latest.set("total_supply", &x.total_supply);
+        }
+    }
+
+    for d in meta
+        .into_iter()
+        .filter(|d| d.operation == substreams::pb::substreams::store_delta::Operation::Create)
+    {
+        let v = d.new_value;
+        t.create_row(
+            "vault_meta",
+            [("chain_id", chain_id.clone()), ("vault", v.vault.clone())],
+        )
+        .set("asset", &v.asset)
+        .set("asset_symbol", &v.asset_symbol)
+        .set("asset_decimals", v.asset_decimals)
+        .set("share_decimals", v.share_decimals);
+    }
+
+    Ok(t.to_database_changes())
 }
