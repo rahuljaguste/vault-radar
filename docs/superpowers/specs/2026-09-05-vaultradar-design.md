@@ -202,6 +202,8 @@ The Arc path differs in steps 3 to 7: Gateway middleware, EIP-3009 authorization
 
 ## 10. Schedule, day-one de-risking, cut order
 
+Revised 2026-09-09: the build started four days late. The operative schedule and cut list are in `docs/superpowers/plans/2026-09-09-vaultradar.md` (Global Constraints and "Workstreams and order"); the harness PR, HCS-14 UAID and the Falcon option are cut, and the Arc rail has a go/no-go on 2026-09-10 evening. The table below is the original plan, kept for the record.
+
 | Date | Focus |
 |---|---|
 | Sept 5 | Accounts, keys and funding (section 12); repo skeleton; verify-deployments gate; HTS-USDC paid request through Blocky402 including association; `substreams run` with one eth_call against the Market endpoint and a hosted-sink deploy of any spkg into Neon |
