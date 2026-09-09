@@ -6,6 +6,7 @@ import type { Config } from "./config";
 import type { ServiceKeys } from "./keys";
 import { buildAgentCard } from "./keys";
 import type { DataProvider } from "./data/provider";
+import { asyncHandler } from "./util/async";
 
 /** Minimal shape Task 17's HcsQueue must satisfy for receipt lookups. */
 export interface HcsLookup {
@@ -22,22 +23,29 @@ export type WellKnownDeps = {
   hcs: HcsLookup | null;
 };
 
-/** Registers /.well-known/*, /v1/catalog, /v1/receipts/:hash, /health, /skill.md. CORS applies only to this router. */
+/**
+ * Registers /.well-known/*, /v1/catalog, /v1/receipts/:hash, /health, /skill.md.
+ * `cors()` is applied per-route (not via `router.use`) so it never runs for a
+ * request that falls through to a route this router doesn't define — e.g. a
+ * paid rail mounted on the same app after this — since Express invokes
+ * `router.use` middleware for any path under the mount point regardless of
+ * whether a later handler actually matches.
+ */
 export function mountWellKnown(app: express.Express, deps: WellKnownDeps): void {
   const { config, keys, data, hcs } = deps;
   const card = buildAgentCard(config, keys);
   const router = express.Router();
-  router.use(cors());
+  const pub = cors();
 
-  router.get("/health", (_req, res) => {
+  router.get("/health", pub, (_req, res) => {
     res.json({ ok: true, kid: keys.kem.kid, pubHash: keys.sig.pubHash });
   });
 
-  router.get("/.well-known/agent.json", (_req, res) => {
+  router.get("/.well-known/agent.json", pub, (_req, res) => {
     res.json(card);
   });
 
-  router.get("/.well-known/ucp", (_req, res) => {
+  router.get("/.well-known/ucp", pub, (_req, res) => {
     res.json({
       ucp: {
         version: "2026-08-25",
@@ -50,7 +58,7 @@ export function mountWellKnown(app: express.Express, deps: WellKnownDeps): void 
     });
   });
 
-  router.get("/.well-known/erc8004.json", (_req, res) => {
+  router.get("/.well-known/erc8004.json", pub, (_req, res) => {
     res.json({
       type: "https://eips.ethereum.org/EIPS/eip-8004#registration-v1",
       name: "VaultRadar",
@@ -65,20 +73,20 @@ export function mountWellKnown(app: express.Express, deps: WellKnownDeps): void 
     });
   });
 
-  router.get("/v1/catalog", async (_req, res) => {
+  router.get("/v1/catalog", pub, asyncHandler(async (_req, res) => {
     res.json(await data.catalog());
-  });
+  }));
 
-  router.get("/v1/receipts/:hash", async (req, res) => {
+  router.get("/v1/receipts/:hash", pub, asyncHandler(async (req, res) => {
     const hash = req.params.hash;
     if (hcs) {
       res.json(await hcs.lookup(hash));
     } else {
       res.json({ receipt_hash: hash, topicId: config.hedera.hcsTopicId, sequence: null });
     }
-  });
+  }));
 
-  router.get("/skill.md", (_req, res) => {
+  router.get("/skill.md", pub, (_req, res) => {
     if (!existsSync(SKILL_MD_PATH)) {
       res.status(404).json({ error: "skill not yet published" });
       return;

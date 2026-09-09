@@ -35,3 +35,36 @@ test("skill.md 404s until Task 25 publishes it", async () => {
   expect(res.status).toBe(404);
   expect(await res.json()).toEqual({ error: "skill not yet published" });
 });
+test("CORS is scoped to the public routes only, not the whole app", async () => {
+  const known = await fetch(base() + "/v1/catalog");
+  expect(known.headers.get("access-control-allow-origin")).toBe("*");
+
+  // No hedera rail is mounted (rails: {}), so this 404s today — but even once Task 16
+  // mounts a real rail here, that route must never inherit this router's CORS headers.
+  const unknown = await fetch(base() + "/hedera/v1/scan", { method: "POST" });
+  expect(unknown.status).toBe(404);
+  expect(unknown.headers.get("access-control-allow-origin")).toBeNull();
+});
+test("GET /v1/catalog returns 500 with a generic body when the provider rejects, instead of hanging", async () => {
+  const failingData = {
+    catalog: async () => { throw new Error("boom"); },
+    scan: async () => { throw new Error("n/a"); },
+    table: async () => { throw new Error("n/a"); },
+  };
+  const failingApp = await buildApp({ config, keys, data: failingData, hcs: null, nonces: new MemoryNonceStore(), rails: {} });
+  const failingSrv = failingApp.listen(0);
+  const errors: unknown[] = [];
+  const originalError = console.error;
+  console.error = (...args: unknown[]) => { errors.push(args); };
+  try {
+    const failingBase = `http://127.0.0.1:${(failingSrv.address() as any).port}`;
+    const res = await fetch(failingBase + "/v1/catalog");
+    expect(res.status).toBe(500);
+    expect(await res.json()).toEqual({ error: "internal_error" });
+  } finally {
+    console.error = originalError;
+    failingSrv.close();
+  }
+  expect(errors.length).toBe(1);
+  expect(String(errors[0])).toContain("boom");
+});

@@ -36,5 +36,15 @@ export async function buildApp(deps: BuildAppDeps): Promise<express.Express> {
     mountArcRail(app, deps);
   }
 
+  // Final error handler: catches anything forwarded via next(err), including from
+  // asyncHandler-wrapped routes and future rails. Logs only the message — never the
+  // request/response body, headers, or config/keys — and always replies with a
+  // generic body so no internal detail reaches the client.
+  const onError: express.ErrorRequestHandler = (err, _req, res, _next) => {
+    console.error("request failed:", err instanceof Error ? err.message : String(err));
+    res.status(500).json({ error: "internal_error" });
+  };
+  app.use(onError);
+
   return app;
 }
