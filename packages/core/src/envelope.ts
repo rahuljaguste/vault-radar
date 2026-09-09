@@ -22,8 +22,15 @@ export function buildSealedRequest<R extends object>(request: R, payer: string, 
 }
 export function openSealedRequest<R>(sealed: Sealed, kemSecret: Uint8Array, kid: string): SealedRequest<R> {
   const p = open<SealedRequest<R>>(sealed, kemSecret, kid);
-  if (typeof p.reply_pk !== "string" || typeof p.payer !== "string" || typeof p.ts !== "string" || !/^[0-9a-f]{32}$/.test(p.req_nonce)) throw new Error("malformed sealed request");
-  fromB64(p.reply_pk);
+  if (typeof p.payer !== "string") throw new Error("malformed sealed request: payer");
+  if (typeof p.ts !== "string") throw new Error("malformed sealed request: ts");
+  if (typeof p.req_nonce !== "string" || !/^[0-9a-f]{32}$/.test(p.req_nonce)) throw new Error("malformed sealed request: req_nonce");
+  // fromB64 (Buffer base64 decode) never throws on malformed input — it silently drops
+  // invalid characters — so a regex on the wire format plus a decoded-length check against
+  // the real KEM public key size are both required to actually reject a bad reply_pk.
+  if (typeof p.reply_pk !== "string" || !/^[A-Za-z0-9+/]+={0,2}$/.test(p.reply_pk) || fromB64(p.reply_pk).length !== ml_kem768_x25519.lengths.publicKey) {
+    throw new Error("malformed sealed request: reply_pk");
+  }
   return p;
 }
 export function checkSealedRequest(p: SealedRequest<unknown>, o: { now: number; payer: string; count?: number; seen: NonceStore }): { ok: true } | { ok: false; reason: string } {
