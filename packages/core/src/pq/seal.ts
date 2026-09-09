@@ -16,14 +16,6 @@ export function seal(plain: unknown, recipientPk: Uint8Array): Sealed {
   const body = gcm(deriveAead(sharedSecret), nonce).encrypt(canonicalBytes(plain));
   return { v: 1, kem: KEM_ALG, kid: kidOf(recipientPk), ct: toB64(cipherText), nonce: toB64(nonce), body: toB64(body) };
 }
-// Overloads: the non-generic signature is listed first so that a call site with
-// no explicit type argument (as in bun:test's `expect(open(...)).toEqual(...)`)
-// resolves eagerly to `unknown` instead of leaving T as an unresolved generic.
-// An unresolved generic at that position makes TS defer checking the argument
-// and mismatch it against `expect`'s `(actual?: never) => Matchers<undefined>`
-// overload, which is a real TS overload-resolution quirk, not a style choice.
-export function open(s: Sealed, secretKey: Uint8Array, expectKid?: string): unknown;
-export function open<T>(s: Sealed, secretKey: Uint8Array, expectKid?: string): T;
 export function open<T = unknown>(s: Sealed, secretKey: Uint8Array, expectKid?: string): T {
   if (s.v !== 1 || s.kem !== KEM_ALG) throw new Error("unsupported envelope");
   if (expectKid && s.kid !== expectKid) throw new Error("kid mismatch");

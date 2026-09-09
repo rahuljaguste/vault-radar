@@ -7,7 +7,12 @@ test("round trip", () => {
   const s = seal({ hello: "world", n: "1" }, k.publicKey);
   expect(s.kem).toBe("ml-kem768-x25519");
   expect(s.kid).toBe(k.kid);
-  expect(open(s, k.secretKey)).toEqual({ hello: "world", n: "1" });
+  const decoded = open(s, k.secretKey);
+  expect(decoded).toEqual({ hello: "world", n: "1" });
+});
+test("open infers T from a contextual type without an explicit type argument", () => {
+  const decoded2: { a: string } = open(seal({ a: "b" }, k.publicKey), k.secretKey);
+  expect(decoded2.a).toBe("b");
 });
 test("tampered ciphertext fails", () => {
   const s = seal({ a: "b" }, k.publicKey);
