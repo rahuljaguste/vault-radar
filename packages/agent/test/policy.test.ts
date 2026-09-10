@@ -298,6 +298,18 @@ test("loadPolicy validates, applies defaults, and reads the shipped example", ()
     rail_preference: "cheapest",
     max_age_seconds: 900,
   });
+
+  // The strict-tier example `scripts/demo.sh` step 4 runs with. It must load, and it must
+  // actually select the table tier — an example policy that quietly behaved like the
+  // balanced one would make the demo's privacy claim untrue.
+  const strict = loadPolicy(join(import.meta.dir, "..", "policy.strict.json"));
+  expect(strict).toEqual({
+    budget: { usdc_hedera: "1.00", usdc_arc: "1.00" },
+    privacy: "strict",
+    rail_preference: "cheapest",
+    max_age_seconds: 900,
+  });
+  expect(chooseTier(strict)).toEqual({ tier: "table", seal: true });
 });
 
 test("loadPolicy rejects an unknown privacy tier and a non-numeric budget with a clear message", () => {

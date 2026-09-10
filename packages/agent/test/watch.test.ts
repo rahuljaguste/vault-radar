@@ -170,7 +170,7 @@ test("strict privacy buys the whole table and narrows to the requested vaults lo
   const saved = JSON.parse(readFileSync(out.runPath!, "utf8")) as RunRecord;
   expect(saved.requests[0].tier).toBe("table");
   expect(saved.requests[0].sealed).toBe(true);
-  expect(saved.requests[0].priceUsd).toBe("0.03");
+  expect(saved.requests[0].priceUsd).toBe("0.06"); // TABLE_PRICE_USD, read off the signed receipt
   // The table carried three vaults; only the requested one is reported on.
   expect(saved.requests[0].verdicts.map(v => v.vaultId)).toEqual([ALERT]);
   expect(saved.decisions.map(x => x.vaultId)).toEqual([ALERT]);
@@ -214,12 +214,12 @@ test("strict privacy across two chains buys one table per chain and reports the 
   expect(text).toContain("payment 1 of 2");
   expect(text).toContain("payment 2 of 2");
   expect(text).toContain("in 2 payments");
-  expect(text).toContain("$0.06"); // 2 × the 0.03 table price
+  expect(text).toContain("$0.12"); // 2 × the 0.06 table price
 });
 
 test("a strict-tier plan spanning more chains than the budget covers buys nothing", async () => {
   const dir = runsDir();
-  // One table is 0.03, so three chains cost 0.09. With a 0.05 budget the whole plan is
+  // One table is 0.06, so three chains cost 0.18. With a 0.05 budget the whole plan is
   // unaffordable and must be refused up front rather than part-bought.
   const { deps: d } = deps({ policy: policy({ privacy: "strict", budget: { usdc_hedera: "0.05", usdc_arc: "1.00" } }) });
   const out = await runWatch(
@@ -228,7 +228,7 @@ test("a strict-tier plan spanning more chains than the budget covers buys nothin
   );
   expect(out.exitCode).toBe(2);
   expect(out.message).toContain("no usable rail");
-  expect(out.message).toContain("quote 0.09");
+  expect(out.message).toContain("quote 0.18");
   const saved = JSON.parse(readFileSync(out.runPath!, "utf8")) as RunRecord;
   expect(saved.requests).toEqual([]);
 });

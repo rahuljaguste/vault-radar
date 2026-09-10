@@ -3,12 +3,14 @@ import { mkdtempSync, readFileSync } from "node:fs";
 import { createServer } from "node:net";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { encodePaymentRequiredHeader } from "@x402/core/http";
 import {
   ARC_BUCKET_PRICE,
   MemoryNonceStore,
   buildAttestation,
   buildReceipt,
   fromB64,
+  hederaScanPriceAtomic,
   openSealedRequest,
   requestHash,
   responseHash,
@@ -19,6 +21,7 @@ import { buildApp, loadConfig, loadKeys, makeScanHandler, type DataProvider, typ
 import { VaultRadarClient } from "../src/client";
 import { readPqHashOnChain } from "../src/erc8004";
 import { arcAddress } from "../src/rails/arc";
+import { HEDERA_TESTNET_CAIP2, payingFetchHedera, quoteCeilingPolicy } from "../src/rails/hedera";
 import { listRuns, saveRun, type RunRecord } from "../src/runs";
 
 const now = Math.floor(Date.now() / 1000);
@@ -368,6 +371,202 @@ test("sealed is read off the observed response and agrees with the receipt's own
   const clearRun = await client().scan([VAULT_ID], "hedera", { seal: false });
   expect(clearRun.sealed).toBe(false);
   expect(clearRun.sealed).toBe(clearRun.receipt.sealed);
+});
+
+// --- paying no more than the quote -------------------------------------------------
+//
+// Two independent halves of the same rule. Before payment, a payment policy registered on
+// the x402 client refuses to sign for more than the agent quoted. After payment, the price
+// the signed receipt states is checked against the same quote, so `priceUsd` is a figure
+// the service committed to rather than the agent's own arithmetic restated.
+
+/** A payment requirement as a VaultRadar Hedera route's 402 would carry it. */
+const requirement = (amount: string) => ({
+  scheme: "exact",
+  network: HEDERA_TESTNET_CAIP2,
+  asset: "0.0.429274",
+  amount,
+  payTo: "0.0.1",
+  maxTimeoutSeconds: 120,
+  extra: {},
+});
+
+test("the quote ceiling policy refuses any requirement above the quote, and bounds nothing without one", () => {
+  // @x402/core applies policies before the selector picks a requirement, and before the
+  // scheme is asked for a payload — so a throw here is a refusal to sign.
+  const quote = hederaScanPriceAtomic(1); // "1500", a one-vault scan
+  const policy = quoteCeilingPolicy(() => quote);
+
+  // The quote itself and the top of the 1% band both pass, and pass through untouched.
+  expect(policy(2, [requirement("1500")] as never)).toHaveLength(1);
+  expect(policy(2, [requirement("1515")] as never)).toHaveLength(1);
+
+  // One unit above the band is refused, and the error names both numbers.
+  expect(() => policy(2, [requirement("1516")] as never)).toThrow(/refusing to pay/);
+  expect(() => policy(2, [requirement("10000000")] as never)).toThrow(
+    /demanded 10000000 atomic units for a request quoted at 1500/,
+  );
+  // One bad option among several is enough: the policy refuses rather than quietly
+  // selecting the affordable one, since a service offering both is not behaving.
+  expect(() => policy(2, [requirement("1500"), requirement("10000000")] as never)).toThrow(/refusing to pay/);
+  // An unreadable amount is refused rather than coerced to a number.
+  expect(() => policy(2, [requirement("lots")] as never)).toThrow(/unreadable amount/);
+
+  // With no quote for the request in flight there is no bound to apply, and the policy
+  // must not invent one.
+  expect(quoteCeilingPolicy(() => null)(2, [requirement("10000000")] as never)).toHaveLength(1);
+});
+
+test("the paying fetch registers the quote ceiling, so an over-quote 402 never reaches the signer", async () => {
+  // End to end through `payingFetchHedera`, with a fake server that answers 402 demanding
+  // far more than the one-vault price. The payment is refused while the payload is being
+  // created, which is strictly before any transfer is signed or sent.
+  let posts = 0;
+  // Encoded by @x402/core's own encoder, so the client parses exactly what a real
+  // resource server would send — the refusal has to come from the policy, not from a
+  // malformed 402.
+  const paymentRequired = encodePaymentRequiredHeader({
+    x402Version: 2,
+    error: "payment required",
+    resource: { url: "http://127.0.0.1/hedera/v1/scan", method: "POST" },
+    // $0.90 against a $0.0015 quote: 600 times the price, and deliberately *under*
+    // @x402/core's own default $1-per-payment spend control, which would otherwise be the
+    // thing that refuses this. Inside that band the quote ceiling is the only defence,
+    // which is exactly the gap this policy exists to close.
+    accepts: [requirement("900000")],
+  } as never);
+  const listening = Bun.serve({
+    port: 0,
+    fetch: () => {
+      posts++;
+      return new Response("{}", { status: 402, headers: { "content-type": "application/json", "payment-required": paymentRequired } });
+    },
+  });
+  try {
+    // A real (throwaway) ECDSA key, so the signer is genuinely constructed — the refusal
+    // has to come from the policy, not from a key that could not be parsed.
+    const paying = payingFetchHedera("0.0.42", "11".repeat(32), () => hederaScanPriceAtomic(1));
+    await expect(
+      paying(`http://127.0.0.1:${listening.port}/hedera/v1/scan`, {
+        method: "POST",
+        headers: { "content-type": "application/json", "x-vr-count": "1" },
+        body: JSON.stringify({ vaults: [VAULT_ID] }),
+      }),
+    ).rejects.toThrow(/refusing to pay/);
+    // Exactly one request: the unpaid probe. The paid retry never happened.
+    expect(posts).toBe(1);
+  } finally {
+    await listening.stop(true);
+  }
+});
+
+test("a receipt whose price does not match the quote fails receiptValid, and priceUsd comes from the receipt", async () => {
+  const attestation = buildAttestation(
+    { vaultId: VAULT_ID, chainId: "1", block: "10", timestamp: String(now - 5), sharePrice: vault.sharePrice, tvlUsd: vault.tvlUsd, source: "substreams:erc4626-vault-metrics" },
+    keys.sig,
+  );
+  const body = { vaults: [vault], reports: [report], attestations: [attestation] };
+  const common = {
+    service: { erc8004: config.erc8004 },
+    request_hash: requestHash({ vaults: [VAULT_ID] }),
+    response_hash: responseHash(body),
+    sealed: false,
+    sources: [],
+    payment: { rail: "hedera" as const, txId: "test-tx" },
+    tier: "scan" as const,
+    hcs: { topicId: config.hedera.hcsTopicId ?? "" },
+  };
+  const withAmount = (amount: string) =>
+    new VaultRadarClient({
+      serviceUrl: base,
+      hedera: { accountId: "0.0.42", privateKey: UNUSED_HEDERA_KEY },
+      payingFetch: async () =>
+        new Response(
+          JSON.stringify({
+            ...body,
+            receipt: buildReceipt({ ...common, price: { amount, asset: config.hedera.usdcToken, rail: "hedera" } }, keys.sig),
+          }),
+          { status: 200, headers: { "content-type": "application/json" } },
+        ),
+      readPqHash: async () => keys.sig.pubHash,
+    });
+
+  // Control: the real one-vault price. Valid, and priceUsd is derived from the receipt's
+  // own atomic amount rather than recomputed locally.
+  const ok = await withAmount(hederaScanPriceAtomic(1)).scan([VAULT_ID], "hedera", { seal: false });
+  expect(ok.receiptValid).toBe(true);
+  expect(ok.priceUsd).toBe("0.0015");
+
+  // Ten dollars for a request quoted at a seventh of a cent: correctly signed, commits to
+  // the right request and response, and still not a receipt for this purchase.
+  const overcharged = await withAmount("10000000").scan([VAULT_ID], "hedera", { seal: false });
+  expect(overcharged.receiptValid).toBe(false);
+  expect(overcharged.priceUsd).toBe("10");
+
+  // Understating the price fails too: the number is cited in run records, so a receipt
+  // that disagrees with the quote in either direction is not trusted.
+  const undercharged = await withAmount("1").scan([VAULT_ID], "hedera", { seal: false });
+  expect(undercharged.receiptValid).toBe(false);
+
+  // An amount that is not a number at all leaves priceUsd null rather than NaN.
+  const garbled = await withAmount("free").scan([VAULT_ID], "hedera", { seal: false });
+  expect(garbled.receiptValid).toBe(false);
+  expect(garbled.priceUsd).toBeNull();
+});
+
+test("on the arc rail both the receipt's price and the Gateway's reported amount are checked against the quote", async () => {
+  const attestation = buildAttestation(
+    { vaultId: VAULT_ID, chainId: "1", block: "10", timestamp: String(now - 5), sharePrice: vault.sharePrice, tvlUsd: vault.tvlUsd, source: "substreams:erc4626-vault-metrics" },
+    keys.sig,
+  );
+  const body = { vaults: [vault], reports: [report], attestations: [attestation] };
+  const mk = (receiptAmount: string, paid: bigint) =>
+    new VaultRadarClient({
+      serviceUrl: base,
+      arc: { privateKey: TEST_ARC_KEY },
+      // `as any` on `data` only: the `vault` fixture above is `as const`, so its
+      // `history: readonly []` doesn't satisfy `UnifiedVault` structurally — the same cast
+      // every other fixture in this file uses for the same reason.
+      arcPay: async () => ({
+        data: {
+          ...body,
+          receipt: buildReceipt(
+            {
+              service: { erc8004: config.erc8004 },
+              request_hash: requestHash({ vaults: [VAULT_ID] }),
+              response_hash: responseHash(body),
+              sealed: false,
+              sources: [],
+              // Arc receipts carry the USD decimal string, not an atomic amount.
+              price: { amount: receiptAmount, asset: "USDC", rail: "arc" },
+              payment: { rail: "arc", txId: "arc-tx-1" },
+              tier: "scan",
+              hcs: { topicId: config.hedera.hcsTopicId ?? "" },
+            },
+            keys.sig,
+          ),
+        } as any,
+        amount: paid,
+        formattedAmount: String(Number(paid) / 1e6),
+        transaction: "arc-tx-1",
+        status: 200,
+      }),
+      readPqHash: async () => keys.sig.pubHash,
+    });
+
+  // Control: the "s" bucket price in both places.
+  const ok = await mk(ARC_BUCKET_PRICE.s, 3000n).scan([VAULT_ID], "arc", { seal: false });
+  expect(ok.receiptValid).toBe(true);
+  expect(ok.priceUsd).toBe(ARC_BUCKET_PRICE.s);
+
+  // The receipt says the bucket price but Circle reports authorizing ten times as much.
+  const overpaid = await mk(ARC_BUCKET_PRICE.s, 30000n).scan([VAULT_ID], "arc", { seal: false });
+  expect(overpaid.receiptValid).toBe(false);
+
+  // Circle reports the right amount but the receipt names a different price.
+  const mislabelled = await mk("0.05", 3000n).scan([VAULT_ID], "arc", { seal: false });
+  expect(mislabelled.receiptValid).toBe(false);
+  expect(mislabelled.priceUsd).toBe("0.05");
 });
 
 test("receiptValid is false when the receipt's request_hash or response_hash does not cover what was exchanged", async () => {
