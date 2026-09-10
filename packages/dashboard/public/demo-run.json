@@ -32,8 +32,8 @@
         "response_hash": "cc33dd44ee55ff66007788990011223344556677889900aabbccdd11aa11bb22",
         "sealed": true,
         "sources": [
-          { "ref": "messari:yield-vault:0xabc0000000000000000000000000000000000a", "chainId": "8453", "block": "19000000", "timestamp": "1736439000" },
-          { "ref": "messari:yield-vault:0xdef0000000000000000000000000000000000b", "chainId": "8453", "block": "19000000", "timestamp": "1736439000" }
+          { "ref": "messari:yield-vault:0xabc0000000000000000000000000000000000aaa", "chainId": "8453", "block": "19000000", "timestamp": "1736439000" },
+          { "ref": "messari:yield-vault:0xdef0000000000000000000000000000000000bbb", "chainId": "8453", "block": "19000000", "timestamp": "1736439000" }
         ],
         "price": { "amount": "0.002", "asset": "USDC", "rail": "hedera" },
         "payment": { "rail": "hedera", "txId": "0.0.6421400@1736439600.123456789" },
@@ -45,7 +45,7 @@
       },
       "verdicts": [
         {
-          "vaultId": "0xabc0000000000000000000000000000000000a",
+          "vaultId": "8453:0xabc0000000000000000000000000000000000aaa",
           "verdict": "alert",
           "score": 82,
           "flags": [
@@ -54,7 +54,7 @@
           ]
         },
         {
-          "vaultId": "0xdef0000000000000000000000000000000000b",
+          "vaultId": "8453:0xdef0000000000000000000000000000000000bbb",
           "verdict": "ok",
           "score": 6,
           "flags": []
@@ -76,7 +76,7 @@
         "response_hash": "ff660011223344556677889900aabbccddeeff00112233445566778899000aa1",
         "sealed": false,
         "sources": [
-          { "ref": "messari:lending-market:0x9990000000000000000000000000000000000c", "chainId": "1", "block": "21000000", "timestamp": "1736439300" }
+          { "ref": "messari:lending-market:0x9990000000000000000000000000000000000ccc", "chainId": "1", "block": "21000000", "timestamp": "1736439300" }
         ],
         "price": { "amount": "0.03", "asset": "USDC", "rail": "arc" },
         "payment": { "rail": "arc", "txId": "0xaa11bb22cc33dd44ee55ff660011223344556677889900aabbccddeeff0011" },
@@ -87,24 +87,24 @@
         "sig": { "alg": "ML-DSA-65", "pub_hash": "3f9a1c2b5d6e7f8091a2b3c4d5e6f708192a3b4c5d6e7f8091a2b3c4d5e6f708", "value": "PLACEHOLDER_NOT_A_REAL_SIGNATURE_DEMO_ONLY" }
       },
       "verdicts": [],
-      "rejected": [{ "vaultId": "0x9990000000000000000000000000000000000c", "ageSeconds": 340 }]
+      "rejected": [{ "vaultId": "1:0x9990000000000000000000000000000000000ccc", "ageSeconds": 340 }]
     }
   ],
   "decisions": [
     {
-      "vaultId": "0xabc0000000000000000000000000000000000a",
+      "vaultId": "8453:0xabc0000000000000000000000000000000000aaa",
       "action": "withdraw",
       "reason": "Share price down 12.4% and TVL down 30.1% over 24h, both beyond threshold.",
       "citations": { "block": "19000000", "source": "messari:yield-vault", "txId": "0.0.6421400@1736439600.123456789", "receiptHash": "b1e2d3c4a5968778695a4b3c2d1e0f1a2b3c4d5e6f7081920a1b2c3d4e5f6071" }
     },
     {
-      "vaultId": "0xdef0000000000000000000000000000000000b",
+      "vaultId": "8453:0xdef0000000000000000000000000000000000bbb",
       "action": "hold",
       "reason": "Within normal thresholds.",
       "citations": { "block": "19000000", "source": "messari:yield-vault", "txId": "0.0.6421400@1736439600.123456789", "receiptHash": "b1e2d3c4a5968778695a4b3c2d1e0f1a2b3c4d5e6f7081920a1b2c3d4e5f6071" }
     },
     {
-      "vaultId": "0x9990000000000000000000000000000000000c",
+      "vaultId": "1:0x9990000000000000000000000000000000000ccc",
       "action": "insufficient data",
       "reason": "Latest data point is 340s old, past the 120s freshness window; excluded from this run's table pull.",
       "citations": { "block": "n/a", "source": "arc table", "txId": "0xaa11bb22cc33dd44ee55ff660011223344556677889900aabbccddeeff0011", "receiptHash": "d4e5f6071829a1b2c3d4e5f60718293a1b2c3d4e5f60718293a1b2c3d4e5f607" }

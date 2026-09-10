@@ -1,0 +1,412 @@
+"use client";
+
+import { useCallback, useState } from "react";
+import Link from "next/link";
+import { explorerTxUrl, type Rail } from "@/lib/explorer";
+import { EXAMPLE_VAULT_ID, MAX_VAULTS, parseVaultList } from "@/lib/vaults";
+import type { RunMatch, RunRecord } from "@/lib/types";
+
+/** The `POST /api/scan` success body. */
+type ScanResponse = {
+  runId: string;
+  requests: RunRecord["requests"];
+  decisions: RunRecord["decisions"];
+  txId: string | null;
+  receiptHash: string;
+  priceUsd: string | null;
+};
+
+type Busy = "idle" | "scanning" | "history";
+
+export function ScanForm({ keysConfigured, demoRunId }: { keysConfigured: boolean; demoRunId: string | null }) {
+  const [text, setText] = useState("");
+  const [busy, setBusy] = useState<Busy>("idle");
+  const [error, setError] = useState<string | null>(null);
+  const [result, setResult] = useState<ScanResponse | null>(null);
+  const [history, setHistory] = useState<RunMatch[] | null>(null);
+  const [historyError, setHistoryError] = useState<string | null>(null);
+
+  // The same parser the API route runs. Here it only drives the live count and the
+  // inline hint; the route re-parses every request and is the authority.
+  const parsed = parseVaultList(text);
+  const empty = text.trim() === "";
+  const running = busy !== "idle";
+
+  const loadHistory = useCallback(async (vaults: string[]) => {
+    setHistoryError(null);
+    try {
+      const res = await fetch(`/api/runs?vaults=${encodeURIComponent(vaults.join(","))}`, { cache: "no-store" });
+      const body = await readJson(res);
+      if (!res.ok) {
+        setHistoryError(errorText(body) ?? `Could not load history (HTTP ${res.status}).`);
+        return;
+      }
+      setHistory(((body as { matches?: RunMatch[] } | null)?.matches ?? []) as RunMatch[]);
+    } catch (e) {
+      setHistoryError(`Could not load history: ${e instanceof Error ? e.message : String(e)}`);
+    }
+  }, []);
+
+  async function onShowHistory() {
+    if (!parsed.ok) return;
+    setBusy("history");
+    try {
+      await loadHistory(parsed.vaults);
+    } finally {
+      setBusy("idle");
+    }
+  }
+
+  async function onScan() {
+    if (!parsed.ok) return;
+    setBusy("scanning");
+    setError(null);
+    setResult(null);
+    try {
+      const res = await fetch("/api/scan", {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ vaults: parsed.vaults }),
+      });
+      const body = await readJson(res);
+      if (!res.ok) {
+        setError(scanErrorMessage(res.status, body));
+        return;
+      }
+      setResult(body as ScanResponse);
+      // A purchase is itself new history, so refresh it rather than leaving the
+      // previous answer on screen looking current.
+      await loadHistory(parsed.vaults);
+    } catch (e) {
+      setError(`The scan request failed before it reached the server: ${e instanceof Error ? e.message : String(e)}`);
+    } finally {
+      setBusy("idle");
+    }
+  }
+
+  return (
+    <>
+      <section>
+        <h2>Your vaults</h2>
+        <label htmlFor="vaults">
+          One vault per line, as <code>&lt;chainId&gt;:0x&lt;40 hex address&gt;</code>. Up to {MAX_VAULTS} per scan.
+        </label>
+        <textarea
+          id="vaults"
+          rows={6}
+          spellCheck={false}
+          placeholder={`${EXAMPLE_VAULT_ID}\n8453:0x0000000000000000000000000000000000000000`}
+          value={text}
+          onChange={(e) => setText(e.target.value)}
+          disabled={running}
+        />
+        <p aria-live="polite" className={!empty && !parsed.ok ? "error" : "muted"}>
+          {empty
+            ? "Paste a vault list to begin."
+            : parsed.ok
+              ? `${parsed.vaults.length} vault${parsed.vaults.length === 1 ? "" : "s"} ready.`
+              : parsed.error}
+        </p>
+
+        <p className="toolbar">
+          <button type="button" onClick={onScan} disabled={running || !parsed.ok || !keysConfigured}>
+            {busy === "scanning" ? "Paying and scanning..." : "Scan now"}
+          </button>
+          <button type="button" onClick={onShowHistory} disabled={running || !parsed.ok}>
+            {busy === "history" ? "Loading..." : "Show history (free)"}
+          </button>
+        </p>
+
+        {keysConfigured ? (
+          <p className="muted">
+            &ldquo;Scan now&rdquo; buys a real x402 request. The payer is the operator&apos;s agent account, not your
+            wallet, and the spend is capped by the agent&apos;s policy budget. One scan per 30 seconds per client.
+          </p>
+        ) : (
+          <div className="card">
+            <p className="error">Paid scans are unavailable: this dashboard has no agent payment keys.</p>
+            <p className="muted">
+              Set <code>AGENT_HEDERA_ACCOUNT_ID</code> and <code>AGENT_HEDERA_KEY</code> in the dashboard&apos;s
+              environment to enable purchases. The keys are read server-side only and never reach the browser.
+              {demoRunId && (
+                <>
+                  {" "}
+                  In the meantime, <Link href={`/runs/${encodeURIComponent(demoRunId)}`}>open a finished run</Link> to see
+                  the same verdicts, decisions and receipts a purchase produces.
+                </>
+              )}
+            </p>
+          </div>
+        )}
+
+        {error && (
+          <div className="card">
+            <p className="error">{error}</p>
+          </div>
+        )}
+      </section>
+
+      {result && <Result result={result} />}
+      {(history !== null || historyError) && <History matches={history ?? []} error={historyError} />}
+    </>
+  );
+}
+
+/* ----------------------------------------------------------------- results */
+
+function Result({ result }: { result: ScanResponse }) {
+  const rail = result.requests[0]?.rail ?? null;
+  const txUrl = rail && result.txId ? explorerTxUrl(rail as Rail, result.txId) : null;
+
+  return (
+    <>
+      <section>
+        <h2>This purchase</h2>
+        <dl>
+          <dt>Run</dt>
+          <dd>
+            <Link href={`/runs/${encodeURIComponent(result.runId)}`}>{result.runId}</Link>
+          </dd>
+          <dt>Price</dt>
+          <dd>{result.priceUsd ? `${result.priceUsd} USD` : "-"}</dd>
+          <dt>Payment</dt>
+          <dd>
+            {result.txId ? (
+              txUrl ? (
+                <a href={txUrl} target="_blank" rel="noopener noreferrer">
+                  <code>{result.txId}</code>
+                </a>
+              ) : (
+                <code>{result.txId}</code>
+              )
+            ) : (
+              <span className="muted">no transaction id returned</span>
+            )}
+          </dd>
+          <dt>Receipt hash</dt>
+          <dd>
+            <code>{result.receiptHash}</code>{" "}
+            <Link href="/verify">verify it</Link>
+          </dd>
+        </dl>
+      </section>
+
+      {result.requests.map((req, i) => (
+        <section key={`${req.receiptHash}-${i}`}>
+          <h2>
+            Verdicts <span className="muted">({req.rail} rail, {req.tier} tier, {req.sealed ? "sealed" : "clear"})</span>
+          </h2>
+          {req.verdicts.length === 0 ? (
+            <p className="empty">The service returned no verdicts for this request.</p>
+          ) : (
+            <table>
+              <thead>
+                <tr>
+                  <th>Vault</th>
+                  <th>Verdict</th>
+                  <th>Score</th>
+                  <th>Flags</th>
+                </tr>
+              </thead>
+              <tbody>
+                {req.verdicts.map((v) => (
+                  <tr key={v.vaultId}>
+                    <td>
+                      <code>{v.vaultId}</code>
+                    </td>
+                    <td className={verdictTone(v.verdict)}>{v.verdict}</td>
+                    <td>{String(v.score)}</td>
+                    <td>
+                      {v.flags.length === 0 ? (
+                        <span className="muted">none</span>
+                      ) : (
+                        v.flags.map((f) => (
+                          <span className="pill" key={f.name}>
+                            {f.name} {f.value} vs {f.threshold} over {f.window}
+                          </span>
+                        ))
+                      )}
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          )}
+          {req.rejected.length > 0 && (
+            <p className="warn">
+              Rejected as too old by the agent&apos;s own max-age check:{" "}
+              {req.rejected.map((r) => `${r.vaultId} (${r.ageSeconds}s)`).join(", ")}
+            </p>
+          )}
+        </section>
+      ))}
+
+      <section>
+        <h2>Decisions</h2>
+        {result.decisions.length === 0 ? (
+          <p className="empty">No decisions were reached.</p>
+        ) : (
+          <table>
+            <thead>
+              <tr>
+                <th>Vault</th>
+                <th>Action</th>
+                <th>Reason</th>
+                <th>Evidence</th>
+              </tr>
+            </thead>
+            <tbody>
+              {result.decisions.map((d) => {
+                const citedUrl = rail && d.citations.txId ? explorerTxUrl(rail as Rail, d.citations.txId) : null;
+                return (
+                  <tr key={d.vaultId}>
+                    <td>
+                      <code>{d.vaultId}</code>
+                    </td>
+                    <td className={actionTone(d.action)}>{d.action}</td>
+                    <td>{d.reason}</td>
+                    <td>
+                      block <code>{d.citations.block || "-"}</code>
+                      <br />
+                      source <code>{d.citations.source || "-"}</code>
+                      <br />
+                      receipt <code>{d.citations.receiptHash}</code>
+                      {d.citations.txId && (
+                        <>
+                          <br />
+                          tx{" "}
+                          {citedUrl ? (
+                            <a href={citedUrl} target="_blank" rel="noopener noreferrer">
+                              <code>{d.citations.txId}</code>
+                            </a>
+                          ) : (
+                            <code>{d.citations.txId}</code>
+                          )}
+                        </>
+                      )}
+                    </td>
+                  </tr>
+                );
+              })}
+            </tbody>
+          </table>
+        )}
+      </section>
+    </>
+  );
+}
+
+/* ----------------------------------------------------------------- history */
+
+function History({ matches, error }: { matches: RunMatch[]; error: string | null }) {
+  return (
+    <section>
+      <h2>History for these vaults</h2>
+      {error && <p className="error">{error}</p>}
+      {!error && matches.length === 0 && <p className="empty">No earlier run covered any of these vaults.</p>}
+      {matches.length > 0 && (
+        <table>
+          <thead>
+            <tr>
+              <th>Run</th>
+              <th>Started at</th>
+              <th>Matched vaults</th>
+              <th>Verdicts</th>
+              <th>Actions</th>
+            </tr>
+          </thead>
+          <tbody>
+            {matches.map((m) => (
+              <tr key={m.id}>
+                <td>
+                  <Link href={`/runs/${encodeURIComponent(m.id)}`}>{m.id}</Link>
+                </td>
+                <td>{m.startedAt}</td>
+                <td>
+                  {m.matched.map((v) => (
+                    <code key={v}>{v}</code>
+                  ))}
+                </td>
+                <td>
+                  {m.verdicts.length === 0 ? (
+                    <span className="muted">-</span>
+                  ) : (
+                    m.verdicts.map((v) => (
+                      <span className="pill" key={`${v.vaultId}-${v.verdict}`}>
+                        <span className={verdictTone(v.verdict)}>{v.verdict}</span> {String(v.score)}
+                      </span>
+                    ))
+                  )}
+                </td>
+                <td>
+                  {m.actions.length === 0 ? (
+                    <span className="muted">-</span>
+                  ) : (
+                    m.actions.map((a) => (
+                      <span className="pill" key={`${a.vaultId}-${a.action}`}>
+                        <span className={actionTone(a.action)}>{a.action}</span>
+                      </span>
+                    ))
+                  )}
+                </td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      )}
+    </section>
+  );
+}
+
+/* ----------------------------------------------------------------- helpers */
+
+function verdictTone(verdict: string): string {
+  if (verdict === "ok") return "ok";
+  if (verdict === "watch") return "warn";
+  if (verdict === "alert") return "error";
+  return "muted";
+}
+
+function actionTone(action: string): string {
+  if (action === "hold") return "ok";
+  if (action === "rebalance") return "warn";
+  if (action === "withdraw") return "error";
+  return "muted";
+}
+
+async function readJson(res: Response): Promise<unknown> {
+  try {
+    return await res.json();
+  } catch {
+    // A 404 before the route exists, or a proxy error page, is HTML, not JSON.
+    return null;
+  }
+}
+
+function errorText(body: unknown): string | null {
+  if (typeof body === "object" && body !== null && "error" in body) {
+    const value = (body as { error: unknown }).error;
+    if (typeof value === "string") return value;
+  }
+  return null;
+}
+
+/** Maps the route's documented status codes to something a portfolio owner can act on. */
+function scanErrorMessage(status: number, body: unknown): string {
+  const detail = errorText(body);
+  if (status === 503) {
+    return detail
+      ? `Paid scans are unavailable: ${detail}.`
+      : "Paid scans are unavailable: the dashboard has no agent payment keys configured.";
+  }
+  if (status === 429) {
+    return detail ?? "Rate limited: one paid scan per 30 seconds. Wait a moment and try again.";
+  }
+  if (status === 400) {
+    return detail ?? "The vault list was rejected.";
+  }
+  if (status === 404) {
+    return "This dashboard build has no /api/scan route, so nothing can be purchased from the browser.";
+  }
+  return detail ? `The scan failed: ${detail}` : `The scan failed (HTTP ${status}).`;
+}

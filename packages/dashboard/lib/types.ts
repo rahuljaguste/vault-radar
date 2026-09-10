@@ -44,3 +44,20 @@ export type RunRecord = {
     citations: { block: string; source: string; txId: string | null; receiptHash: string };
   }[];
 };
+
+/**
+ * One earlier run that touched at least one of a set of vaults, reduced to what
+ * `/portfolio`'s history table shows: which of the asked-for vaults it covered,
+ * and what verdict and action each got. Produced by `findRunsForVaults` in
+ * `lib/runs.ts` and served by `GET /api/runs?vaults=`.
+ *
+ * Declared here rather than beside its producer because the `/portfolio` client
+ * component consumes it, and `lib/runs.ts` imports `node:fs`.
+ */
+export type RunMatch = {
+  id: string;
+  startedAt: string;
+  matched: string[];
+  verdicts: { vaultId: string; verdict: string; score: number }[];
+  actions: { vaultId: string; action: string }[];
+};
