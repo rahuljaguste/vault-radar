@@ -316,3 +316,102 @@ test("an arcPay rejection is wrapped as a clear 'arc payment failed' error, not 
   });
   await expect(c.scan([VAULT_ID], "arc")).rejects.toThrow(/arc payment failed: Payment failed: insufficient funds/);
 });
+
+test("attestationsValid is false when two attestations name the same vault", async () => {
+  // Two vaults came back but both attestations cover the first one: the count matches
+  // and both signatures verify, yet the second vault is entirely unattested. Only a
+  // bijection check catches this, which is why it gets its own test.
+  const vaultB = { ...vault, id: "1:0x" + "b".repeat(40) } as const;
+  const reportB = { ...report, vaultId: vaultB.id };
+  const dupe = [VAULT_ID, VAULT_ID].map(id =>
+    buildAttestation(
+      { vaultId: id, chainId: "1", block: "10", timestamp: String(now - 5), sharePrice: vault.sharePrice, tvlUsd: vault.tvlUsd, source: "substreams:erc4626-vault-metrics" },
+      keys.sig,
+    ),
+  );
+  const body = { vaults: [vault, vaultB], reports: [report, reportB], attestations: dupe };
+  const receipt = buildReceipt(
+    {
+      service: { erc8004: config.erc8004 },
+      request_hash: requestHash({ vaults: [VAULT_ID, vaultB.id] }),
+      response_hash: responseHash(body),
+      sealed: false,
+      sources: [],
+      price: { amount: "2000", asset: config.hedera.usdcToken, rail: "hedera" },
+      payment: { rail: "hedera", txId: "test-tx" },
+      tier: "scan",
+      hcs: { topicId: config.hedera.hcsTopicId ?? "" },
+    },
+    keys.sig,
+  );
+  const c = new VaultRadarClient({
+    serviceUrl: base,
+    hedera: { accountId: "0.0.42", privateKey: UNUSED_HEDERA_KEY },
+    payingFetch: async () =>
+      new Response(JSON.stringify({ ...body, receipt }), { status: 200, headers: { "content-type": "application/json" } }),
+    readPqHash: async () => keys.sig.pubHash,
+  });
+  const r = await c.scan([VAULT_ID, vaultB.id], "hedera", { seal: false });
+  expect(r.receiptValid).toBe(true);
+  expect(r.attestations).toHaveLength(2);
+  expect(r.attestationsValid).toBe(false);
+});
+
+test("sealed is read off the observed response and agrees with the receipt's own signed sealed flag", async () => {
+  // `sealed` must describe what actually came back on the wire, not what the client
+  // asked for. The service signs its own view of the same fact into the receipt, so
+  // asserting the two agree (both ways round) pins the reported value to the response.
+  const sealedRun = await client().scan([VAULT_ID], "hedera");
+  expect(sealedRun.sealed).toBe(true);
+  expect(sealedRun.sealed).toBe(sealedRun.receipt.sealed);
+
+  const clearRun = await client().scan([VAULT_ID], "hedera", { seal: false });
+  expect(clearRun.sealed).toBe(false);
+  expect(clearRun.sealed).toBe(clearRun.receipt.sealed);
+});
+
+test("receiptValid is false when the receipt's request_hash or response_hash does not cover what was exchanged", async () => {
+  // A validly signed receipt that commits to a *different* request or response is not
+  // a receipt for this purchase. Both hashes are hand-built wrong here, one at a time,
+  // to prove each is checked independently of the signature.
+  const attestation = buildAttestation(
+    { vaultId: VAULT_ID, chainId: "1", block: "10", timestamp: String(now - 5), sharePrice: vault.sharePrice, tvlUsd: vault.tvlUsd, source: "substreams:erc4626-vault-metrics" },
+    keys.sig,
+  );
+  const body = { vaults: [vault], reports: [report], attestations: [attestation] };
+  const base402 = {
+    service: { erc8004: config.erc8004 },
+    sealed: false,
+    sources: [],
+    price: { amount: "1500", asset: config.hedera.usdcToken, rail: "hedera" as const },
+    payment: { rail: "hedera" as const, txId: "test-tx" },
+    tier: "scan" as const,
+    hcs: { topicId: config.hedera.hcsTopicId ?? "" },
+  };
+  const mk = (receipt: ReturnType<typeof buildReceipt>) =>
+    new VaultRadarClient({
+      serviceUrl: base,
+      hedera: { accountId: "0.0.42", privateKey: UNUSED_HEDERA_KEY },
+      payingFetch: async () =>
+        new Response(JSON.stringify({ ...body, receipt }), { status: 200, headers: { "content-type": "application/json" } }),
+      readPqHash: async () => keys.sig.pubHash,
+    });
+
+  // Control: both hashes correct -> valid.
+  const good = buildReceipt({ ...base402, request_hash: requestHash({ vaults: [VAULT_ID] }), response_hash: responseHash(body) }, keys.sig);
+  expect((await mk(good).scan([VAULT_ID], "hedera", { seal: false })).receiptValid).toBe(true);
+
+  // Commits to a scan of a different vault.
+  const wrongRequest = buildReceipt(
+    { ...base402, request_hash: requestHash({ vaults: ["1:0x" + "c".repeat(40)] }), response_hash: responseHash(body) },
+    keys.sig,
+  );
+  expect((await mk(wrongRequest).scan([VAULT_ID], "hedera", { seal: false })).receiptValid).toBe(false);
+
+  // Commits to a response body that was never returned.
+  const wrongResponse = buildReceipt(
+    { ...base402, request_hash: requestHash({ vaults: [VAULT_ID] }), response_hash: responseHash({ vaults: [], reports: [], attestations: [] }) },
+    keys.sig,
+  );
+  expect((await mk(wrongResponse).scan([VAULT_ID], "hedera", { seal: false })).receiptValid).toBe(false);
+});

@@ -3,4 +3,8 @@ export * from "./client";
 export * from "./rails/hedera";
 export * from "./rails/arc";
 export * from "./runs";
+export * from "./policy";
+export * from "./balances";
+export * from "./watch";
+export * from "./tools";
 export * from "./erc8004";
