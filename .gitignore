@@ -12,6 +12,6 @@ target/
 keys/
 .worktrees/
 .superpowers/
-runs/
+/runs/
 substreams/**/target/
 packages/dashboard/.next/
