@@ -71,10 +71,25 @@ test("receipts route hits a wired HcsQueue for a committed receipt and misses fo
     srv2.close();
   }
 });
-test("skill.md 404s until Task 25 publishes it", async () => {
+test("skill.md serves the published skill file", async () => {
   const res = await fetch(base() + "/skill.md");
-  expect(res.status).toBe(404);
-  expect(await res.json()).toEqual({ error: "skill not yet published" });
+  expect(res.status).toBe(200);
+  expect(res.headers.get("content-type")?.startsWith("text/markdown")).toBe(true);
+  const body = await res.text();
+  expect(body.startsWith("---")).toBe(true);
+});
+
+test("skill.md 404s when the configured skillPath doesn't exist", async () => {
+  const missingApp = await buildApp({ config, keys, data, hcs: null, nonces: new MemoryNonceStore(), rails: {}, skillPath: "/nonexistent/skill.md" });
+  const srv3 = missingApp.listen(0);
+  try {
+    const port = (srv3.address() as any).port;
+    const res = await fetch(`http://127.0.0.1:${port}/skill.md`);
+    expect(res.status).toBe(404);
+    expect(await res.json()).toEqual({ error: "skill not yet published" });
+  } finally {
+    srv3.close();
+  }
 });
 test("CORS is scoped to the public routes only, not the whole app", async () => {
   const known = await fetch(base() + "/v1/catalog");

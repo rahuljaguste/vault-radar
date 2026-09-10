@@ -20,6 +20,9 @@ export type WellKnownDeps = {
   keys: ServiceKeys;
   data: DataProvider;
   hcs: HcsQueue | null;
+  /** Overrides where /skill.md reads from. Defaults to the repo's own SKILL.md; tests
+   * point this at a path that doesn't exist to exercise the 404 branch. */
+  skillPath?: string;
 };
 
 /**
@@ -32,6 +35,7 @@ export type WellKnownDeps = {
  */
 export function mountWellKnown(app: express.Express, deps: WellKnownDeps): void {
   const { config, keys, data, hcs } = deps;
+  const skillPath = deps.skillPath ?? SKILL_MD_PATH;
   const card = buildAgentCard(config, keys);
   const router = express.Router();
   const pub = cors();
@@ -90,11 +94,11 @@ export function mountWellKnown(app: express.Express, deps: WellKnownDeps): void 
   }));
 
   router.get("/skill.md", pub, (_req, res) => {
-    if (!existsSync(SKILL_MD_PATH)) {
+    if (!existsSync(skillPath)) {
       res.status(404).json({ error: "skill not yet published" });
       return;
     }
-    res.type("text/markdown").send(readFileSync(SKILL_MD_PATH, "utf8"));
+    res.type("text/markdown").send(readFileSync(skillPath, "utf8"));
   });
 
   app.use(router);

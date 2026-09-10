@@ -22,6 +22,9 @@ export type BuildAppDeps = {
    * also set this field).
    */
   onSettled?: (receipt: Receipt, txId: string) => void;
+  /** Overrides where /skill.md reads from (forwarded to mountWellKnown). Defaults to the
+   * repo's own SKILL.md; tests point this at a non-existent path to exercise the 404 branch. */
+  skillPath?: string;
 };
 
 /**
