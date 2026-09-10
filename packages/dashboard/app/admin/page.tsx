@@ -1,6 +1,7 @@
 import type { ReactNode } from "react";
 import { Table } from "../components/Table";
 import { AutoRefresh } from "./AutoRefresh";
+import { epochUtc } from "@/lib/format";
 import {
   adminMetricsUrl,
   fetchAdminMetrics,
@@ -27,7 +28,7 @@ export default async function AdminPage() {
         <p className="muted">
           Operator view of the running service, read from <code>GET /v1/admin/metrics</code>. Every counter below lives in
           the service process and <strong>resets when the service restarts</strong>, so these are totals since{" "}
-          {result.state === "ok" ? <code>{str(result.metrics.startedAt)}</code> : "the last restart"}, not all-time totals.
+          {result.state === "ok" ? <code>{epoch(result.metrics.startedAt)}</code> : "the last restart"}, not all-time totals.
         </p>
         <AutoRefresh intervalMs={15_000} />
         {result.state === "ok" && (
@@ -129,7 +130,7 @@ function Metrics({ metrics }: { metrics: AdminMetrics }) {
         <dl>
           <dt>Started at</dt>
           <dd>
-            <code>{str(metrics.startedAt)}</code>
+            <code>{epoch(metrics.startedAt)}</code>
           </dd>
           <dt>Uptime seconds</dt>
           <dd>
@@ -151,7 +152,7 @@ function Metrics({ metrics }: { metrics: AdminMetrics }) {
               render: (r) => <span className={healthTone(r.healthy)}>{healthLabel(r.healthy)}</span>,
             },
             { key: "facilitatorUrl", label: "Facilitator URL", render: (r) => <code>{str(r.facilitatorUrl)}</code> },
-            { key: "checkedAt", label: "Checked at", render: (r) => str(r.checkedAt) },
+            { key: "checkedAt", label: "Checked at", render: (r) => epoch(r.checkedAt) },
           ]}
           rows={railRows}
           rowKey={(r) => r.rail}
@@ -183,7 +184,7 @@ function Metrics({ metrics }: { metrics: AdminMetrics }) {
             </span>
           </dd>
           <dt>Last request at</dt>
-          <dd>{str(metrics.requests?.lastRequestAt)}</dd>
+          <dd>{epoch(metrics.requests?.lastRequestAt)}</dd>
         </dl>
       </section>
 
@@ -247,7 +248,7 @@ function Metrics({ metrics }: { metrics: AdminMetrics }) {
             { key: "chainId", label: "Chain id" },
             { key: "status", label: "Status", render: (d) => <span className={statusTone(d.status)}>{str(d.status)}</span> },
             { key: "headLagSeconds", label: "Head lag (s)", render: (d) => <code>{str(d.headLagSeconds)}</code> },
-            { key: "lastQueriedAt", label: "Last queried" },
+            { key: "lastQueriedAt", label: "Last queried", render: (d) => epoch(d.lastQueriedAt) },
             {
               key: "lastError",
               label: "Last error",
@@ -267,8 +268,8 @@ function Metrics({ metrics }: { metrics: AdminMetrics }) {
             { key: "chainId", label: "Chain id" },
             { key: "ok", label: "RPC", render: (h) => <span className={healthTone(h.ok)}>{h.ok ? "ok" : "failing"}</span> },
             { key: "block", label: "Head block", render: (h) => <code>{str(h.block)}</code> },
-            { key: "ts", label: "Head timestamp", render: (h) => <code>{str(h.ts)}</code> },
-            { key: "checkedAt", label: "Checked at", render: (h) => str(h.checkedAt) },
+            { key: "ts", label: "Head timestamp", render: (h) => <code>{epoch(h.ts)}</code> },
+            { key: "checkedAt", label: "Checked at", render: (h) => epoch(h.checkedAt) },
           ]}
           rows={headRows}
           rowKey={(h) => h.chainId}
@@ -322,6 +323,9 @@ function str(value: unknown): string {
   if (value === null || value === undefined || value === "") return "-";
   return String(value);
 }
+
+/** Every instant on this page arrives as Unix seconds; `epochUtc` is what makes it readable. */
+const epoch = epochUtc;
 
 function Flag({ value, on, off }: { value: unknown; on: string; off: string }): ReactNode {
   if (value === true) return <span className="ok">{on}</span>;

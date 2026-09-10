@@ -1,6 +1,7 @@
 import { expect, test } from "bun:test";
 import { readFileSync } from "node:fs";
 import path from "node:path";
+import { TABLE_PRICE_USD, hederaScanPriceUsd } from "@vaultradar/core";
 import { RUN_ID_RE, isValidRunId } from "../lib/runs";
 import type { RunRecord } from "../lib/types";
 
@@ -58,6 +59,22 @@ test("public/demo-run.json parses and matches the RunRecord contract's top-level
   }
   for (const decision of run.decisions) {
     expect(decision.citations).toHaveProperty("receiptHash");
+  }
+});
+
+// The demo run is served on `/runs/demo-run-1` beside an agent card quoting live prices
+// from the same shared table, so a stale figure in the fixture reads as the service
+// contradicting itself. It went stale once already: the fixture kept 0.03 after the table
+// tier moved to 0.06. Pin it to the constants rather than to a literal.
+test("public/demo-run.json quotes the prices the shared pricing table currently charges", () => {
+  const raw = readFileSync(path.join(import.meta.dir, "..", "public", "demo-run.json"), "utf8");
+  const run = JSON.parse(raw) as RunRecord;
+
+  for (const req of run.requests) {
+    const covered = req.verdicts.length + req.rejected.length;
+    const expected = req.tier === "table" ? TABLE_PRICE_USD : hederaScanPriceUsd(covered);
+    expect(req.priceUsd).toBe(expected);
+    expect(req.receipt.price.amount).toBe(expected);
   }
 });
 
