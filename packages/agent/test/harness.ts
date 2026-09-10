@@ -54,10 +54,12 @@ export const data: DataProvider = {
     sources: [{ ref: "erc4626-vault-metrics", chainId: "1", block: "4242", timestamp: String(NOW - 5) }],
   }),
   // The whole-protocol table deliberately includes a vault the caller never asked
-  // about, so the strict-tier tests can show the agent narrowing locally.
-  table: async () => ({
-    vaults: [alertVault, staleVault, otherVault],
-    sources: [{ ref: "erc4626-vault-metrics", chainId: "1", block: "4242", timestamp: String(NOW - 5) }],
+  // about, so the strict-tier tests can show the agent narrowing locally. Only chain 1
+  // is served — a table is per protocol *per chain*, and asking for any other chain
+  // legitimately comes back empty, which is what a multi-chain vault list must cope with.
+  table: async (_protocol: string, chainId: string) => ({
+    vaults: chainId === "1" ? [alertVault, staleVault, otherVault] : [],
+    sources: [{ ref: "erc4626-vault-metrics", chainId, block: "4242", timestamp: String(NOW - 5) }],
   }),
 };
 

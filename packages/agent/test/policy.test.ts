@@ -16,7 +16,7 @@ import {
   type Verdict,
 } from "@vaultradar/core";
 import type { PaidResult } from "../src/client";
-import { applyAgeCheck, chooseRail, chooseTier, decide, loadPolicy, type Policy } from "../src/policy";
+import { CLOCK_SKEW_S, applyAgeCheck, chooseRail, chooseTier, decide, loadPolicy, type Policy } from "../src/policy";
 
 const now = Math.floor(Date.now() / 1000);
 
@@ -55,7 +55,7 @@ function vaultOf(id: string): UnifiedVault {
   };
 }
 
-function fakeResult(entries: Entry[]): PaidResult {
+function fakeResult(entries: Entry[], o: { receiptTxId?: string } = {}): PaidResult {
   const vaults = entries.map(e => vaultOf(e.vaultId));
   const reports: RiskReport[] = entries.map(e => ({
     vaultId: e.vaultId,
@@ -91,7 +91,7 @@ function fakeResult(entries: Entry[]): PaidResult {
       sealed: true,
       sources: [],
       price: { amount: "1500", asset: "0.0.429274", rail: "hedera" },
-      payment: { rail: "hedera", txId: "0.0.42@1700000000.0" },
+      payment: { rail: "hedera", txId: o.receiptTxId ?? "0.0.42@1700000000.0" },
       tier: "scan",
       hcs: { topicId: "0.0.99" },
     },
@@ -183,6 +183,54 @@ test("age check rejects old attestations regardless of service freshness; decisi
   const d = decide(res, age);
   expect(d.find(x => x.vaultId === "1:0xa")!.action).toBe("withdraw");
   expect(d.find(x => x.vaultId === "1:0xb")!.action).toBe("insufficient data");
+});
+
+test("an attestation dated further into the future than the clock-skew allowance is rejected", () => {
+  // A bare `ageSeconds > max_age_seconds` test accepts any future timestamp as
+  // arbitrarily fresh, which would let a misbehaving service step over the freshness
+  // bar at will. Rejection happens in both directions.
+  const ahead = fakeResult([{ vaultId: "1:0xa", timestamp: String(now + CLOCK_SKEW_S + 1), verdict: "alert" }]);
+  const aheadAge = applyAgeCheck(ahead, P("hedera"), now);
+  expect(aheadAge.accepted).toEqual([]);
+  expect(aheadAge.rejected).toEqual([{ vaultId: "1:0xa", ageSeconds: -(CLOCK_SKEW_S + 1) }]);
+  const aheadDecision = decide(ahead, aheadAge)[0];
+  expect(aheadDecision.action).toBe("insufficient data");
+  // The reason must say the timestamp is in the future, not report "-121s old".
+  expect(aheadDecision.reason).toContain("in the future");
+  expect(aheadDecision.reason).toContain(`${CLOCK_SKEW_S + 1}s`);
+  // Reported as a future date, never as a negative age ("-121s old").
+  expect(aheadDecision.reason).not.toContain(`-${CLOCK_SKEW_S + 1}`);
+  expect(aheadDecision.reason).not.toContain("s old");
+
+  // Inside the allowance, a slightly-ahead timestamp is ordinary clock skew.
+  const skewed = fakeResult([{ vaultId: "1:0xa", timestamp: String(now + 60), verdict: "alert" }]);
+  const skewedAge = applyAgeCheck(skewed, P("hedera"), now);
+  expect(skewedAge.rejected).toEqual([]);
+  expect(skewedAge.accepted.map(a => a.vaultId)).toEqual(["1:0xa"]);
+  expect(decide(skewed, skewedAge)[0].action).toBe("withdraw");
+
+  // And the old direction still rejects, one second past the bar.
+  const p = P("hedera");
+  const old = fakeResult([{ vaultId: "1:0xa", timestamp: String(now - (p.max_age_seconds + 1)), verdict: "alert" }]);
+  const oldAge = applyAgeCheck(old, p, now);
+  expect(oldAge.rejected).toEqual([{ vaultId: "1:0xa", ageSeconds: p.max_age_seconds + 1 }]);
+  expect(decide(old, oldAge)[0].reason).toContain(`${p.max_age_seconds + 1}s old`);
+});
+
+test("citation txId falls back to the receipt's payment when the rail set no header", () => {
+  // `PaidResult.txId` comes from the payment-response header, which only real x402
+  // middleware sets; the signed receipt always carries the id the payer committed to.
+  // Without the fallback a citation would read `txId: null` even though the payment is
+  // right there in the receipt — and `watch` and the scan tool would print a tx id the
+  // run file did not record.
+  const res = { ...fakeResult([{ vaultId: "1:0xa", timestamp: String(now - 1), verdict: "ok" }], { receiptTxId: "0.0.42@1.0" }), txId: null };
+  const d = decide(res, applyAgeCheck(res, P("hedera"), now));
+  expect(res.receipt.payment.txId).toBe("0.0.42@1.0");
+  expect(d[0].citations.txId).toBe("0.0.42@1.0");
+
+  // A rail-level id still wins when present.
+  const withHeader = fakeResult([{ vaultId: "1:0xa", timestamp: String(now - 1), verdict: "ok" }], { receiptTxId: "0.0.42@1.0" });
+  expect(decide(withHeader, applyAgeCheck(withHeader, P("hedera"), now))[0].citations.txId).toBe("0.0.42@1700000000.0");
 });
 
 test("every verdict maps to its action and carries citations from the report's first evidence entry", () => {

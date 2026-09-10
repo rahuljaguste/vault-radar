@@ -77,9 +77,12 @@ test("watch runs discover -> quote -> scan -> decide, writes a RunRecord, and ex
   expect(saved.decisions[0].citations).toEqual({
     block: "4242",
     source: "substreams:erc4626-vault-metrics",
-    txId: null,
+    // No payment-response header here (no real x402 middleware), so the citation falls
+    // back to the tx id the signed receipt commits to rather than reporting null.
+    txId: TEST_TX_ID,
     receiptHash: req.receiptHash,
   });
+  expect(req.txId).toBeNull(); // the rail-level id really is absent
 
   // The run is discoverable by the dashboard's own listing helper.
   expect(listRuns(dir).map(r => r.id)).toEqual(["testrun"]);
@@ -157,6 +160,63 @@ test("strict privacy buys the whole table and narrows to the requested vaults lo
   // The table carried three vaults; only the requested one is reported on.
   expect(saved.requests[0].verdicts.map(v => v.vaultId)).toEqual([ALERT]);
   expect(saved.decisions.map(x => x.vaultId)).toEqual([ALERT]);
+});
+
+test("strict privacy across two chains buys one table per chain and reports the uncovered vault", async () => {
+  const dir = runsDir();
+  // The harness only serves chain 1, so the chain-137 table legitimately comes back
+  // empty — which is exactly what a multi-chain vault list has to cope with. Buying one
+  // table for the first vault's chain only would have silently dropped the other vault.
+  const OFF_CHAIN = "137:0x" + "d".repeat(40);
+  const { deps: d, lines } = deps({ policy: policy({ privacy: "strict" }) });
+  const out = await runWatch({ vaults: [ALERT, OFF_CHAIN], serviceUrl: base, runsDir: dir }, d);
+
+  expect(out.exitCode).toBe(0);
+  const saved = JSON.parse(readFileSync(out.runPath!, "utf8")) as RunRecord;
+  // Two payments, one per distinct chain, in first-seen order.
+  expect(saved.requests).toHaveLength(2);
+  expect(saved.requests.map(r => r.tier)).toEqual(["table", "table"]);
+  expect(saved.requests[0].verdicts.map(v => v.vaultId)).toEqual([ALERT]);
+  expect(saved.requests[1].verdicts).toEqual([]); // chain 137's table is empty
+  expect(saved.requests[0].receiptHash).not.toBe(saved.requests[1].receiptHash);
+
+  // The requested vault that no table carried is reported, not silently dropped.
+  const offChain = saved.decisions.find(x => x.vaultId === OFF_CHAIN)!;
+  expect(offChain.action).toBe("insufficient data");
+  expect(offChain.reason).toContain("not present in the fetched table(s)");
+  // It cites the receipt of the table bought for its own chain — the document that
+  // proves it wasn't in there.
+  expect(offChain.citations.receiptHash).toBe(saved.requests[1].receiptHash);
+  expect(offChain.citations.block).toBe("");
+
+  // The covered vault still gets its real decision, citing its own chain's receipt.
+  const covered = saved.decisions.find(x => x.vaultId === ALERT)!;
+  expect(covered.action).toBe("withdraw");
+  expect(covered.citations.receiptHash).toBe(saved.requests[0].receiptHash);
+  expect(saved.decisions).toHaveLength(2);
+
+  // Both payments are printed, and the quote covered both tables rather than one.
+  const text = lines.join("\n");
+  expect(text).toContain("payment 1 of 2");
+  expect(text).toContain("payment 2 of 2");
+  expect(text).toContain("in 2 payments");
+  expect(text).toContain("$0.06"); // 2 × the 0.03 table price
+});
+
+test("a strict-tier plan spanning more chains than the budget covers buys nothing", async () => {
+  const dir = runsDir();
+  // One table is 0.03, so three chains cost 0.09. With a 0.05 budget the whole plan is
+  // unaffordable and must be refused up front rather than part-bought.
+  const { deps: d } = deps({ policy: policy({ privacy: "strict", budget: { usdc_hedera: "0.05", usdc_arc: "1.00" } }) });
+  const out = await runWatch(
+    { vaults: [ALERT, "137:0x" + "d".repeat(40), "8453:0x" + "e".repeat(40)], serviceUrl: base, runsDir: dir },
+    d,
+  );
+  expect(out.exitCode).toBe(2);
+  expect(out.message).toContain("no usable rail");
+  expect(out.message).toContain("quote 0.09");
+  const saved = JSON.parse(readFileSync(out.runPath!, "utf8")) as RunRecord;
+  expect(saved.requests).toEqual([]);
 });
 
 test("cheap privacy sends a clear request", async () => {

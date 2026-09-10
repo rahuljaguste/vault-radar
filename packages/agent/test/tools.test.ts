@@ -131,7 +131,9 @@ test("vaultradar_scan pays, verifies, decides, and appends a RunRecord the dashb
   expect(body.decisions[0].citations).toEqual({
     block: "4242",
     source: "substreams:erc4626-vault-metrics",
-    txId: null,
+    // Falls back to the receipt's own payment id, matching `tx_id` above, so the model
+    // cannot cite a tx id the run file does not carry.
+    txId: TEST_TX_ID,
     receiptHash: body.receipt_hash,
   });
   // The per-vault report the model is meant to quote from, not re-derive.

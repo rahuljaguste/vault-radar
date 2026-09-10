@@ -1,6 +1,7 @@
 import { createSdkMcpServer, tool } from "@anthropic-ai/claude-agent-sdk";
 import { z } from "zod";
 import { receiptHash, verifyReceipt, type Receipt } from "@vaultradar/core";
+import { formatUsdc } from "./balances";
 import type { VaultRadarClient } from "./client";
 import { chooseRail, chooseTier, type Policy } from "./policy";
 import { saveRun, type Decision, type RunRecord } from "./runs";
@@ -10,6 +11,7 @@ import {
   identityRefusal,
   quoteFor,
   type Amounts,
+  type PurchaseOutcome,
   type PurchasePlan,
   type RailHealth,
 } from "./watch";
@@ -98,16 +100,16 @@ export class RunLog {
    * lose the purchase that already happened, so the in-memory record keeps it either
    * way and the caller reports the path as unavailable.
    *
-   * An outcome with no `request` never reached a payment (no usable rail, a rail the
+   * An outcome with no purchases never reached a payment (no usable rail, a rail the
    * model named that isn't usable), so it opens no run at all. This differs from
    * `runWatch` on purpose: a `watch` invocation is one shot whose whole outcome — even
    * "I declined to pay, here is why" — is worth a run file, whereas a chat session may
    * ask for many things and should not leave an empty run behind for each refusal.
    */
-  async append(outcome: Awaited<ReturnType<typeof executePurchase>>): Promise<string | null> {
-    if (!outcome.request) return null;
+  async append(outcome: PurchaseOutcome): Promise<string | null> {
+    if (!outcome.purchases.length) return null;
     const run = await this.ensure();
-    run.requests.push(outcome.request);
+    run.requests.push(...outcome.purchases.map(p => p.request));
     if (outcome.ok) run.decisions = [...run.decisions, ...outcome.decisions];
     try {
       return saveRun(this.ctx.runsDir, run);
@@ -126,10 +128,8 @@ const err = (message: string) => ({
 const VAULT_ID_RE = /^\d+:0x[0-9a-fA-F]{40}$/;
 
 /** Per-vault view of a purchase, shaped so a model can quote it without re-deriving anything. */
-function reportSummary(
-  outcome: Extract<Awaited<ReturnType<typeof executePurchase>>, { ok: true }>,
-): { decisions: Decision[]; reports: unknown[] } {
-  const byVault = new Map(outcome.result.reports.map(r => [r.vaultId, r]));
+function reportSummary(outcome: Extract<PurchaseOutcome, { ok: true }>): { decisions: Decision[]; reports: unknown[] } {
+  const byVault = new Map(outcome.purchases.flatMap(p => p.result.reports.map(r => [r.vaultId, r] as const)));
   return {
     decisions: outcome.decisions,
     reports: outcome.decisions.map(d => {
@@ -143,6 +143,12 @@ function reportSummary(
       };
     }),
   };
+}
+
+/** Sums USD decimal strings in atomic micro-USD, so N table prices add up exactly. */
+function totalUsd(amounts: (string | null)[]): string {
+  const micro = amounts.reduce((sum, a) => sum + (a == null ? 0 : Math.round(Number(a) * 1e6)), 0);
+  return formatUsdc(String(micro));
 }
 
 /**
@@ -170,23 +176,46 @@ export function vaultradarTools(ctx: AgentContext, log: RunLog = new RunLog(ctx)
     const outcome = await executePurchase(plan, ctx.serviceUrl, purchaseDeps);
     const runPath = await log.append(outcome);
     if (!outcome.ok) {
-      return err(
-        `${outcome.reason}${outcome.request ? ` (receipt ${outcome.request.receiptHash}, recorded in ${runPath ?? "memory only"})` : ""}`,
-      );
+      const hashes = outcome.purchases.map(p => p.request.receiptHash).join(", ");
+      return err(`${outcome.reason}${hashes ? ` (receipt ${hashes}, recorded in ${runPath ?? "memory only"})` : ""}`);
     }
+
+    // Almost always one payment. A strict-tier scan whose vaults span several chains buys
+    // one table per chain, so the per-payment detail lives in `purchases`; the singular
+    // keys describe the first payment, and each decision's own `citations.receiptHash`
+    // remains the authoritative reference for that vault either way.
+    const payments = outcome.purchases.map(({ result, request, hcs }) => ({
+      rail: result.rail,
+      tier: result.tier,
+      sealed: result.sealed,
+      price_usd: result.priceUsd,
+      receipt_hash: request.receiptHash,
+      // The rail-level tx id is only set by real payment middleware; the receipt always
+      // carries the identifier the payer committed to, so fall back to it.
+      tx_id: result.txId ?? result.receipt.payment.txId,
+      hcs,
+      rejected: request.rejected,
+      verified: { receipt: result.receiptValid, attestations: result.attestationsValid },
+    }));
+    const first = payments[0]!;
     return ok({
       ...reportSummary(outcome),
       rail: outcome.rail,
-      tier: outcome.result.tier,
-      sealed: outcome.result.sealed,
-      price_usd: outcome.result.priceUsd,
-      receipt_hash: outcome.request.receiptHash,
-      // The rail-level tx id is only set by real payment middleware; the receipt always
-      // carries the identifier the payer committed to, so surface both.
-      tx_id: outcome.result.txId ?? outcome.result.receipt.payment.txId,
-      hcs: outcome.hcs,
-      rejected: outcome.request.rejected,
-      verified: { receipt: outcome.result.receiptValid, attestations: outcome.result.attestationsValid },
+      tier: first.tier,
+      sealed: first.sealed,
+      price_usd: totalUsd(payments.map(p => p.price_usd)),
+      receipt_hash: first.receipt_hash,
+      tx_id: first.tx_id,
+      hcs: first.hcs,
+      rejected: payments.flatMap(p => p.rejected),
+      verified: {
+        receipt: payments.every(p => p.verified.receipt),
+        attestations: payments.every(p => p.verified.attestations),
+      },
+      payments,
+      ...(payments.length > 1
+        ? { note: `${payments.length} payments were made, one table per chain; cite each vault's own citations.receiptHash.` }
+        : {}),
       run_path: runPath,
     });
   };

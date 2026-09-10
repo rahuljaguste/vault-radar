@@ -1,4 +1,5 @@
 import { TABLE_PRICE_USD, receiptHash, type Rail } from "@vaultradar/core";
+import { formatUsdc } from "./balances";
 import type { Discovery, PaidResult, VaultRadarClient } from "./client";
 import { applyAgeCheck, chooseRail, chooseTier, decide, type AgeCheck, type Policy } from "./policy";
 import { saveRun, type Decision, type RunRecord, type RunRequest } from "./runs";
@@ -120,14 +121,22 @@ export function buildRunRequest(result: PaidResult, age: AgeCheck): RunRequest {
 }
 
 /**
- * Quotes both rails for the tier that is actually going to be bought. `client.quote()`
- * prices a scan; the table tier is a flat price, so non-null scan quotes (which is how
- * the client reports "this rail is configured") are mapped to it.
+ * Quotes both rails for the tier that is actually going to be bought, for the *whole*
+ * plan. `client.quote()` prices a scan; the table tier is a flat price per table, so
+ * non-null scan quotes (which is how the client reports "this rail is configured") are
+ * mapped to `requests × TABLE_PRICE_USD`.
+ *
+ * Multiplying by `requests` is what keeps the budget honest: a strict-tier run spanning
+ * three chains buys three tables, and quoting one table's price would let it spend 3× the
+ * policy's cap while `chooseRail` reported the rail as affordable.
  */
-export async function quoteFor(client: VaultRadarClient, tier: "scan" | "table", count: number): Promise<Quotes> {
+export async function quoteFor(client: VaultRadarClient, tier: "scan" | "table", count: number, requests = 1): Promise<Quotes> {
   const scan = await client.quote(count);
   if (tier === "scan") return scan;
-  return { hedera: scan.hedera == null ? null : TABLE_PRICE_USD, arc: scan.arc == null ? null : TABLE_PRICE_USD };
+  // Multiplied in atomic micro-USD so N tables price exactly (0.03 × 3 in binary floats
+  // is 0.09000000000000001, which would then compare wrong against a budget of "0.09").
+  const total = formatUsdc(String(Math.round(Number(TABLE_PRICE_USD) * 1e6) * Math.max(1, requests)));
+  return { hedera: scan.hedera == null ? null : total, arc: scan.arc == null ? null : total };
 }
 
 /**
@@ -160,26 +169,33 @@ export type PurchaseContext = {
   health: RailHealth;
 };
 
+/** One paid request and everything derived from it. */
+export type Purchase = {
+  result: PaidResult;
+  age: AgeCheck;
+  request: RunRequest;
+  hcs: HcsRecord;
+  /** The chain this table was bought for; null for a scan, which spans chains. */
+  chainId: string | null;
+};
+
 export type PurchaseOutcome =
   | {
       ok: true;
       ctx: PurchaseContext;
       rail: Rail;
       choiceReason: string;
-      result: PaidResult;
-      age: AgeCheck;
+      /** One entry per paid request: a strict-tier plan spanning N chains buys N tables. */
+      purchases: Purchase[];
+      /** Across every purchase, plus one per requested vault that no table carried. */
       decisions: Decision[];
-      request: RunRequest;
-      hcs: HcsRecord;
     }
   | {
       ok: false;
       ctx: PurchaseContext;
       reason: string;
-      /** Set when the failure happened after payment, so the attempt stays auditable. */
-      result: PaidResult | null;
-      request: RunRequest | null;
-      hcs: HcsRecord | null;
+      /** Purchases that completed before the failure, so every payment stays auditable. */
+      purchases: Purchase[];
     };
 
 /** Human-readable account of what each rail offered, for the no-usable-rail message. */
@@ -208,15 +224,69 @@ export function identityRefusal(disc: Discovery): string | null {
   return null;
 }
 
+/** Chain id out of a `<chainId>:<address>` vault id. */
+const chainOf = (vaultId: string) => vaultId.split(":")[0] ?? "1";
+
 /**
- * The one paid step, shared by `watch` and the `vaultradar_scan`/`vaultradar_table`
- * tools: price both rails for the tier the policy asks for, pick a usable rail, buy
- * exactly once, re-check attestation age against the policy's own bar, and refuse to
- * derive any decision from a purchase whose receipt or attestations did not verify.
+ * The distinct chains a plan's tables must cover, in first-seen order. Empty for a scan,
+ * which is a single request covering every named vault regardless of chain.
  *
- * Never throws for a policy or verification outcome — those come back as `ok: false`
- * with a reason and, when payment already happened, the `RunRequest` that records it.
- * A transport or payment failure still throws, since the caller can't usefully continue.
+ * A table is per protocol *per chain*, so a strict-tier vault list spanning two chains
+ * needs two tables. Taking only the first chain would silently drop every other vault
+ * from the results.
+ */
+export function planChains(plan: PurchasePlan, tier: "scan" | "table"): string[] {
+  if (plan.kind === "table") return [plan.chainId];
+  if (tier === "scan") return [];
+  return [...new Set(plan.vaults.map(chainOf))];
+}
+
+/**
+ * `insufficient data` decisions for vaults that were asked about but appear in none of
+ * the tables that were bought — a vault id that doesn't exist, or belongs to a different
+ * protocol than the one whose table was fetched. Silently returning nothing for them
+ * would read as "no risk found" when the truth is "never looked at".
+ *
+ * Each cites the receipt of the table bought for that vault's own chain, which is the
+ * document that proves what was and wasn't in it.
+ */
+export function missingVaultDecisions(requested: string[], purchases: Purchase[]): Decision[] {
+  const covered = new Set(purchases.flatMap(p => p.result.reports.map(r => r.vaultId.toLowerCase())));
+  // Keyed off the chain each table was *bought for*, not off the vaults it returned — a
+  // table that came back empty is exactly the one that proves the vault isn't there.
+  const byChain = new Map<string, Purchase>();
+  for (const p of purchases) if (p.chainId && !byChain.has(p.chainId)) byChain.set(p.chainId, p);
+  return requested
+    .filter(v => !covered.has(v.toLowerCase()))
+    .map(vaultId => {
+      const source = byChain.get(chainOf(vaultId)) ?? purchases[0];
+      return {
+        vaultId,
+        action: "insufficient data" as const,
+        reason: `This vault was not present in the fetched table(s), so nothing about it was bought.`,
+        citations: {
+          block: "",
+          source: "",
+          txId: source ? source.result.txId ?? source.result.receipt.payment.txId : null,
+          receiptHash: source?.request.receiptHash ?? "",
+        },
+      };
+    });
+}
+
+/**
+ * The paid step, shared by `watch` and the `vaultradar_scan`/`vaultradar_table` tools:
+ * price both rails for the whole plan, pick a usable rail, buy, re-check attestation age
+ * against the policy's own bar, and refuse to derive any decision from a purchase whose
+ * receipt or attestations did not verify.
+ *
+ * Usually one payment. A strict-tier plan whose vaults span several chains buys one table
+ * per chain, sequentially, and stops at the first verification failure rather than
+ * continuing to spend against a service that just failed a check.
+ *
+ * Never throws for a policy or verification outcome — those come back as `ok: false` with
+ * a reason and every payment that did happen in `purchases`. A transport or payment
+ * failure still throws, since the caller can't usefully continue.
  */
 export async function executePurchase(plan: PurchasePlan, serviceUrl: string, deps: PurchaseDeps): Promise<PurchaseOutcome> {
   const { client, policy } = deps;
@@ -224,14 +294,15 @@ export async function executePurchase(plan: PurchasePlan, serviceUrl: string, de
 
   const planned = plan.kind === "policy" ? chooseTier(policy) : { tier: "table" as const, seal: true };
   const count = plan.kind === "policy" ? plan.vaults.length : 0;
-  const quotes = await quoteFor(client, planned.tier, count);
+  const chains = planChains(plan, planned.tier);
+  const quotes = await quoteFor(client, planned.tier, count, chains.length);
   const [balances, health] = await Promise.all([deps.balances(), deps.health()]);
   const ctx: PurchaseContext = { ...planned, quotes, balances, health };
 
   const forced = deps.rail ?? null;
   const choice = chooseRail(forced ? { ...policy, rail_preference: forced } : policy, quotes, balances, health);
   if (choice.rail == null) {
-    return { ok: false, ctx, reason: `no usable rail — ${railSummary(policy, quotes, balances, health)}`, result: null, request: null, hcs: null };
+    return { ok: false, ctx, reason: `no usable rail — ${railSummary(policy, quotes, balances, health)}`, purchases: [] };
   }
   if (forced && choice.rail !== forced) {
     // An operator or model that named a rail gets told it is unusable rather than
@@ -240,42 +311,53 @@ export async function executePurchase(plan: PurchasePlan, serviceUrl: string, de
       ok: false,
       ctx,
       reason: `requested rail ${forced} is unusable — ${railSummary(policy, quotes, balances, health)}`,
-      result: null,
-      request: null,
-      hcs: null,
+      purchases: [],
     };
   }
   const rail = choice.rail;
+  const protocol = plan.kind === "table" ? plan.protocol : plan.protocol ?? DEFAULT_TABLE_PROTOCOL;
 
-  let result: PaidResult;
-  if (plan.kind === "table") {
-    result = await client.table(plan.protocol, plan.chainId, rail);
-  } else if (planned.tier === "scan") {
-    result = await client.scan(plan.vaults, rail, { seal: planned.seal });
-  } else {
-    // Strict tier: buy the whole protocol table so the service never learns which
-    // vault the agent cares about, then filter locally.
-    const chainId = plan.vaults[0]?.split(":")[0] ?? "1";
-    result = narrowResult(await client.table(plan.protocol ?? DEFAULT_TABLE_PROTOCOL, chainId, rail), plan.vaults);
+  const purchases: Purchase[] = [];
+  const decisions: Decision[] = [];
+
+  // One scan, or one table per chain. Sequential on purpose: each iteration is a real
+  // payment, and a failure must stop the spending rather than race N of them out.
+  const buys: { chainId: string | null; buy: () => Promise<PaidResult> }[] =
+    planned.tier === "scan" && plan.kind === "policy"
+      ? [{ chainId: null, buy: () => client.scan(plan.vaults, rail, { seal: planned.seal }) }]
+      : chains.map(chainId => ({
+          chainId,
+          buy: async () => {
+            const table = await client.table(protocol, chainId, rail);
+            // The strict tier buys the whole table so the service never learns which
+            // vault the agent cares about, then filters locally. An explicit
+            // `vaultradar_table` call is never narrowed.
+            return plan.kind === "policy" ? narrowResult(table, plan.vaults) : table;
+          },
+        }));
+
+  for (const { chainId, buy } of buys) {
+    const result = await buy();
+    const age = applyAgeCheck(result, policy, now());
+    const request = buildRunRequest(result, age);
+    const hcs = await pollHcs(serviceUrl, request.receiptHash, { fetchImpl: deps.fetchImpl, sleep: deps.sleep });
+    purchases.push({ result, age, request, hcs, chainId });
+
+    if (!result.receiptValid || !result.attestationsValid) {
+      const failed = [!result.receiptValid ? "receipt" : null, !result.attestationsValid ? "attestations" : null].filter(Boolean).join(" and ");
+      return {
+        ok: false,
+        ctx,
+        reason: `verification failed (${failed}) — ${purchases.length === 1 ? "the purchase is" : `${purchases.length} purchases are`} recorded but no action was taken`,
+        purchases,
+      };
+    }
+    decisions.push(...decide(result, age));
   }
 
-  const age = applyAgeCheck(result, policy, now());
-  const request = buildRunRequest(result, age);
-  const hcs = await pollHcs(serviceUrl, request.receiptHash, { fetchImpl: deps.fetchImpl, sleep: deps.sleep });
+  if (plan.kind === "policy") decisions.push(...missingVaultDecisions(plan.vaults, purchases));
 
-  if (!result.receiptValid || !result.attestationsValid) {
-    const failed = [!result.receiptValid ? "receipt" : null, !result.attestationsValid ? "attestations" : null].filter(Boolean).join(" and ");
-    return {
-      ok: false,
-      ctx,
-      reason: `verification failed (${failed}) — the purchase is recorded but no action was taken`,
-      result,
-      request,
-      hcs,
-    };
-  }
-
-  return { ok: true, ctx, rail, choiceReason: choice.reason, result, age, decisions: decide(result, age), request, hcs };
+  return { ok: true, ctx, rail, choiceReason: choice.reason, purchases, decisions };
 }
 
 const pad = (s: string, w: number) => (s.length > w ? s.slice(0, Math.max(0, w - 1)) + "…" : s.padEnd(w));
@@ -290,30 +372,38 @@ function table(headers: string[], widths: number[], rows: string[][]): string[] 
 }
 
 /**
- * The two tables `watch` prints. The first is the verdict and the action; the second
- * is the evidence behind it, so every row can be checked independently: the block and
- * source the numbers came from, the on-chain payment that bought them, the hash of the
- * signed receipt, and the HCS sequence that receipt was published at.
+ * The two tables `watch` prints, plus one footer block per payment. The first table is
+ * the verdict and the action; the second is the evidence behind it, so every row can be
+ * checked independently: the block and source the numbers came from, the on-chain payment
+ * that bought them, the hash of the signed receipt, and the HCS sequence that receipt was
+ * published at.
+ *
+ * The evidence table is driven off each decision's own `citations`, not off the purchase,
+ * so the printed values and the ones persisted to the run file are the same by
+ * construction — a reviewer comparing the terminal to `runs/*.json` sees one set of
+ * numbers. With several payments, each row's HCS sequence is looked up by the receipt
+ * hash that row cites.
  */
-export function formatDecisions(
-  result: PaidResult,
-  decisions: Decision[],
-  hcs: HcsRecord,
-): string[] {
-  const byVault = new Map(result.reports.map(r => [r.vaultId, r]));
-  const seq = hcs.sequence == null ? "pending" : String(hcs.sequence);
-  // The receipt's own payment.txId is the identifier the payer committed to; the
-  // rail-level `txId` is only present when real payment middleware set the header.
-  const txId = result.txId ?? result.receipt.payment.txId;
+export function formatDecisions(purchases: Purchase[], decisions: Decision[]): string[] {
+  const byVault = new Map(purchases.flatMap(p => p.result.reports.map(r => [r.vaultId, r] as const)));
+  const hcsByReceipt = new Map(purchases.map(p => [p.request.receiptHash, p.hcs] as const));
+  const seqFor = (receiptHashHex: string) => {
+    const hcs = hcsByReceipt.get(receiptHashHex);
+    if (!hcs) return "-";
+    return hcs.sequence == null ? "pending" : String(hcs.sequence);
+  };
 
   const risk = table(
+    // 52 fits the longest id in play: a 7-digit chain (Arc testnet is 5042002), a colon,
+    // and a 42-char address. Narrower truncates the address, which is the one column a
+    // reader has to be able to copy verbatim.
     ["VAULT", "VERDICT", "SCORE", "ACTION", "FLAGS"],
-    [45, 11, 5, 17, 40],
+    [52, 11, 5, 17, 40],
     decisions.map(d => {
       const r = byVault.get(d.vaultId);
       return [
         d.vaultId,
-        r?.verdict ?? "unknown",
+        r?.verdict ?? "absent",
         r ? String(r.score) : "-",
         d.action,
         r && r.flags.length ? r.flags.map(f => f.name).join(",") : "none",
@@ -328,13 +418,24 @@ export function formatDecisions(
       shortId(d.vaultId),
       d.citations.block || "-",
       d.citations.source || "-",
-      txId,
-      d.citations.receiptHash.slice(0, 12) + "…",
-      seq,
+      d.citations.txId ?? "-",
+      d.citations.receiptHash ? d.citations.receiptHash.slice(0, 12) + "…" : "-",
+      seqFor(d.citations.receiptHash),
     ]),
   );
 
-  const hash = decisions[0]?.citations.receiptHash ?? receiptHash(result.receipt);
+  const footers = purchases.flatMap(({ result, request, hcs }, i) => {
+    const seq = hcs.sequence == null ? "pending" : String(hcs.sequence);
+    const label = purchases.length > 1 ? ` (payment ${i + 1} of ${purchases.length})` : "";
+    return [
+      `  rail ${result.rail}  tier ${result.tier}  sealed ${result.sealed}  price $${result.priceUsd ?? "?"}${label}`,
+      `  receipt hash  ${request.receiptHash}`,
+      `  hcs           topic ${hcs.topicId ?? (result.receipt.hcs.topicId || "none")} sequence ${seq}`,
+      `  payment tx    ${result.txId ?? result.receipt.payment.txId}`,
+      `  verified      receipt ${result.receiptValid ? "ok" : "FAILED"}, attestations ${result.attestationsValid ? "ok" : "FAILED"}`,
+    ];
+  });
+
   return [
     "",
     ...risk,
@@ -343,18 +444,15 @@ export function formatDecisions(
     "",
     ...decisions.map(d => `  ${shortId(d.vaultId)}: ${d.reason}`),
     "",
-    `  rail ${result.rail}  tier ${result.tier}  sealed ${result.sealed}  price $${result.priceUsd ?? "?"}`,
-    `  receipt hash  ${hash}`,
-    `  hcs           topic ${hcs.topicId ?? (result.receipt.hcs.topicId || "none")} sequence ${seq}`,
-    `  payment tx    ${txId}`,
-    `  verified      receipt ${result.receiptValid ? "ok" : "FAILED"}, attestations ${result.attestationsValid ? "ok" : "FAILED"}`,
+    ...footers,
   ];
 }
 
 /**
  * One non-interactive monitoring pass: verify the service's identity, pick a rail and
- * privacy tier under the policy, buy exactly one request, re-check attestation age
- * against the policy's own bar, decide, print the evidence and persist the run.
+ * privacy tier under the policy, buy (normally one request; one table per chain under
+ * `strict` when the vaults span several), re-check attestation age against the policy's
+ * own bar, decide, print the evidence and persist the run.
  *
  * Returns an exit code rather than calling `process.exit`, so the whole pipeline is
  * testable in-process. Exit 2 means nothing was acted on: a failed identity check, no
@@ -418,16 +516,17 @@ export async function runWatch(args: WatchArgs, deps: WatchDeps): Promise<WatchO
   out(`  policy        privacy ${policy.privacy} -> ${ctx.tier}${ctx.seal ? " (sealed)" : " (clear)"}, max age ${policy.max_age_seconds}s`);
   out(`  rails         ${railSummary(policy, ctx.quotes, ctx.balances, ctx.health)}`);
 
-  if (outcome.request) run.requests.push(outcome.request);
+  run.requests.push(...outcome.purchases.map(p => p.request));
   if (!outcome.ok) {
     // A post-payment failure is still printed, so the operator sees the evidence that
     // the purchase happened and why nothing was acted on.
-    if (outcome.result && outcome.hcs) for (const line of formatDecisions(outcome.result, [], outcome.hcs)) out(line);
+    if (outcome.purchases.length) for (const line of formatDecisions(outcome.purchases, [])) out(line);
     return finish(2, outcome.reason);
   }
 
-  out(`  bought        ${ctx.tier} on ${outcome.rail} for $${ctx.quotes[outcome.rail]} (${outcome.choiceReason})`);
+  const payments = outcome.purchases.length === 1 ? "" : ` in ${outcome.purchases.length} payments`;
+  out(`  bought        ${ctx.tier} on ${outcome.rail} for $${ctx.quotes[outcome.rail]}${payments} (${outcome.choiceReason})`);
   run.decisions = outcome.decisions;
-  for (const line of formatDecisions(outcome.result, outcome.decisions, outcome.hcs)) out(line);
+  for (const line of formatDecisions(outcome.purchases, outcome.decisions)) out(line);
   return finish(0, null);
 }

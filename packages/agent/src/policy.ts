@@ -127,10 +127,26 @@ export function chooseTier(p: Policy): { tier: "scan" | "table"; seal: boolean }
 export type AgeCheck = { accepted: Attestation[]; rejected: { vaultId: string; ageSeconds: number }[] };
 
 /**
+ * How far an attestation may be dated into the future before the agent stops believing
+ * it. Some slack is necessary because the service's clock, the chain it read, and the
+ * agent's own clock are three different clocks; two minutes matches the sealed-request
+ * timestamp window in `@vaultradar/core` (`TS_WINDOW_S`). Beyond that, a future date is
+ * not skew — it is a timestamp that cannot be true yet.
+ */
+export const CLOCK_SKEW_S = 120;
+
+/**
  * The agent's own freshness check, run against the signed attestation timestamps
  * rather than the service's `freshness` classification — so a service that widens its
  * own staleness window, or whose upstream is lagging, cannot talk the agent into
  * acting on old numbers.
+ *
+ * Rejects in both directions. Too old is the obvious case. Too far in the *future*
+ * matters just as much: `ageSeconds` goes negative there, and a bare
+ * `ageSeconds > max_age_seconds` test would accept a timestamp dated next year as
+ * arbitrarily fresh — turning the freshness bar into something a misbehaving service
+ * could step over at will. The rejection records the real (possibly negative)
+ * `ageSeconds`, so the run file shows which direction it failed in.
  *
  * An attestation whose timestamp doesn't parse is treated as dating from the epoch
  * (age = `now`), which is both finite — `rejected[].ageSeconds` is a plain number in
@@ -142,8 +158,11 @@ export function applyAgeCheck(result: PaidResult, p: Policy, now: number): AgeCh
   for (const a of result.attestations) {
     const ts = Number(a.timestamp);
     const ageSeconds = Number.isFinite(ts) ? now - ts : now;
-    if (ageSeconds > p.max_age_seconds) rejected.push({ vaultId: a.vaultId, ageSeconds });
-    else accepted.push(a);
+    if (ageSeconds > p.max_age_seconds || ageSeconds < -CLOCK_SKEW_S) {
+      rejected.push({ vaultId: a.vaultId, ageSeconds });
+    } else {
+      accepted.push(a);
+    }
   }
   return { accepted, rejected };
 }
@@ -178,7 +197,11 @@ export function decide(result: PaidResult, age: AgeCheck): Decision[] {
     const citations = {
       block: evidence?.block ?? attestation?.block ?? "",
       source: evidence?.source ?? attestation?.source ?? "",
-      txId: result.txId,
+      // The rail-level `txId` comes from the payment-response header, which only real
+      // x402 middleware sets; the receipt always carries the identifier the payer
+      // committed to. Falling back keeps every citation pointing at a real payment, and
+      // matches what `watch` prints and what the scan tool returns.
+      txId: result.txId ?? result.receipt.payment.txId,
       receiptHash: hash,
     };
     const flags = flagNames(report);
@@ -186,10 +209,16 @@ export function decide(result: PaidResult, age: AgeCheck): Decision[] {
 
     const staleBy = rejected.get(report.vaultId);
     if (staleBy != null) {
+      // A negative age means the attestation is dated ahead of our clock by more than
+      // CLOCK_SKEW_S; say so rather than reporting a nonsensical "-5000s old".
+      const how =
+        staleBy < 0
+          ? `Attestation is dated ${-staleBy}s in the future, beyond the ${CLOCK_SKEW_S}s clock-skew allowance`
+          : `Attestation is ${staleBy}s old, beyond the policy's max age`;
       return {
         vaultId: report.vaultId,
         action: "insufficient data" as const,
-        reason: `Attestation is ${staleBy}s old and was rejected by the policy's max-age check, so the ${report.verdict} verdict (${withFlags}) cannot be acted on.`,
+        reason: `${how}, so the ${report.verdict} verdict (${withFlags}) cannot be acted on.`,
         citations,
       };
     }
