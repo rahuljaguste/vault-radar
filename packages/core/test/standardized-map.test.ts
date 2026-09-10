@@ -32,6 +32,17 @@ test("lending history stays timestamp-descending after merging hourly and daily 
   expect(m.history.map(h => h.netFlowAssets)).toEqual(["2000.00", "-500.00", "20000.00", "-5000.00"]);
 });
 
+// Which series a point came from has to survive the merge, because `risk.ts` sums flows over
+// a 24 h window and the two series each already account for that whole window — summing
+// across them double-counts. The label is how it picks one.
+test("every mapped point carries the series it came from", () => {
+  const [m] = mapLendingMarkets(d("lending"), lendFx, Number(lendFx._meta.block.timestamp) + 10);
+  expect(m.history.map(h => h.series)).toEqual(["hourly", "hourly", "daily", "daily"]);
+
+  const [v] = mapYieldVaults(d("yield-aggregator"), yieldFx, Number(yieldFx._meta.block.timestamp) + 10);
+  expect(v.history.map(h => h.series)).toEqual(["hourly", "hourly", "daily", "daily"]);
+});
+
 test("yield net flow is diffed within each series (hourly-vs-hourly, daily-vs-daily), never across the hourly/daily boundary", () => {
   const [v] = mapYieldVaults(d("yield-aggregator"), yieldFx, Number(yieldFx._meta.block.timestamp) + 10);
   expect(v.history.map(h => h.timestamp)).toEqual(["1759999900", "1759996300", "1759913600", "1759827200"]);

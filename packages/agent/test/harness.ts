@@ -30,7 +30,9 @@ function vaultOf(id: string, o: { sourceTs: number; sharePrice: string; history:
   return {
     id, kind: "erc4626", protocol: "erc4626", chain: "ethereum", chainId: "1",
     asset: null, sharePrice: o.sharePrice, tvlUsd: null, inputTokenBalance: "100", depositLimit: null,
-    history: o.history.map(h => ({ block: "9", timestamp: String(h.ts), sharePrice: h.sharePrice, tvlUsd: null, netFlowAssets: null })),
+    // `series: "block"` to match what the Substreams reader produces for an erc4626 vault;
+    // these fixtures carry no flows anyway, so the outflow flag never looks at them.
+    history: o.history.map(h => ({ block: "9", timestamp: String(h.ts), sharePrice: h.sharePrice, tvlUsd: null, netFlowAssets: null, series: "block" as const })),
     // `freshness: "fresh"` on every fixture on purpose: the service therefore computes a
     // real verdict for all of them, and anything the agent rejects it rejects on its own
     // max-age check against the attestation timestamp — not by echoing a service verdict.

@@ -53,6 +53,9 @@ function vault(id: string, opts: { history?: { ageSeconds: number; sharePrice: s
       sharePrice: h.sharePrice,
       tvlUsd: null,
       netFlowAssets: null,
+      // Matches what the Substreams reader produces; these fixtures score on share price
+      // only, so no flow is ever read off them.
+      series: "block" as const,
     })),
     sources: [
       {

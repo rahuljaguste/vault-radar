@@ -20,6 +20,9 @@ test("reader builds erc4626 UnifiedVault with substreams source from the chain-s
   expect(v.sharePrice).toBe("1.02");
   expect(v.sources[0]).toMatchObject({ kind: "substreams", block: "1000", timestamp: String(now - 60), ageSeconds: "60", freshness: "fresh" });
   expect(v.history[0].netFlowAssets).toBe("-100");
+  // Per-block rows, each carrying its own block's movement — so `risk.ts` may sum them all
+  // over a window without double-counting, unlike a merged hourly+daily Messari history.
+  expect(v.history[0].series).toBe("block");
   expect(v.asset).toEqual({ symbol: "USDC", decimals: 6 });
   expect(calls.some(c => c.includes("LIKE"))).toBe(false);
   expect(calls.some(c => c.includes("cursors_1"))).toBe(true);
