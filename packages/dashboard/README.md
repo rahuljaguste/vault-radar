@@ -107,7 +107,7 @@ Read from the process environment at request time. The repo root's
 | `SERVICE_URL` | server components, `lib/service.ts`, `lib/admin.ts` | `http://localhost:8787` | The VaultRadar service this dashboard reads. |
 | `NEXT_PUBLIC_SERVICE_URL` | `/verify` in the browser | none | Inlined at build time, which is why `/verify` needs its own variable. |
 | `RUNS_DIR` | `lib/runs.ts`, `POST /api/scan` | `<repo root>/runs` | Where run files are read from and written to. Reader and writer share one resolver, so they cannot disagree. |
-| `DEMO` | `lib/runs.ts` | unset | `DEMO=1` ignores `RUNS_DIR` entirely and serves `public/demo-run.json`, which is what a hosted deployment with no local runs uses. |
+| `DEMO` | `lib/runs.ts` | unset | Advisory. `public/demo-run.json` is served whenever `RUNS_DIR` holds no runs, in either mode; real runs always win, so setting `DEMO=1` can no longer hide a purchase this deployment actually made. |
 | `ADMIN_TOKEN` | `/admin` (server only) | none | Must equal the service's `ADMIN_TOKEN`. Unset means `/admin` explains that rather than failing. |
 | `AGENT_HEDERA_ACCOUNT_ID` | `POST /api/scan` (server only) | none | The paying Hedera account. Absent disables paid scans. |
 | `AGENT_HEDERA_KEY` | `POST /api/scan` (server only) | none | That account's ECDSA private key. Never logged, never returned, never bundled for the browser. Every error that leaves the handler is redacted against it first. |

@@ -153,3 +153,49 @@ test("findRunsForVaults returns [] for an empty list and for a vault nobody scan
   expect(await findRunsForVaults([])).toEqual([]);
   expect(await findRunsForVaults(["999:0x" + "f".repeat(40)])).toEqual([]);
 });
+
+test("DEMO=1 no longer hides real runs, so a purchase this deployment made is never replaced by the fixture", async () => {
+  // `DEMO=1` used to make the reader return no files at all, which meant an operator who
+  // set it for the hosted demo and then bought a real scan from /portfolio was shown the
+  // committed `public/demo-run.json` instead of the run they had paid for, with nothing on
+  // the page saying so. Real runs win in both modes; the fixture is the fallback when there
+  // are none, which it already was with DEMO unset.
+  process.env.DEMO = "1";
+  try {
+    const runs = await listRuns();
+    expect(runs.map((r) => r.id).sort()).toContain("newer");
+    expect(await getRun("newer")).not.toBeNull();
+    expect((await findRunsForVaults([VAULT_B])).map((m) => m.id)).toEqual(["newer"]);
+
+    // And the listing is identical to the one with DEMO unset — the flag changes nothing
+    // about what is served.
+    const withFlag = (await listRuns()).map((r) => r.id).sort();
+    delete process.env.DEMO;
+    expect((await listRuns()).map((r) => r.id).sort()).toEqual(withFlag);
+  } finally {
+    delete process.env.DEMO;
+  }
+});
+
+test("an empty runs directory still falls back to the bundled demo run, in either mode", async () => {
+  // The fallback is what a hosted deployment with no local runs relies on, so removing the
+  // DEMO short-circuit must not have removed it. Pointed at an empty directory, the reader
+  // serves whatever `public/demo-run.json` holds — or nothing at all when the process is
+  // not running from `packages/dashboard` and the fixture is not where it looks.
+  const empty = mkdtempSync(join(tmpdir(), "vaultradar-dashboard-empty-"));
+  process.env.RUNS_DIR = empty;
+  try {
+    for (const mode of ["1", undefined]) {
+      if (mode) process.env.DEMO = mode;
+      else delete process.env.DEMO;
+      const runs = await listRuns();
+      // Either the fixture resolved (one run, and it is not one of this file's) or it did
+      // not (none). Both are correct; what must not happen is this file's runs appearing.
+      expect(runs.every((r) => !["older", "newer", "target", "prefix-target"].includes(r.id))).toBe(true);
+    }
+  } finally {
+    delete process.env.DEMO;
+    process.env.RUNS_DIR = dir;
+    rmSync(empty, { recursive: true, force: true });
+  }
+});

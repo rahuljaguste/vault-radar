@@ -32,7 +32,10 @@ export type AgentCard = {
 export type CatalogEntry = {
   protocol: string;
   chain: string;
-  status: "live" | "stale" | "down" | "unverified";
+  /** Mirrors `Deployment["status"]` in `@vaultradar/core`, including `repointed` — the
+   * subgraph now resolves to a different deployment than the one the registry pins, which
+   * the service reports as-is. */
+  status: "live" | "stale" | "down" | "unverified" | "repointed";
   vaultCount: number;
 };
 
@@ -50,24 +53,44 @@ export function getServiceUrl(): string {
   return (process.env.SERVICE_URL ?? "http://localhost:8787").replace(/\/$/, "");
 }
 
-async function getJson<T>(url: string): Promise<T | null> {
+/**
+ * How long a page will wait for the service before rendering without it.
+ *
+ * Every caller of `getJson` is a server component rendering a page, and `fetch` has no
+ * default timeout: a service that accepts the connection and then never answers held the
+ * request open until the platform's own (much longer) limit, so one unresponsive upstream
+ * stalled the whole page rather than degrading it. Ten seconds is far above any healthy
+ * response from these endpoints and well inside a visitor's patience.
+ */
+export const SERVICE_FETCH_TIMEOUT_MS = 10_000;
+
+async function getJson<T>(url: string, timeoutMs: number = SERVICE_FETCH_TIMEOUT_MS): Promise<T | null> {
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), timeoutMs);
   try {
-    const res = await fetch(url, { cache: "no-store" });
+    const res = await fetch(url, { cache: "no-store", signal: controller.signal });
     if (!res.ok) return null;
     return (await res.json()) as T;
   } catch {
+    // An abort surfaces here as well, and is treated the same as any other failure to
+    // reach the service: the caller renders the "service unavailable" state.
     return null;
+  } finally {
+    clearTimeout(timer);
   }
 }
 
-export function fetchCard(): Promise<AgentCard | null> {
-  return getJson<AgentCard>(`${getServiceUrl()}/.well-known/agent.json`);
+// `timeoutMs` is only ever passed by `test/service-timeout.test.ts`, which shortens it so
+// the abort path can be driven against a server that never answers without a ten-second
+// wait. No page passes it.
+export function fetchCard(timeoutMs?: number): Promise<AgentCard | null> {
+  return getJson<AgentCard>(`${getServiceUrl()}/.well-known/agent.json`, timeoutMs);
 }
 
-export function fetchCatalog(): Promise<Catalog | null> {
-  return getJson<Catalog>(`${getServiceUrl()}/v1/catalog`);
+export function fetchCatalog(timeoutMs?: number): Promise<Catalog | null> {
+  return getJson<Catalog>(`${getServiceUrl()}/v1/catalog`, timeoutMs);
 }
 
-export function fetchReceiptLookup(hash: string): Promise<ReceiptLookup | null> {
-  return getJson<ReceiptLookup>(`${getServiceUrl()}/v1/receipts/${encodeURIComponent(hash)}`);
+export function fetchReceiptLookup(hash: string, timeoutMs?: number): Promise<ReceiptLookup | null> {
+  return getJson<ReceiptLookup>(`${getServiceUrl()}/v1/receipts/${encodeURIComponent(hash)}`, timeoutMs);
 }

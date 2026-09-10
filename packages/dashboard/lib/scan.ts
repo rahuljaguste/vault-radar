@@ -35,6 +35,7 @@ import { receiptHash } from "@vaultradar/core";
 import { RateLimiter, clientKey, scanLimiter } from "./ratelimit";
 import { repoRoot, runsDir as defaultRunsDir } from "./runs";
 import { getServiceUrl } from "./service";
+import { SpendLedger, scanSpendLedger, usdToMicro } from "./spend";
 import type { RunRecord } from "./types";
 import { parseVaultList } from "./vaults";
 
@@ -44,11 +45,12 @@ export function defaultPolicyPath(): string {
 }
 
 /**
- * A second, policy-independent ceiling on one purchase. The policy budget is the
- * real cap; this guards the case where a policy is written with a budget far
- * larger than any scan should ever cost, so a pricing change or a count bug
- * cannot quietly spend it. The metered price tops out at 0.051 USD for the
- * maximum 100 vaults, so this never rejects a legitimate request.
+ * A second, policy-independent ceiling on one purchase. The policy budget and this
+ * ceiling are both per-purchase; neither bounds the total, which is what
+ * `lib/spend.ts`'s ledger is for. This one guards the case where a policy is
+ * written with a budget far larger than any scan should ever cost, so a pricing
+ * change or a count bug cannot quietly spend it. The metered price tops out at
+ * 0.051 USD for the maximum 100 vaults, so this never rejects a legitimate request.
  */
 export const MAX_PRICE_USD = "0.10";
 
@@ -72,6 +74,8 @@ export type ScanDeps = {
   runsDir: () => string;
   policyPath: () => string;
   limiter: RateLimiter;
+  /** Aggregate spend and scan-count limits across every caller; see `lib/spend.ts`. */
+  ledger: SpendLedger;
   /** Seconds since the epoch, for the age check. */
   now: () => number;
   env: Record<string, string | undefined>;
@@ -86,9 +90,32 @@ function defaultDeps(): ScanDeps {
       return fromEnv ? path.resolve(repoRoot(), fromEnv) : defaultPolicyPath();
     },
     limiter: scanLimiter,
+    ledger: scanSpendLedger(),
     now: () => Math.floor(Date.now() / 1000),
     env: process.env,
   };
+}
+
+/**
+ * Optional bearer gate on the whole route. When `SCAN_ACCESS_TOKEN` is set, a request
+ * without `Authorization: Bearer <token>` is 401 and nothing is spent; when it is unset
+ * the route stays open, because the spec's promised flow is a visitor pressing "Scan now"
+ * on a public page and the aggregate caps are what make that safe. A deployment that would
+ * rather not fund strangers sets the token.
+ *
+ * Compared in constant time over equal-length strings, and the token is never echoed back
+ * or logged — a 401 says only that the header was missing or wrong.
+ */
+function accessDenied(req: Request, env: Record<string, string | undefined>): boolean {
+  const expected = env.SCAN_ACCESS_TOKEN?.trim();
+  if (!expected) return false;
+  const header = req.headers.get("authorization")?.trim() ?? "";
+  const match = /^Bearer\s+(.+)$/i.exec(header);
+  const presented = match?.[1]?.trim() ?? "";
+  if (presented.length !== expected.length) return true;
+  let diff = 0;
+  for (let i = 0; i < expected.length; i++) diff |= presented.charCodeAt(i) ^ expected.charCodeAt(i);
+  return diff !== 0;
 }
 
 const json = (body: unknown, status: number, headers?: Record<string, string>) =>
@@ -124,6 +151,13 @@ function vaultText(body: unknown): string | null {
 
 export async function handleScan(req: Request, overrides: Partial<ScanDeps> = {}): Promise<Response> {
   const deps = { ...defaultDeps(), ...overrides };
+
+  // 0. The optional access gate, ahead of everything else: when a deployment has set a
+  //    token, an unauthenticated caller learns nothing about this dashboard's
+  //    configuration, not even whether it has payment keys.
+  if (accessDenied(req, deps.env)) {
+    return json({ error: "unauthorized" }, 401, { "www-authenticate": 'Bearer realm="vaultradar-scan"' });
+  }
 
   // 1. Can this dashboard pay at all? Answered first, so a misconfigured deploy
   //    never looks like a bad request.
@@ -204,9 +238,19 @@ export async function handleScan(req: Request, overrides: Partial<ScanDeps> = {}
     return json({ error: "over_per_scan_ceiling", quoteUsd: quote.hedera, ceilingUsd: MAX_PRICE_USD }, 400);
   }
 
-  // 5. Only now spend the caller's rate-limit window, since every check above is
+  // 5. The aggregate caps, which are the ones that actually bound the bill: would this
+  //    purchase take the rolling 24-hour total past `DASHBOARD_SPEND_CAP_USD`, or is the
+  //    global hourly scan allowance already used up? Checked before paying, across every
+  //    caller, so neither a forged client key nor a patient loop can get past them.
+  const refusal = deps.ledger.refuse(quoteMicro);
+  if (refusal) {
+    // 429, not 400: the request is fine, the deployment is simply out of allowance for now.
+    return json({ error: refusal.reason, ...refusal }, 429);
+  }
+
+  // 6. Only now spend the caller's rate-limit window, since every check above is
   //    free and deterministic.
-  const limit = deps.limiter.check(clientKey(req));
+  const limit = deps.limiter.check(clientKey(req, deps.env));
   if (!limit.allowed) {
     return json(
       { error: `one paid scan per 30 seconds; try again in ${limit.retryAfterSeconds}s` },
@@ -215,7 +259,7 @@ export async function handleScan(req: Request, overrides: Partial<ScanDeps> = {}
     );
   }
 
-  // 6. Verify who is being paid before paying them. An unsigned or substituted
+  // 7. Verify who is being paid before paying them. An unsigned or substituted
   //    card means discovery cannot be trusted, which is the whole point of
   //    anchoring the key hash on chain.
   const startedAt = new Date().toISOString();
@@ -240,31 +284,42 @@ export async function handleScan(req: Request, overrides: Partial<ScanDeps> = {}
     );
   }
 
-  // 7. Pay, sealed or clear exactly as the policy's privacy tier dictates.
+  // 8. Pay, sealed or clear exactly as the policy's privacy tier dictates.
   let result: Awaited<ReturnType<VaultRadarClient["scan"]>>;
   try {
     result = await client.scan(parsed.vaults, "hedera", { seal: tier.seal });
   } catch (e) {
     const message = redact(e, secrets);
     console.error(`[api/scan] paid scan failed: ${message}`);
-    return json({ error: `the paid scan failed: ${message}` }, 502);
+    // The payment may or may not have gone through — `client.scan` throws both for a
+    // refused 402 (nothing spent) and for a failure after the transfer was signed. Charge
+    // it to the ledger either way: an unknown outcome has to count against the cap, or a
+    // rail that fails after paying would be an unmetered way to drain the wallet.
+    deps.ledger.record(quoteMicro);
+    // Record the failure as a run too, so the attempt is visible in `/runs` instead of
+    // vanishing. There is no tx id and no receipt to build a `RunRecord`'s `requests[]`
+    // from, so the run carries the reason as an `insufficient data` decision per vault —
+    // `RunRecord`'s own vocabulary for "paid, nothing trustworthy came back".
+    const failed = buildFailedRecord({ vaults: parsed.vaults, discovery, policy, serviceUrl, startedAt, txId: null, reason: `the paid scan failed: ${message}` });
+    persist(deps, failed, secrets);
+    return json({ error: `the paid scan failed: ${message}`, runId: failed.id }, 502);
   }
 
-  // 8. The data is only worth showing if its signatures check out. Fail closed,
-  //    but still save the run: a service that answers with an unverifiable
-  //    receipt is exactly the thing an operator needs the evidence for.
+  // 9. The purchase happened: count it against the aggregate cap before anything else can
+  //    return. Recorded at the price the *receipt* states when it is readable, so the
+  //    ledger tracks what the service says it charged rather than what was quoted.
+  deps.ledger.record(result.priceUsd ? usdToMicro(result.priceUsd) : quoteMicro);
+
+  // 10. The data is only worth showing if its signatures check out. Fail closed,
+  //     but still save the run: a service that answers with an unverifiable
+  //     receipt is exactly the thing an operator needs the evidence for.
   const hash = receiptHash(result.receipt);
   const age = applyAgeCheck(result, policy, deps.now());
   const record = buildRecord({ result, discovery, policy, hash, age, serviceUrl, startedAt });
-  try {
-    saveRun(deps.runsDir(), record);
-  } catch (e) {
-    // A run that cannot be persisted is not a reason to withhold a paid answer.
-    console.error(`[api/scan] could not write the run file: ${redact(e, secrets)}`);
-  }
+  persist(deps, record, secrets);
 
   if (!result.receiptValid) {
-    return json({ error: "the payment settled but the service's receipt signature did not verify", runId: record.id }, 502);
+    return json({ error: "the payment settled but the service's receipt did not verify", runId: record.id }, 502);
   }
   if (!result.attestationsValid) {
     return json({ error: "the payment settled but the per-vault attestations did not verify", runId: record.id }, 502);
@@ -281,6 +336,67 @@ export async function handleScan(req: Request, overrides: Partial<ScanDeps> = {}
     },
     200,
   );
+}
+
+/** Writes a run, treating a write failure as a logged problem rather than a reason to
+ * withhold (or change) the answer the caller already paid for. */
+function persist(deps: ScanDeps, record: RunRecord, secrets: (string | undefined)[]): void {
+  try {
+    saveRun(deps.runsDir(), record);
+  } catch (e) {
+    console.error(`[api/scan] could not write the run file: ${redact(e, secrets)}`);
+  }
+}
+
+/**
+ * A run record for a purchase that failed *after* the request went out, where there is no
+ * receipt to build a `requests[]` entry from.
+ *
+ * `RunRecord` has no field for "this attempt failed", and inventing one would break the
+ * cross-package contract `lib/types.ts` holds with the agent. It does have a vocabulary for
+ * exactly this situation: a `decisions[]` entry of `insufficient data` with a reason, which
+ * is what the agent itself emits whenever it cannot stand behind a vault's data. So the
+ * failure is recorded the way the agent would record it — one `insufficient data` decision
+ * per vault asked about, carrying the redacted reason, and whatever payment reference is
+ * known. `requests` stays empty, which is itself the signal that nothing verifiable came
+ * back.
+ */
+function buildFailedRecord({
+  vaults,
+  discovery,
+  policy,
+  serviceUrl,
+  startedAt,
+  txId,
+  reason,
+}: {
+  vaults: string[];
+  discovery: Awaited<ReturnType<VaultRadarClient["discover"]>>;
+  policy: Policy;
+  serviceUrl: string;
+  startedAt: string;
+  txId: string | null;
+  reason: string;
+}): RunRecord {
+  return {
+    id: `web-${randomBytes(6).toString("hex")}`,
+    startedAt,
+    serviceUrl,
+    policy,
+    discovery: {
+      cardSignatureValid: discovery.cardSignatureValid,
+      pubHash: discovery.card.pq.sig.pub_hash,
+      kid: discovery.card.pq.kem.kid,
+      onChain: discovery.onChain,
+    },
+    requests: [],
+    decisions: vaults.map((vaultId) => ({
+      vaultId,
+      action: "insufficient data" as const,
+      reason,
+      citations: { block: "", source: "", txId, receiptHash: "" },
+    })),
+  };
 }
 
 function buildRecord({

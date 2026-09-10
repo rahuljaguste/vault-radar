@@ -120,8 +120,9 @@ export function ScanForm({ keysConfigured, demoRunId }: { keysConfigured: boolea
         {keysConfigured ? (
           <p className="muted">
             &ldquo;Scan now&rdquo; buys a real x402 request. The payer is the operator&apos;s agent account, not your
-            wallet, and the spend is capped by the agent&apos;s policy budget and a per-scan ceiling. One scan per 30
-            seconds per client.
+            wallet. One purchase is capped by the agent&apos;s policy budget and a per-scan ceiling; across everyone, a
+            rolling daily spend cap and an hourly scan allowance apply as well (see above). One scan per 30 seconds per
+            client on top of that.
           </p>
         ) : (
           <div className="card">
@@ -397,6 +398,15 @@ function field(body: unknown, name: string): string | null {
   return null;
 }
 
+/** The same, for a field the route sends as a JSON number rather than a string. */
+function numberField(body: unknown, name: string): number | null {
+  if (typeof body === "object" && body !== null && name in body) {
+    const value = (body as Record<string, unknown>)[name];
+    if (typeof value === "number" && Number.isFinite(value)) return value;
+  }
+  return null;
+}
+
 /**
  * The route answers the two spending refusals with a short machine-readable code
  * plus the amounts. Turn them into a sentence here, so the browser never shows a
@@ -419,16 +429,42 @@ function spendingRefusal(body: unknown, code: string): string | null {
   return null;
 }
 
+/**
+ * The aggregate refusals, which are about the deployment's allowance rather than about
+ * this request. Rendered as sentences here so the browser never shows a bare
+ * `spend_cap_24h` to a reader.
+ */
+function allowanceRefusal(body: unknown, code: string): string | null {
+  if (code === "spend_cap_24h") {
+    const spent = field(body, "spentUsd");
+    const cap = field(body, "capUsd");
+    return spent && cap
+      ? `This dashboard has spent ${spent} of its ${cap} USD daily allowance, and this scan would take it over. Try again once the rolling 24-hour window clears.`
+      : "This dashboard has reached its daily spending allowance. Try again once the rolling 24-hour window clears.";
+  }
+  if (code === "scan_rate_1h") {
+    const max = numberField(body, "maxScansPerHour");
+    return max !== null
+      ? `This dashboard allows ${max} paid scans an hour across all visitors, and that is used up. Try again shortly.`
+      : "This dashboard's hourly scan allowance is used up. Try again shortly.";
+  }
+  return null;
+}
+
 /** Maps the route's documented status codes to something a portfolio owner can act on. */
 function scanErrorMessage(status: number, body: unknown): string {
   const detail = errorText(body);
+  if (status === 401) {
+    return "This dashboard requires an access token for paid scans, and the request did not carry a valid one.";
+  }
   if (status === 503) {
     return detail
       ? `Paid scans are unavailable: ${detail}.`
       : "Paid scans are unavailable: the dashboard has no agent payment keys configured.";
   }
   if (status === 429) {
-    return detail ?? "Rate limited: one paid scan per 30 seconds. Wait a moment and try again.";
+    if (detail) return allowanceRefusal(body, detail) ?? detail;
+    return "Rate limited: one paid scan per 30 seconds. Wait a moment and try again.";
   }
   if (status === 400) {
     if (detail) return spendingRefusal(body, detail) ?? detail;

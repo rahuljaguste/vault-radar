@@ -1,5 +1,6 @@
 import { ScanForm } from "./ScanForm";
 import { listRuns } from "@/lib/runs";
+import { microToUsd, scanSpendLedger } from "@/lib/spend";
 
 // Reads the runs directory and the agent-key environment on every request.
 export const dynamic = "force-dynamic";
@@ -22,6 +23,10 @@ export default async function PortfolioPage() {
   // newest entry is always something worth linking to.
   const runs = await listRuns();
   const demoRunId = runs.length > 0 ? runs[runs.length - 1].id : null;
+  // The aggregate cap every purchase from this page is checked against. Read on the server
+  // from the same process-wide ledger `POST /api/scan` uses, so the figure shown is the one
+  // that will actually be enforced. Only the formatted amounts cross to the client.
+  const spend = scanSpendLedger().snapshot();
 
   return (
     <>
@@ -36,6 +41,25 @@ export default async function PortfolioPage() {
           The payer is the operator&apos;s funded agent account, not a wallet in your browser, so the settlement on the
           explorer is the operator&apos;s. Requests are sealed with a hybrid post-quantum KEM before they leave this server,
           so no intermediary on the path learns which vaults you asked about.
+        </p>
+      </section>
+
+      <section>
+        <h2>Spending allowance</h2>
+        <dl>
+          <dt>Spent today</dt>
+          <dd>
+            {microToUsd(spend.spentMicroUsd)} of {microToUsd(spend.capMicroUsd)} USD
+          </dd>
+          <dt>Scans this hour</dt>
+          <dd>
+            {spend.scansLastHour} of {spend.maxScansPerHour}
+          </dd>
+        </dl>
+        <p className="muted">
+          Both limits are shared by everyone using this dashboard and cover a rolling window, not a calendar day. A scan
+          that would take the total past the cap is refused before anything is paid. The counters live in this server
+          process, so a restart resets them.
         </p>
       </section>
 

@@ -86,20 +86,50 @@ test("the exported scan limiter is set to the spec's 30-second window", () => {
   scanLimiter.reset();
 });
 
-test("clientKey takes the first x-forwarded-for entry, which is the original client behind a trusted proxy", () => {
+/** An environment with a trusted proxy in front, which is the only case where the
+ *  forwarded headers mean anything. */
+const PROXIED = { TRUST_PROXY: "1" };
+
+test("clientKey takes the first x-forwarded-for entry behind a trusted proxy, which is the original client", () => {
   const req = new Request("http://localhost/api/scan", {
     headers: { "x-forwarded-for": "203.0.113.7, 70.41.3.18, 150.172.238.178" },
   });
-  expect(clientKey(req)).toBe("203.0.113.7");
+  expect(clientKey(req, PROXIED)).toBe("203.0.113.7");
 });
 
 test("clientKey trims whitespace and falls back to x-real-ip, then to a shared bucket", () => {
-  expect(clientKey(new Request("http://localhost/", { headers: { "x-forwarded-for": "  198.51.100.9  " } }))).toBe("198.51.100.9");
-  expect(clientKey(new Request("http://localhost/", { headers: { "x-real-ip": "198.51.100.10" } }))).toBe("198.51.100.10");
-  expect(clientKey(new Request("http://localhost/"))).toBe("unknown");
+  expect(clientKey(new Request("http://localhost/", { headers: { "x-forwarded-for": "  198.51.100.9  " } }), PROXIED)).toBe("198.51.100.9");
+  expect(clientKey(new Request("http://localhost/", { headers: { "x-real-ip": "198.51.100.10" } }), PROXIED)).toBe("198.51.100.10");
+  expect(clientKey(new Request("http://localhost/"), PROXIED)).toBe("unknown");
 });
 
 test("an x-forwarded-for that is present but empty falls through rather than keying on an empty string", () => {
-  expect(clientKey(new Request("http://localhost/", { headers: { "x-forwarded-for": "  ,  " } }))).toBe("unknown");
-  expect(clientKey(new Request("http://localhost/", { headers: { "x-forwarded-for": " ", "x-real-ip": "10.0.0.1" } }))).toBe("10.0.0.1");
+  expect(clientKey(new Request("http://localhost/", { headers: { "x-forwarded-for": "  ,  " } }), PROXIED)).toBe("unknown");
+  expect(clientKey(new Request("http://localhost/", { headers: { "x-forwarded-for": " ", "x-real-ip": "10.0.0.1" } }), PROXIED)).toBe("10.0.0.1");
+});
+
+test("without TRUST_PROXY every caller shares one bucket, so a forged header buys no extra window", () => {
+  // The hole this closes: both candidate headers are set by a proxy and forgeable by
+  // anyone talking to the server directly, so keying on them unconditionally gave a
+  // fresh 30-second window per distinct value — a per-client limit that refused nothing.
+  const forged = (value: string) => new Request("http://localhost/", { headers: { "x-forwarded-for": value } });
+  for (const env of [{}, { TRUST_PROXY: "" }, { TRUST_PROXY: "0" }, { TRUST_PROXY: "true" }, { TRUST_PROXY: "yes" }]) {
+    expect(clientKey(forged("1.1.1.1"), env)).toBe("unknown");
+    expect(clientKey(forged("2.2.2.2"), env)).toBe("unknown");
+    expect(clientKey(new Request("http://localhost/", { headers: { "x-real-ip": "3.3.3.3" } }), env)).toBe("unknown");
+  }
+
+  // Which means the limiter genuinely limits: a hundred forged addresses get one scan.
+  const { limiter } = fixture();
+  expect(limiter.check(clientKey(forged("1.1.1.1"), {})).allowed).toBe(true);
+  for (let i = 0; i < 100; i++) {
+    expect(limiter.check(clientKey(forged(`10.0.0.${i}`), {})).allowed).toBe(false);
+  }
+  expect(limiter.size()).toBe(1);
+});
+
+test("TRUST_PROXY is only honoured as exactly \"1\", with surrounding whitespace tolerated", () => {
+  const req = new Request("http://localhost/", { headers: { "x-forwarded-for": "203.0.113.7" } });
+  expect(clientKey(req, { TRUST_PROXY: " 1 " })).toBe("203.0.113.7");
+  expect(clientKey(req, { TRUST_PROXY: "1x" })).toBe("unknown");
 });

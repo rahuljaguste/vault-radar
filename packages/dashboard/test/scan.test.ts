@@ -8,6 +8,7 @@ import { buildApp, loadConfig, loadKeys, makeScanHandler, type DataProvider, typ
 import { VaultRadarClient, type Policy } from "@vaultradar/agent";
 import { RateLimiter } from "../lib/ratelimit";
 import { MAX_PRICE_USD, defaultPolicyPath, handleScan, redact, toMicroUsd } from "../lib/scan";
+import { SpendLedger, usdToMicro } from "../lib/spend";
 import type { RunRecord } from "../lib/types";
 
 /**
@@ -156,6 +157,10 @@ function deps(over: Partial<Deps> = {}, onChainHash: string | null = keys.sig.pu
     runsDir: () => runDir,
     policyPath: () => balancedPolicy,
     limiter: new RateLimiter(),
+    // A fresh ledger per call unless a test shares one on purpose: the default would be
+    // the process-wide singleton, and this file buys well over a dozen scans, so tests
+    // would start refusing each other once the hourly allowance ran out.
+    ledger: new SpendLedger({}),
     now: () => now,
     env: { AGENT_HEDERA_ACCOUNT_ID: "0.0.42", AGENT_HEDERA_KEY: UNUSED_KEY, SERVICE_URL: base },
     ...over,
@@ -463,11 +468,27 @@ test("429 on a second scan inside the window, with a retry-after header, and no 
   expect(runFiles()).toHaveLength(1);
 });
 
-test("the rate limit is per client address, so two callers do not block each other", async () => {
-  const shared = deps({ limiter: new RateLimiter() });
+test("behind a trusted proxy the rate limit is per client address, so two callers do not block each other", async () => {
+  const shared = deps({
+    limiter: new RateLimiter(),
+    env: { AGENT_HEDERA_ACCOUNT_ID: "0.0.42", AGENT_HEDERA_KEY: UNUSED_KEY, SERVICE_URL: base, TRUST_PROXY: "1" },
+  });
   expect((await handleScan(post([OK_VAULT], { "x-forwarded-for": "1.1.1.1" }), shared)).status).toBe(200);
   expect((await handleScan(post([OK_VAULT], { "x-forwarded-for": "2.2.2.2" }), shared)).status).toBe(200);
   expect((await handleScan(post([OK_VAULT], { "x-forwarded-for": "1.1.1.1" }), shared)).status).toBe(429);
+});
+
+test("without TRUST_PROXY a forged x-forwarded-for buys no second window", async () => {
+  // The drain this closes: every distinct header value used to get its own 30-second
+  // window, so a loop that varied the header paid for a scan on every iteration.
+  const shared = deps({ limiter: new RateLimiter() });
+  expect((await handleScan(post([OK_VAULT], { "x-forwarded-for": "1.1.1.1" }), shared)).status).toBe(200);
+  for (const forged of ["2.2.2.2", "3.3.3.3", "4.4.4.4"]) {
+    const res = await handleScan(post([OK_VAULT], { "x-forwarded-for": forged }), shared);
+    expect(res.status).toBe(429);
+    expect((await res.json()).error).toContain("one paid scan per 30 seconds");
+  }
+  expect(runFiles()).toHaveLength(1);
 });
 
 test("a rejected request does not consume the rate-limit window", async () => {
@@ -513,6 +534,167 @@ test("502 when the paid scan itself fails, with the key redacted from the messag
   expect(error).toContain("the paid scan failed");
   expect(error).not.toContain(UNUSED_KEY);
   expect(error).toContain("[redacted]");
+});
+
+/* ------------------------------------------------- the run survives a failure */
+
+test("a post-payment failure still writes a run, with the reason as an insufficient-data decision", async () => {
+  // `client.scan` throws both for a refused 402 and for a failure after the transfer was
+  // signed, and the caller cannot tell which. The attempt used to vanish: the 502 returned
+  // before anything was saved, so a purchase that may well have been paid for left no
+  // record at all. It is now recorded in `RunRecord`'s own vocabulary for "paid, nothing
+  // trustworthy came back".
+  const failing = deps({
+    makeClient: (serviceUrl, hedera) =>
+      new VaultRadarClient({
+        serviceUrl,
+        hedera,
+        readPqHash: async () => keys.sig.pubHash,
+        payingFetch: async () => {
+          throw new Error(`settlement confirmed but the reply never arrived, key ${UNUSED_KEY}`);
+        },
+      }),
+  });
+  const res = await handleScan(post([OK_VAULT, WATCH_VAULT]), failing);
+  expect(res.status).toBe(502);
+  const body = await res.json();
+  expect(body.runId).toMatch(/^web-[0-9a-f]{12}$/);
+
+  const runs = runFiles();
+  expect(runs).toHaveLength(1);
+  const run = runs[0];
+  expect(run.id).toBe(body.runId);
+  expect(run.serviceUrl).toBe(base);
+  expect(run.policy).toEqual(BALANCED);
+  expect(run.discovery.cardSignatureValid).toBe(true);
+  // No receipt came back, so there is no request to record — which is itself the signal.
+  expect(run.requests).toEqual([]);
+  // One decision per vault asked about, carrying the reason and a null payment reference.
+  expect(run.decisions.map((d) => d.vaultId).sort()).toEqual([OK_VAULT, WATCH_VAULT].sort());
+  for (const d of run.decisions) {
+    expect(d.action).toBe("insufficient data");
+    expect(d.reason).toContain("the paid scan failed");
+    expect(d.citations).toEqual({ block: "", source: "", txId: null, receiptHash: "" });
+  }
+
+  // And the key is redacted out of the persisted reason, not just out of the response.
+  const raw = readdirSync(runDir).map((f) => readFileSync(join(runDir, f), "utf8")).join("");
+  expect(raw).not.toContain(UNUSED_KEY);
+  expect(raw).toContain("[redacted]");
+});
+
+test("a failure after payment is charged to the ledger, so a rail that fails while charging is still capped", async () => {
+  const ledger = new SpendLedger({ DASHBOARD_MAX_SCANS_PER_HOUR: "100" });
+  const failing = deps({
+    ledger,
+    makeClient: (serviceUrl, hedera) =>
+      new VaultRadarClient({
+        serviceUrl,
+        hedera,
+        readPqHash: async () => keys.sig.pubHash,
+        payingFetch: async () => {
+          throw new Error("paid, then the upstream died");
+        },
+      }),
+  });
+  expect((await handleScan(post([OK_VAULT]), failing)).status).toBe(502);
+  // The quoted amount, since no receipt price is available for a purchase that failed.
+  expect(ledger.snapshot().spentMicroUsd).toBe(usdToMicro("0.0015"));
+  expect(ledger.snapshot().scansLastHour).toBe(1);
+});
+
+/* ------------------------------------------------------- aggregate spend caps */
+
+test("429 spend_cap_24h when the purchase would take the rolling total past the cap, before paying", async () => {
+  const ledger = new SpendLedger({ DASHBOARD_SPEND_CAP_USD: "0.002", DASHBOARD_MAX_SCANS_PER_HOUR: "100" });
+  const shared = deps({ ledger });
+  expect((await handleScan(post([OK_VAULT]), shared)).status).toBe(200); // 0.0015 spent
+
+  const res = await handleScan(post([OK_VAULT]), deps({ ledger }));
+  expect(res.status).toBe(429);
+  const body = await res.json();
+  expect(body.error).toBe("spend_cap_24h");
+  expect(body.spentUsd).toBe("0.0015");
+  expect(body.capUsd).toBe("0.002");
+  // Nothing was bought, so no second run exists.
+  expect(runFiles()).toHaveLength(1);
+});
+
+test("429 scan_rate_1h once the global hourly allowance is used up, whatever the client key is", async () => {
+  // The drain the per-client limiter cannot stop: a fresh limiter per request (the same
+  // effect as a forged client key) gets past it every time, so the aggregate count is the
+  // only thing standing between a loop and the operator's wallet.
+  const ledger = new SpendLedger({ DASHBOARD_SPEND_CAP_USD: "100.00", DASHBOARD_MAX_SCANS_PER_HOUR: "2" });
+  expect((await handleScan(post([OK_VAULT]), deps({ ledger }))).status).toBe(200);
+  expect((await handleScan(post([OK_VAULT]), deps({ ledger }))).status).toBe(200);
+
+  const res = await handleScan(post([OK_VAULT]), deps({ ledger }));
+  expect(res.status).toBe(429);
+  expect(await res.json()).toEqual({ error: "scan_rate_1h", reason: "scan_rate_1h", scansLastHour: 2, maxScansPerHour: 2 });
+  expect(runFiles()).toHaveLength(2);
+});
+
+test("the ledger records the receipt's price, not the quote, so the cap tracks what was charged", async () => {
+  const ledger = new SpendLedger({ DASHBOARD_SPEND_CAP_USD: "100.00", DASHBOARD_MAX_SCANS_PER_HOUR: "100" });
+  const res = await handleScan(post([OK_VAULT, WATCH_VAULT]), deps({ ledger }));
+  expect(res.status).toBe(200);
+  expect((await res.json()).priceUsd).toBe("0.002");
+  expect(ledger.snapshot().spentMicroUsd).toBe(usdToMicro("0.002"));
+});
+
+test("a refusal before payment does not touch the ledger", async () => {
+  const ledger = new SpendLedger({});
+  const broke = policyFile("broke3", { ...BALANCED, budget: { usdc_hedera: "0.001", usdc_arc: "1.00" } });
+  expect((await handleScan(post([OK_VAULT, WATCH_VAULT]), deps({ ledger, policyPath: () => broke }))).status).toBe(400);
+  expect((await handleScan(post(["garbage"]), deps({ ledger }))).status).toBe(400);
+  expect(ledger.snapshot()).toMatchObject({ spentMicroUsd: 0, scansLastHour: 0 });
+});
+
+/* --------------------------------------------------------- the access token */
+
+test("with SCAN_ACCESS_TOKEN set, a request without a matching bearer token is 401 and spends nothing", async () => {
+  const ledger = new SpendLedger({});
+  const gated = { AGENT_HEDERA_ACCOUNT_ID: "0.0.42", AGENT_HEDERA_KEY: UNUSED_KEY, SERVICE_URL: base, SCAN_ACCESS_TOKEN: "s3cret-token" };
+  for (const headers of [
+    {},
+    { authorization: "" },
+    { authorization: "Bearer" },
+    { authorization: "Bearer wrong-token!" },
+    { authorization: "Bearer s3cret-toke" },
+    { authorization: "Bearer s3cret-tokenX" },
+    { authorization: "s3cret-token" },
+    { authorization: "Basic s3cret-token" },
+  ] as Record<string, string>[]) {
+    const res = await handleScan(post([OK_VAULT], headers), deps({ ledger, env: gated }));
+    expect(res.status).toBe(401);
+    expect(await res.json()).toEqual({ error: "unauthorized" });
+    expect(res.headers.get("www-authenticate")).toContain("Bearer");
+  }
+  expect(ledger.snapshot().scansLastHour).toBe(0);
+  expect(runFiles()).toHaveLength(0);
+});
+
+test("the right bearer token is accepted, in either header casing, and the token never appears in a response", async () => {
+  const gated = { AGENT_HEDERA_ACCOUNT_ID: "0.0.42", AGENT_HEDERA_KEY: UNUSED_KEY, SERVICE_URL: base, SCAN_ACCESS_TOKEN: "s3cret-token" };
+  const ok = await handleScan(post([OK_VAULT], { authorization: "Bearer s3cret-token" }), deps({ env: gated }));
+  expect(ok.status).toBe(200);
+  expect(JSON.stringify(await ok.json())).not.toContain("s3cret-token");
+
+  // `bearer` lower-case is equally valid per RFC 7235's case-insensitive scheme.
+  const lower = await handleScan(post([OK_VAULT], { authorization: "bearer  s3cret-token " }), deps({ env: gated }));
+  expect(lower.status).toBe(200);
+});
+
+test("with SCAN_ACCESS_TOKEN unset or blank the route stays open, as the spec's public flow requires", async () => {
+  for (const SCAN_ACCESS_TOKEN of [undefined, "", "   "]) {
+    const env = { AGENT_HEDERA_ACCOUNT_ID: "0.0.42", AGENT_HEDERA_KEY: UNUSED_KEY, SERVICE_URL: base, SCAN_ACCESS_TOKEN };
+    expect((await handleScan(post([OK_VAULT]), deps({ env }))).status).toBe(200);
+  }
+});
+
+test("the access check runs before the keys check, so an unauthenticated caller learns nothing about this deploy", async () => {
+  const res = await handleScan(post([OK_VAULT]), deps({ env: { SCAN_ACCESS_TOKEN: "tok" } }));
+  expect(res.status).toBe(401);
 });
 
 test("a client that cannot be constructed is a 503, not a crash", async () => {
