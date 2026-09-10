@@ -110,14 +110,28 @@ test("pollHcs retries up to three times with the configured gap and reports 'no 
   const gaps: number[] = [];
   const late = async () => {
     calls += 1;
-    // Not published yet on the first two polls, then a sequence appears.
-    const sequence = calls >= 3 ? 77 : null;
+    // Not published yet on the first two polls, then a sequence appears. A *string*,
+    // which is what the service's LookupResult carries — an HCS sequence is an int64 and
+    // does not survive a round trip through a JS number.
+    const sequence = calls >= 3 ? "77" : null;
     return new Response(JSON.stringify({ receipt_hash: "h", topicId: "0.0.99", sequence }), { status: 200 });
   };
   const got = await pollHcs(base, "deadbeef", { fetchImpl: late as unknown as typeof fetch, sleep: async ms => void gaps.push(ms) });
   expect(calls).toBe(3);
   expect(gaps).toEqual([3000, 3000]);
-  expect(got).toEqual({ topicId: "0.0.99", sequence: 77 });
+  expect(got).toEqual({ topicId: "0.0.99", sequence: "77" });
+
+  // A sequence that exceeds Number.MAX_SAFE_INTEGER survives intact, which is the whole
+  // reason the service sends it as a string.
+  const huge = "9223372036854775807"; // int64 max
+  const big = async () => new Response(JSON.stringify({ topicId: "0.0.99", sequence: huge }), { status: 200 });
+  expect((await pollHcs(base, "h", { fetchImpl: big as unknown as typeof fetch, sleep: async () => {} })).sequence).toBe(huge);
+
+  // A numeric sequence is still accepted rather than discarded, so an older or future
+  // service shape yields a usable citation instead of a silent "pending".
+  const numeric = async () => new Response(JSON.stringify({ topicId: "0.0.99", sequence: 77 }), { status: 200 });
+  expect(await pollHcs(base, "h", { fetchImpl: numeric as unknown as typeof fetch, sleep: async () => {} }))
+    .toEqual({ topicId: "0.0.99", sequence: "77" });
 
   // Never published, and an unreachable service, both come back as a null sequence.
   const never = async () => new Response(JSON.stringify({ topicId: "0.0.99", sequence: null }), { status: 200 });

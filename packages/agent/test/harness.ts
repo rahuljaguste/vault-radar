@@ -1,6 +1,6 @@
 import { createServer } from "node:net";
 import { MemoryNonceStore, type UnifiedVault } from "@vaultradar/core";
-import { buildApp, loadConfig, loadKeys, makeScanHandler, type DataProvider, type HandlerDeps } from "@vaultradar/service";
+import { buildApp, loadConfig, loadKeys, makeScanHandler, type DataProvider, type HandlerDeps, type HcsSink } from "@vaultradar/service";
 import { VaultRadarClient } from "../src/client";
 import type { Policy } from "../src/policy";
 
@@ -19,8 +19,12 @@ export const OTHER_VAULT = "1:0x" + "c".repeat(40);
 export const UNUSED_HEDERA_KEY = "11".repeat(32);
 /** The tx id the stand-in payment middleware reports to the handler. */
 export const TEST_TX_ID = "0.0.42@1700000000.0";
-/** The HCS sequence the stubbed consensus lookup answers with. */
-export const TEST_HCS_SEQUENCE = 1234;
+/**
+ * The HCS sequence the stubbed consensus lookup answers with. A **string**, because that
+ * is what the service's `LookupResult.sequence` is — an HCS sequence is an int64, which
+ * does not fit a JS number safely, so it never crosses the wire as one.
+ */
+export const TEST_HCS_SEQUENCE = "1234";
 
 function vaultOf(id: string, o: { sourceTs: number; sharePrice: string; history: { ts: number; sharePrice: string }[] }): UnifiedVault {
   return {
@@ -100,9 +104,22 @@ export async function startHarness(): Promise<Harness> {
   });
   const keys = loadKeys(config);
   const nonces = new MemoryNonceStore();
-  // An HCS stub, so the receipt poll sees a real consensus sequence instead of the
-  // `sequence: null` the service's no-HCS branch would return.
-  const hcs = { lookup: async (hash: string) => ({ receipt_hash: hash, topicId: "0.0.99", sequence: TEST_HCS_SEQUENCE }) };
+  // Stands in for the real `HcsQueue`, so the receipt poll sees a consensus sequence
+  // instead of the `sequence: null` the service's no-HCS branch would return. Typed against the service's `HcsSink` interface so
+  // the compiler holds this fake to the exact `LookupResult` the route really returns —
+  // `sequence` as a string, plus the consensus timestamp and initial transaction id. A
+  // fake that drifts from that contract is how the agent ends up parsing a shape the
+  // service never sends.
+  const hcs: HcsSink = {
+    enqueue: () => {},
+    lookup: async (hash: string) => ({
+      receipt_hash: hash,
+      topicId: "0.0.99",
+      sequence: TEST_HCS_SEQUENCE,
+      consensus_timestamp: "1700000000.000000001",
+      initial_transaction_id: TEST_TX_ID,
+    }),
+  };
   const app = await buildApp({ config, keys, data, hcs, nonces, rails: {} });
   // The Hedera scan/table routes are mounted directly with a fixed payer and tx id,
   // standing in for what the real x402 middleware sets once payment has cleared.

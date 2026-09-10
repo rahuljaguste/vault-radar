@@ -49,8 +49,15 @@ export type WatchOutcome = {
   message: string | null;
 };
 
-/** The HCS consensus record for a receipt, once the service has mirrored it. */
-export type HcsRecord = { topicId: string | null; sequence: number | null };
+/**
+ * The HCS consensus record for a receipt, once the service has published it.
+ *
+ * `sequence` is a **string**, matching the service's own `LookupResult`: an HCS sequence
+ * number is an int64, so it does not survive a round trip through a JS number, and the
+ * service never sends it as one. Reading it as a number is how this silently reported
+ * "pending" for every receipt the service had in fact already committed.
+ */
+export type HcsRecord = { topicId: string | null; sequence: string | null };
 
 const defaultSleep = (ms: number) => new Promise<void>(r => setTimeout(r, ms));
 
@@ -77,8 +84,12 @@ export async function pollHcs(
     try {
       const res = await f(url);
       if (!res.ok) continue;
-      const body = (await res.json()) as { topicId?: string | null; sequence?: number | null };
-      last = { topicId: body.topicId ?? null, sequence: typeof body.sequence === "number" ? body.sequence : null };
+      // The service sends `sequence` as a string (int64); a number is accepted too rather
+      // than discarded, so a future or older shape still yields a usable citation.
+      const body = (await res.json()) as { topicId?: string | null; sequence?: string | number | null };
+      const seq = body.sequence;
+      const sequence = typeof seq === "string" && seq.length ? seq : typeof seq === "number" ? String(seq) : null;
+      last = { topicId: body.topicId ?? null, sequence };
       if (last.sequence != null) return last;
     } catch {
       // Keep polling: the receipt is already signed and in hand either way.
