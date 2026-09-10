@@ -1,6 +1,8 @@
 # VaultRadar architecture
 
-Two diagrams: the system view and the flow of one paid request on the Hedera rail. Rendered PNGs live next to this file (`architecture.png`, `payment-flow.png`); regenerate with `node scripts/render-diagrams.mjs`.
+Two diagrams: the system view and the flow of one paid request on the Hedera rail. Rendered PNGs live next to this file ([`architecture.png`](architecture.png), [`payment-flow.png`](payment-flow.png)); regenerate with `node scripts/render-diagrams.mjs` after editing either mermaid block below.
+
+Both diagrams show the designed system. Pieces still in flight at the time of writing are called out in the README's scope notes; the Hedera Harness PR was cut from scope and is not drawn here.
 
 ## System view
 
@@ -78,11 +80,6 @@ flowchart TB
   end
   WK --> UI
   RUNS --> UI
-
-  subgraph HARNESS["hedera-dev/hedera-harness PR"]
-    PROBE["Tier 3.5 x402Probe validator<br/>402 → pay via Blocky402 → mirror-node confirm"]
-  end
-  PROBE -->|POST /hedera/v1/scan-hbar| HRAIL
 ```
 
 ## One paid request, Hedera rail
