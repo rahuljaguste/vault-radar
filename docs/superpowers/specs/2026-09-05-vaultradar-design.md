@@ -232,3 +232,39 @@ On-chain PQ payment signatures; zero-knowledge proofs of risk computation; A2A n
 5. Neon Postgres database, publicly reachable, for the hosted sink.
 6. substreams.dev login via GitHub for publishing; The Graph Market API key.
 7. Anthropic API key for the agent; Fly.io or Railway account for hosting.
+
+## 13. Dashboard user and admin views (added 2026-09-10)
+
+Requested after the first dashboard landed. Two views are added to `packages/dashboard`, each with a promised scope and a labelled stretch. Promised items ship; stretch items ship only if they fit without touching the promised ones.
+
+### 13.1 Admin view (`/admin`)
+
+Promised: a service-operator screen backed by a new read-only endpoint `GET /v1/admin/metrics` on the service, gated by `Authorization: Bearer <ADMIN_TOKEN>` (401 otherwise). Response shape, all numerics as strings:
+
+```
+{ uptimeSeconds, startedAt,
+  rails: { hedera: { enabled, facilitatorUrl, healthy, checkedAt }, arc: { enabled, facilitatorUrl, healthy, checkedAt } },
+  hcs: { enabled, topicId, pending, submitted, failed, lastSequence },
+  settlements: { hedera: { count, revenueAtomic, asset }, arc: { count, revenueUsd } },
+  requests: { scan, table, rejected4xx, unavailableVerdicts, lastRequestAt },
+  deployments: [{ protocol, chain, chainId, status, headLagSeconds, lastQueriedAt, lastError }],
+  heads: { "<chainId>": { ts, block, ok, checkedAt } },
+  keys: { sigPubHash, kemKid },
+  identity: [{ chainId, agentId, onChainPubHash, matches }] }
+```
+
+Counters live in an in-process `Metrics` object fed by the handlers (requests, verdicts), both rails' `onSettled` hooks (settlements and revenue), the HCS queue (pending, submitted, failed, last sequence), the data provider (deployment query outcomes, heads), and the identity reader (on-chain hash match, refreshed every 10 minutes). Counters reset on restart; that is stated in the UI. Rail health probes hit each facilitator's supported-kinds endpoint, cached 30 seconds.
+
+The dashboard page renders every field with status colours, refreshes every 15 seconds, and reads the token from the `ADMIN_TOKEN` server-side environment variable only.
+
+Stretch: a settlements table with the last 50 receipt hashes and transaction links.
+
+### 13.2 User view (`/portfolio`)
+
+Promised: a portfolio owner's screen. The user pastes a vault list (`<chainId>:<address>` per line) and presses "Scan now". A dashboard API route runs the agent client server-side with the operator-funded agent account (`AGENT_HEDERA_ACCOUNT_ID` / `AGENT_HEDERA_KEY`, policy from `POLICY_PATH`), pays the x402 request for real, verifies the receipt, saves a run, and returns verdicts and decisions. The page shows verdicts, flags, decisions with citations, the payment transaction link, and the receipt hash, and lists history for the same vaults from previous runs. Purchases are rate-limited per client address (one paid scan per 30 seconds) and capped by the policy budget. If the agent keys are absent the page says so and offers the demo run.
+
+Stretch, in order: (a) enter a wallet address and discover its ERC-4626 positions by `balanceOf` multicall over the service's free vault list (`GET /v1/vaults?chainId=`), (b) pay from a browser wallet on Arc via the Circle Gateway scheme if the SDK accepts an injected account, (c) the same via a Hedera wallet. None of the stretch items is claimed anywhere until it works end to end.
+
+### 13.3 Boundary and honesty
+
+The promised user flow is "buy a scan from the browser with a real x402 settlement"; the payer is the operator's agent account, and the README says so. Browser-wallet payment is described only if a stretch item ships.

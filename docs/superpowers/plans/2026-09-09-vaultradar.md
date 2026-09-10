@@ -2188,3 +2188,38 @@ Public repo with continuous history; video uploaded (2–4 min); partner picks: 
 - Spec coverage: §5.1 → Task 9; §5.2 → Tasks 11–13; §5.3 → Tasks 6–7; §5.4 → Tasks 3–5; §5.5 → Tasks 14–19; §5.6 → Tasks 21–23; §5.7 → Task 24; §5.8 (harness PR) → deliberately cut for the compressed window (Global Constraints); §6–§7 → Tasks 15–17; §8 → tests inside each task plus live checks in 16, 19, 23; §9 → Tasks 20, 25, 26; §12 → prerequisites referenced in Tasks 16, 18, 19.
 - Type names used across tasks: `UnifiedVault`, `Source`, `SourceRef`, `Receipt`, `Attestation`, `Sealed`, `SealedRequest`, `NonceStore`, `RiskReport`, `DataProvider`, `HandlerDeps`, `PaidResult`, `Policy`, `Decision` are each defined once in the task that introduces them and imported by name afterwards.
 - Known uncertainties an implementer must confirm at the marked steps: the Hedera payment payload field name (Task 16), the sink cursor table shape (Tasks 10/13), Messari snapshot field names (Task 9), the `substreams` store trait imports (Task 12), the Circle Gateway balance method name (Task 23).
+
+---
+
+## Added 2026-09-10: dashboard user and admin views (spec §13)
+
+### Task 27: Service metrics endpoint and settlement tracking
+
+**Files:**
+- Create: `packages/service/src/metrics.ts`, `packages/service/src/admin.ts`, `packages/service/test/metrics.test.ts`, `packages/service/test/admin.test.ts`
+- Modify: `packages/service/src/handlers/scan.ts` (count requests, verdicts, 4xx), `packages/service/src/rails/hedera.ts` and `src/rails/arc.ts` (record settlements through the existing `onSettled` hooks), `packages/service/src/hcs.ts` (expose counters), `packages/service/src/data/provider.ts` (record per-deployment outcomes and heads), `packages/service/src/app.ts` (mount admin router; construct `Metrics`), `packages/service/src/config.ts` (`ADMIN_TOKEN`), `.env.example`
+
+**Interfaces:**
+- Produces: `class Metrics { requests: { scan; table; rejected4xx; unavailableVerdicts; lastRequestAt }; settlements: { hedera: { count; revenueAtomic }; arc: { count; revenueUsd } }; recordRequest(tier, status, verdicts?); recordSettlement(rail, amount); recordDeployment(ref, outcome); recordHead(chainId, head, ok); snapshot(deps): Promise<AdminMetrics> }`; `mountAdmin(app, { config, metrics, hcs, keys, data, readPqHash })` registering `GET /v1/admin/metrics` with the bearer check; the JSON shape from spec §13.1 exactly.
+
+- [ ] **Step 1: Failing tests** — `metrics.test.ts`: counters increment; `snapshot()` produces every field with string numerics and `uptimeSeconds` monotonic; `admin.test.ts`: `GET /v1/admin/metrics` without token → 401 `{ reason: "unauthorized" }`; with token → 200 and a body matching the shape (zod schema in the test); rail health probe uses an injected fetch and reports `healthy: false` on a failed probe without throwing.
+- [ ] **Step 2: Implement** — `Metrics` as a plain class with a `startedAt`; handlers call `metrics.recordRequest`; rails call `metrics.recordSettlement` from their settlement hooks (Hedera: `onAfterSettle` with the requirement's atomic amount; Arc: `req.payment.amount`); `HcsQueue` gains `stats()` `{ pending, submitted, failed, lastSequence }`; `LiveDataProvider` records each deployment's last outcome and each chain head; `mountAdmin` assembles the snapshot with 30 s cached health probes and a 10 min cached identity check via `readPqHash`.
+- [ ] **Step 3: Run tests and typecheck; commit** — `git commit -m "feat(service): admin metrics endpoint with settlement, HCS, freshness and identity status"`
+
+### Task 28: Dashboard user view (portfolio) and admin view
+
+**Files:**
+- Create: `packages/dashboard/app/portfolio/page.tsx`, `packages/dashboard/app/portfolio/ScanForm.tsx` (client component), `packages/dashboard/app/api/scan/route.ts`, `packages/dashboard/app/admin/page.tsx`, `packages/dashboard/lib/scan.ts`, `packages/dashboard/lib/admin.ts`, `packages/dashboard/test/scan.test.ts`
+- Modify: `packages/dashboard/app/layout.tsx` (nav links), `packages/dashboard/app/globals.css` (status colours, form styles), `packages/dashboard/README.md` (replace boilerplate), `.env.example` (`ADMIN_TOKEN`, dashboard `AGENT_*` note)
+
+**Interfaces:**
+- Consumes: `VaultRadarClient` from `@vaultradar/agent` (server-side only, inside the API route), `runWatch`-equivalent helpers (`chooseRail`, `chooseTier`, `applyAgeCheck`, `decide`, `saveRun`, `listRuns`), and `GET /v1/admin/metrics` per spec §13.1.
+- Produces: `POST /api/scan` `{ vaults: string[] }` → `{ runId, requests, decisions, txId, receiptHash, priceUsd }` or `{ error }` with 400 (bad input), 429 (rate limit), 503 (agent keys missing). Rate limit: one paid scan per client IP per 30 s (in-memory). Never returns key material.
+
+- [ ] **Step 1: Failing tests** — vault-list parsing and validation (`<chainId>:0x<40 hex>` per line, max 100, dedupe, lowercase); rate limiter; the `/api/scan` route against the in-process service harness (stub provider, raw handlers, `payingFetch: fetch`, injected `readPqHash`) returning decisions and writing a run file; 503 when keys are missing.
+- [ ] **Step 2: Implement `/portfolio`** — textarea plus "Scan now" (disabled while running), results table with colour-coded verdicts, decisions with citations, transaction and receipt links, and a "history" section listing prior runs that include any of the entered vaults (from `listRuns` plus run contents). When `AGENT_HEDERA_KEY` is absent, show a notice and link to the demo run.
+- [ ] **Step 3: Implement `/admin`** — server component fetching the metrics with the bearer token from `ADMIN_TOKEN`; sections per spec §13.1; auto-refresh every 15 s via a small client component; a clear "counters reset on restart" note; 401/unreachable states rendered inline.
+- [ ] **Step 4: Stretch (only if promised items are green and reviewed)** — wallet address input discovering ERC-4626 positions via `balanceOf` multicall over a new free service endpoint `GET /v1/vaults?chainId=` (Task 27 adds it if trivial); otherwise leave the input as vault list only.
+- [ ] **Step 5: Tests, typecheck, `next build`; commit** — `git commit -m "feat(dashboard): portfolio user view with server-side paid scans; admin metrics view"`
+
+Ordering: Task 27 runs in the service worktree after Task 19 (Arc rail) so both rails' settlement hooks exist; Task 28's portfolio view and the admin page's static shell can start in the dashboard worktree immediately against the §13.1 contract, with the admin page wired to the live endpoint after Task 27 merges.
