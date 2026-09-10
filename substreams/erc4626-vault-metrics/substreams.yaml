@@ -5,7 +5,15 @@ package:
   url: https://github.com/rahuljaguste/vaultradar
   doc: ERC-4626 vault share price, flows and depositor metrics composed from the Pinax erc4626 events package.
 imports:
-  erc4626: https://github.com/pinax-network/substreams-evm/raw/main/spkg/erc4626-v0.1.0.spkg
+  # Pinned to a commit, not `main`: a `raw/main/...` URL is whatever Pinax's default branch
+  # happens to serve at build time, so the same manifest could compile against a different
+  # erc4626 events package tomorrow and change what `map_events` emits with no diff here —
+  # and a published spkg would no longer be reproducible from this repo. Commit 970a665 is
+  # pinax-network/substreams-evm `main` as of 2026-09-10. To refresh it deliberately: re-read
+  # the head with `git ls-remote https://github.com/pinax-network/substreams-evm.git HEAD`,
+  # bump the hash here and in substreams.base.yaml, and re-verify the module over a fixed
+  # block range.
+  erc4626: https://github.com/pinax-network/substreams-evm/raw/970a665e15619de8ad7f686bd89412a1030d46dc/spkg/erc4626-v0.1.0.spkg
   database_change: https://github.com/streamingfast/substreams-sink-database-changes/releases/download/v2.1.1/substreams-sink-database-changes-v2.1.1.spkg
   # sql/sink_sql protodefs intentionally omitted: substreams-sink-sql-protodefs-v1.0.7.spkg (the
   # latest protodefs release, Nov 2023) fails `substreams protogen` on its own, with no other

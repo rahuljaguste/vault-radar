@@ -98,7 +98,7 @@ The agent refuses independently. It checks each attestation's `timestamp` agains
 
 **Replay defence.** The service rejects an envelope whose `ts` is more than 120 seconds from server time, whose `req_nonce` has been seen in the last 10 minutes, whose `payer` does not match the payer the payment layer verified, or whose count does not match. All four checks return 422 before settlement, so a rejected request costs nothing.
 
-**Privacy tiers.** A clear `scan` hides nothing. A sealed `scan` hides the portfolio from every intermediary, but the vendor still decrypts it. The `table` tier hides holdings from the vendor too, by buying every vault of one protocol and filtering locally. `table` costs a flat $0.03 on both rails, which is deliberately never cheaper than a sealed scan.
+**Privacy tiers.** A clear `scan` hides nothing. A sealed `scan` hides the portfolio from every intermediary, but the vendor still decrypts it. The `table` tier hides holdings from the vendor too, by buying every vault of one protocol and filtering locally. `table` costs a flat $0.06 on both rails, which is deliberately never cheaper than a sealed scan: a scan of the maximum 100 vaults costs $0.051.
 
 **Receipts and attestations.** Every response carries an ML-DSA-65 signed receipt binding `request_hash`, `response_hash`, the sources with their blocks, the price, the payment transaction id, the tier, and whether the exchange was sealed. Each vault also gets its own signed attestation, so a single vault's data stays portable and verifiable after the sealed response is opened and discarded.
 
