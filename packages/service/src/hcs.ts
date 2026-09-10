@@ -84,20 +84,53 @@ export class HcsQueue {
   }
 }
 
-/** Builds the operator-authenticated submit function `HcsQueue` uses in production. */
-export function makeHederaSubmit(c: Config): Submit {
-  const client = Client.forTestnet().setOperator(c.hedera.operatorId, PrivateKey.fromStringECDSA(c.hedera.operatorKey));
+/**
+ * Minimal shape this module needs from a (possibly auto-chunking)
+ * `TopicMessageSubmitTransaction` and its per-chunk `TransactionResponse`s — narrowed so
+ * a test can inject a fake without touching the real Hedera SDK or network.
+ */
+type ChunkResponse = {
+  transactionId: { toString(): string };
+  getReceipt(client: Client): Promise<{ topicSequenceNumber?: { toString(): string } | null }>;
+  getRecord(client: Client): Promise<{ consensusTimestamp: { toString(): string } }>;
+};
+type ChunkedSubmitTx = {
+  setTopicId(id: TopicId): ChunkedSubmitTx;
+  setMessage(message: string): ChunkedSubmitTx;
+  executeAll(client: Client): Promise<ChunkResponse[]>;
+};
+
+/** Builds the operator-authenticated submit function `HcsQueue` uses in production.
+ * `deps.client`/`deps.makeTx` exist purely so tests can inject fakes for both; production
+ * callers never set them. */
+export function makeHederaSubmit(c: Config, deps: { client?: Client; makeTx?: () => ChunkedSubmitTx } = {}): Submit {
+  const client = deps.client ?? Client.forTestnet().setOperator(c.hedera.operatorId, PrivateKey.fromStringECDSA(c.hedera.operatorKey));
+  const makeTx = deps.makeTx ?? (() => new TopicMessageSubmitTransaction() as unknown as ChunkedSubmitTx);
   return async message => {
-    const tx = await new TopicMessageSubmitTransaction()
-      .setTopicId(TopicId.fromString(c.hedera.hcsTopicId!))
-      .setMessage(message)
-      .execute(client);
-    const rc = await tx.getReceipt(client);
-    const record = await tx.getRecord(client);
+    // The receipt commitment message (spec §5.5) is ~4.6 KB, well over HCS's ~1 KB
+    // per-chunk limit, so this always auto-chunks. `TopicMessageSubmitTransaction.execute()`
+    // returns only the *first* chunk's response ((await this.executeAll(client))[0],
+    // confirmed in @hashgraph/sdk's own source) — using it directly would report chunk 1's
+    // sequence/consensus timestamp for every submission, while `mirrorLookup` (which has no
+    // such shortcut — it must wait for every chunk to arrive) reports the *last* chunk as
+    // canonical, so the same receipt would describe two different (sequence,
+    // consensus_timestamp) pairs depending on whether it was looked up from the in-memory
+    // map or the mirror node. Fixed by calling `executeAll` directly and taking:
+    //   - the LAST response's receipt/record for sequence and consensus timestamp, matching
+    //     mirrorLookup's own choice — the message isn't complete (and so not truly
+    //     "committed" as a whole) until its last chunk lands.
+    //   - the FIRST response's transaction id for `transactionId`, since that id is exactly
+    //     the `chunk_info.initial_transaction_id` the mirror node groups chunks by — the id
+    //     a caller actually needs to find this message's chunks there.
+    const responses = await makeTx().setTopicId(TopicId.fromString(c.hedera.hcsTopicId!)).setMessage(message).executeAll(client);
+    const first = responses[0];
+    const last = responses[responses.length - 1];
+    const rc = await last.getReceipt(client);
+    const record = await last.getRecord(client);
     return {
       sequence: rc.topicSequenceNumber?.toString() ?? "0",
       consensusTimestamp: record.consensusTimestamp.toString(),
-      transactionId: tx.transactionId.toString(),
+      transactionId: first.transactionId.toString(),
     };
   };
 }

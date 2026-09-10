@@ -1,4 +1,7 @@
-import { createPublicClient, http, hexToString, type Address, type Transport } from "viem";
+import { createPublicClient, http, hexToBytes, type Address, type Transport } from "viem";
+
+/** sha256 hex digest format — what every `pubHash`/`receiptHash` in this codebase produces. */
+const HASH_RE = /^[0-9a-f]{64}$/;
 
 /** ERC-8004 IdentityRegistry `register`/`setMetadata`/`getMetadata` plus the `Registered` event. */
 export const ERC8004_ABI = [
@@ -52,8 +55,14 @@ export const PQ_KEY = "pq.sig.pubhash";
  * additive extension of the plan's `readPqHash(chainId, agentId, rpcUrl)` signature.
  *
  * Never throws: an unrecognized chainId, an agentId that isn't a valid uint256, an RPC
- * failure, a revert, or empty/absent metadata all yield `null` — "could not verify" —
- * distinct from a real hash mismatch a caller would compute itself.
+ * failure, a revert, non-UTF-8 metadata bytes, or a decoded string that isn't a 64-hex-char
+ * sha256 digest all yield `null` — "could not verify" — distinct from a real hash mismatch
+ * a caller would compute itself. The fatal decode + format check matter because viem's
+ * `hexToString` uses a non-fatal `TextDecoder` by default: corrupted or unrelated on-chain
+ * bytes would otherwise decode into a garbled-but-non-null string that a naive `===`
+ * comparison could occasionally, coincidentally still reject correctly, but that isn't a
+ * property worth relying on — a decode failure should mean "could not verify", not "here's
+ * some bytes, good luck."
  */
 export async function readPqHash(
   chainId: string,
@@ -66,7 +75,9 @@ export async function readPqHash(
   try {
     const client = createPublicClient({ transport });
     const raw = await client.readContract({ address: c.registry, abi: ERC8004_ABI, functionName: "getMetadata", args: [BigInt(agentId), PQ_KEY] });
-    return raw && raw !== "0x" ? hexToString(raw) : null;
+    if (!raw || raw === "0x") return null;
+    const text = new TextDecoder("utf-8", { fatal: true }).decode(hexToBytes(raw));
+    return HASH_RE.test(text) ? text : null;
   } catch {
     return null;
   }

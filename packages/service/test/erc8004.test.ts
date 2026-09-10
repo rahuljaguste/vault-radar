@@ -50,6 +50,29 @@ test("readPqHash returns null for empty metadata (0x) without decoding it", asyn
   expect(await readPqHash("296", "7", "http://fake.invalid", transport)).toBeNull();
 });
 
+test("readPqHash returns null for non-UTF-8 metadata bytes, instead of a garbled string", async () => {
+  // 0xff is never a valid UTF-8 leading byte, so a fatal decoder must reject it.
+  const encoded = encodeFunctionResult({ abi: ERC8004_ABI, functionName: "getMetadata", result: "0xff" });
+  const transport = fakeTransport((async ({ method }: { method: string }) => {
+    if (method === "eth_call") return encoded;
+    if (method === "eth_chainId") return "0x128";
+    return null;
+  }) as EIP1193RequestFn);
+
+  expect(await readPqHash("296", "7", "http://fake.invalid", transport)).toBeNull();
+});
+
+test("readPqHash returns null for valid UTF-8 that isn't a 64-hex-char hash", async () => {
+  const encoded = encodeFunctionResult({ abi: ERC8004_ABI, functionName: "getMetadata", result: stringToHex("hello world") });
+  const transport = fakeTransport((async ({ method }: { method: string }) => {
+    if (method === "eth_call") return encoded;
+    if (method === "eth_chainId") return "0x128";
+    return null;
+  }) as EIP1193RequestFn);
+
+  expect(await readPqHash("296", "7", "http://fake.invalid", transport)).toBeNull();
+});
+
 test("readPqHash returns null for an unrecognized chain id, without constructing a client", async () => {
   let calledTransport = false;
   const transport = fakeTransport((async () => {

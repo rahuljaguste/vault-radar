@@ -27,12 +27,17 @@ export function agentUriFor(publicUrl: string): string {
   return `${publicUrl.replace(/\/$/, "")}/.well-known/erc8004.json`;
 }
 
+/** The single-entry `register()`/`writeContract` metadata tuple, keyed under PQ_KEY. */
+function metadataArgs(pubHash: string): { metadataKey: string; metadataValue: `0x${string}` }[] {
+  return [{ metadataKey: PQ_KEY, metadataValue: stringToHex(pubHash) }];
+}
+
 /** The exact `register(agentURI, [{metadataKey: PQ_KEY, metadataValue}])` calldata. */
 export function buildRegisterCalldata(agentURI: string, pubHash: string): `0x${string}` {
   return encodeFunctionData({
     abi: ERC8004_ABI,
     functionName: "register",
-    args: [agentURI, [{ metadataKey: PQ_KEY, metadataValue: stringToHex(pubHash) }]],
+    args: [agentURI, metadataArgs(pubHash)],
   });
 }
 
@@ -73,7 +78,7 @@ async function registerOnChain(chainId: string, deployerKey: string | undefined,
   const pub = createPublicClient({ chain, transport: http(c.rpc) });
   const hash = await wallet.writeContract({
     address: c.registry, abi: ERC8004_ABI, functionName: "register",
-    args: [agentURI, [{ metadataKey: PQ_KEY, metadataValue: stringToHex(pubHash) }]],
+    args: [agentURI, metadataArgs(pubHash)],
     gas: 400_000n,
   });
   const rcpt = await pub.waitForTransactionReceipt({ hash });

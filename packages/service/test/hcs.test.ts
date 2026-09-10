@@ -1,6 +1,8 @@
 import { expect, test } from "bun:test";
+import type { Client } from "@hashgraph/sdk";
 import { buildReceipt, canonicalize, deriveSigningKeys, receiptHash } from "@vaultradar/core";
-import { HcsQueue, mirrorLookup } from "../src/hcs";
+import { loadConfig } from "../src/config";
+import { HcsQueue, makeHederaSubmit, mirrorLookup } from "../src/hcs";
 
 const keys = deriveSigningKeys("99".repeat(32));
 const r = buildReceipt(
@@ -50,6 +52,35 @@ test("enqueue is synchronous: it returns void immediately, so a caller never has
   // ever blocking the response that already went out.
   expect(q.pending()).toBe(1);
 });
+
+const hcsConfig = loadConfig({
+  PQ_SIG_SEED: "22".repeat(32), PQ_KEM_SEED: "33".repeat(64), GRAPH_STUDIO_API_KEY: "k",
+  HEDERA_OPERATOR_ID: "0.0.1", HEDERA_OPERATOR_KEY: "11".repeat(32), HEDERA_HCS_TOPIC_ID: "0.0.5",
+  HEDERA_PAYTO_ACCOUNT_ID: "0.0.2", ARC_SELLER_ADDRESS: "0x" + "1".repeat(40),
+});
+
+test(
+  "makeHederaSubmit reports the last chunk's sequence/timestamp and the first chunk's transaction id",
+  async () => {
+    // A 3-chunk fake TopicMessageSubmitTransaction: only implements executeAll (no execute
+    // at all), so calling the wrong SDK method throws immediately instead of attempting a
+    // real network call.
+    const responses = [1, 2, 3].map(n => ({
+      transactionId: { toString: () => `0.0.1@1700000000.00000000${n}` },
+      getReceipt: async () => ({ topicSequenceNumber: { toString: () => String(40 + n) } }),
+      getRecord: async () => ({ consensusTimestamp: { toString: () => `1700000000.${n}00000000` } }),
+    }));
+    const fakeTx = { setTopicId: () => fakeTx, setMessage: () => fakeTx, executeAll: async () => responses };
+    const submit = makeHederaSubmit(hcsConfig, { makeTx: () => fakeTx as any, client: {} as unknown as Client });
+
+    const result = await submit("a message that would need several chunks");
+
+    expect(result.transactionId).toBe("0.0.1@1700000000.000000001"); // first chunk
+    expect(result.sequence).toBe("43"); // last chunk: 40 + 3
+    expect(result.consensusTimestamp).toBe("1700000000.300000000"); // last chunk
+  },
+  3000,
+);
 
 test("lookup falls back to the mirror node when the in-memory map misses, then to a null record", async () => {
   const hash = receiptHash(r);
