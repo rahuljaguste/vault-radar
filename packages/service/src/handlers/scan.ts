@@ -25,6 +25,7 @@ import {
 import type { DataProvider } from "../data/provider";
 import type { ServiceKeys } from "../keys";
 import type { Config } from "../config";
+import { errBody } from "../util/http";
 
 export type HandlerDeps = {
   keys: ServiceKeys;
@@ -70,13 +71,13 @@ export function makeScanHandler(d: HandlerDeps) {
       try {
         opened = openSealedRequest<ScanRequest | TableRequest>(req.body, d.keys.kem.secretKey, d.keys.kem.kid);
       } catch {
-        return res.status(422).json({ reason: "envelope_open_failed" });
+        return res.status(422).json(errBody("envelope_open_failed"));
       }
       const payer = d.getPayer(req);
-      if (!payer) return res.status(422).json({ reason: "payer_unknown" });
+      if (!payer) return res.status(422).json(errBody("payer_unknown"));
       const count = d.tier === "scan" ? clampCount(req.header("x-vr-count")) ?? undefined : undefined;
       const chk = checkSealedRequest(opened, { now, payer, count, seen: d.nonces });
-      if (!chk.ok) return res.status(422).json({ reason: chk.reason });
+      if (!chk.ok) return res.status(422).json(errBody(chk.reason));
       request = opened.request;
       replyPk = fromB64(opened.reply_pk);
     } else {
@@ -86,12 +87,12 @@ export function makeScanHandler(d: HandlerDeps) {
     if (d.tier === "scan") {
       const vaults = (request as ScanRequest).vaults;
       if (!Array.isArray(vaults) || !vaults.length || vaults.length > 100 || !vaults.every(v => VAULT_ID_RE.test(v))) {
-        return res.status(422).json({ reason: "bad_vaults" });
+        return res.status(422).json(errBody("bad_vaults"));
       }
     } else {
       const table = request as TableRequest;
       if (typeof table.protocol !== "string" || typeof table.chainId !== "string") {
-        return res.status(422).json({ reason: "bad_table_request" });
+        return res.status(422).json(errBody("bad_table_request"));
       }
     }
 

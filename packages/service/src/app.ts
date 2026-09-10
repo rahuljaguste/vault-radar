@@ -14,12 +14,14 @@ export type BuildAppDeps = {
   nonces: NonceStore;
   rails?: { hedera?: boolean; arc?: boolean };
   /**
-   * Extra settlement observer for the Hedera rail — composed with `hcs.enqueue` below
-   * (both run; neither replaces the other) rather than overriding it, so a caller that
-   * needs its own settlement hook (chiefly hedera-rail.test.ts) can still observe
-   * settlement directly without losing the production HCS-enqueue behavior, and without
-   * main.ts ever needing to wire hcs.enqueue itself (which would double-enqueue if it
-   * also set this field).
+   * Extra settlement observer for whichever rail(s) are mounted — composed with
+   * `hcs.enqueue` below, once per rail (both run; neither replaces the other) rather
+   * than overriding it, so a caller that needs its own settlement hook (chiefly
+   * hedera-rail.test.ts and arc-rail.test.ts) can still observe settlement directly
+   * without losing the production HCS-enqueue behavior, and without main.ts ever
+   * needing to wire hcs.enqueue itself (which would double-enqueue if it also set this
+   * field). A settled request only ever passes through one rail, so this composition
+   * being duplicated per rail below never double-fires for the same receipt.
    */
   onSettled?: (receipt: Receipt, txId: string) => void;
   /** Overrides where /skill.md reads from (forwarded to mountWellKnown). Defaults to the
@@ -48,9 +50,12 @@ export async function buildApp(deps: BuildAppDeps): Promise<express.Express> {
     mountHederaRail(app, hederaDeps);
   }
   if (deps.rails?.arc) {
-    // @ts-expect-error Task 19 adds ./rails/arc.ts; this errors again (and must be removed) once it lands
     const { mountArcRail } = await import("./rails/arc");
-    mountArcRail(app, deps);
+    const onSettled = (receipt: Receipt, txId: string) => {
+      deps.hcs?.enqueue(receipt);
+      deps.onSettled?.(receipt, txId);
+    };
+    mountArcRail(app, { ...deps, onSettled });
   }
 
   // Final error handler: catches anything forwarded via next(err), including from

@@ -7,6 +7,7 @@ import { extractTransactionFromPayload, inspectHederaTransaction, type ExactHede
 import { clampCount, hederaScanPriceUsd, isSealed, TABLE_PRICE_USD, type Receipt } from "@vaultradar/core";
 import { makeScanHandler, type HandlerDeps } from "../handlers/scan";
 import { asyncHandler } from "../util/async";
+import { errBody } from "../util/http";
 
 type Decoded = { payer: string | null; txId: string | null };
 
@@ -141,12 +142,12 @@ export const hederaTxIdFromRequest = (req: Request): string | null => decodeHede
  */
 function validateScanRequest(req: Request, res: Response, next: NextFunction): void {
   if (!clampCount(req.header("x-vr-count"))) {
-    res.status(400).json({ reason: "bad_count" });
+    res.status(400).json(errBody("bad_count"));
     return;
   }
   const body = req.body;
   if (body && typeof body === "object" && ("ct" in body || "kem" in body) && !isSealed(body)) {
-    res.status(400).json({ reason: "malformed_envelope" });
+    res.status(400).json(errBody("malformed_envelope"));
     return;
   }
   next();

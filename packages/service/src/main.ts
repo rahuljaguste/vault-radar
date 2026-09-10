@@ -19,8 +19,7 @@ async function main() {
     ? new HcsQueue({ submit: makeHederaSubmit(config), topicId: config.hedera.hcsTopicId })
     : null;
 
-  // TODO(Task 19): also gate `arc` here once rails/arc.ts exists.
-  const rails = { hedera: Boolean(config.hedera.payToAccountId) };
+  const rails = { hedera: Boolean(config.hedera.payToAccountId), arc: Boolean(config.arc.sellerAddress) };
 
   const app = await buildApp({ config, keys, data, hcs, nonces: new MemoryNonceStore(), rails });
 

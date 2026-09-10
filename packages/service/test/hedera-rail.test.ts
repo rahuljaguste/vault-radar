@@ -237,7 +237,7 @@ test("a missing X-VR-Count returns 400 bad_count without ever calling the facili
       method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ vaults: [] }),
     });
     expect(res.status).toBe(400);
-    expect(await res.json()).toEqual({ reason: "bad_count" });
+    expect(await res.json()).toEqual({ reason: "bad_count", error: "bad_count" });
     expect(fac.calls.verify).toBe(0);
   } finally {
     rail.close();
@@ -253,7 +253,7 @@ test("an out-of-range X-VR-Count returns 400 bad_count without ever calling the 
       method: "POST", headers: { "content-type": "application/json", "x-vr-count": "0" }, body: JSON.stringify({ vaults: [] }),
     });
     expect(res.status).toBe(400);
-    expect(await res.json()).toEqual({ reason: "bad_count" });
+    expect(await res.json()).toEqual({ reason: "bad_count", error: "bad_count" });
     expect(fac.calls.verify).toBe(0);
   } finally {
     rail.close();
@@ -269,7 +269,7 @@ test("a body that claims to be a sealed envelope but fails isSealed returns 400 
       method: "POST", headers: { "content-type": "application/json", "x-vr-count": "1" }, body: JSON.stringify({ ct: "not-actually-sealed" }),
     });
     expect(res.status).toBe(400);
-    expect(await res.json()).toEqual({ reason: "malformed_envelope" });
+    expect(await res.json()).toEqual({ reason: "malformed_envelope", error: "malformed_envelope" });
     expect(fac.calls.verify).toBe(0);
   } finally {
     rail.close();
