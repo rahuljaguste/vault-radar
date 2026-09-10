@@ -26,7 +26,6 @@ export async function buildApp(deps: BuildAppDeps): Promise<express.Express> {
   mountWellKnown(app, deps);
 
   if (deps.rails?.hedera) {
-    // @ts-expect-error Task 16 adds ./rails/hedera.ts; this errors again (and must be removed) once it lands
     const { mountHederaRail } = await import("./rails/hedera");
     mountHederaRail(app, deps);
   }
