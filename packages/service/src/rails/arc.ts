@@ -117,6 +117,40 @@ function preValidateSealed(tier: "scan" | "table", deps: Pick<HandlerDeps, "keys
   };
 }
 
+/**
+ * The clear-body sibling of `preValidateSealed`: for the scan tier, rejects a request
+ * whose own `vaults` list disagrees with the `X-VR-Count` the route is about to be priced
+ * against (422 `count_mismatch`), before `gateway.require` ever runs.
+ *
+ * `validateBucket` above only ever reads the header, so it cannot see this: `X-VR-Count:
+ * 1` on `/arc/v1/scan/s` with a hundred vaults in a clear body passes the bucket check,
+ * pays the one-vault `s` price, and then asks the DataProvider for a hundred vaults.
+ * `handlers/scan.ts` enforces the same rule rail-independently, but on this rail a
+ * handler-level refusal comes after Circle has already settled (see `validateBucket`'s
+ * comment for the trace), so the money would be gone — which is why the check is mounted
+ * here as well rather than only there.
+ *
+ * A sealed body is left to `preValidateSealed` (which checks the same thing against the
+ * envelope's plaintext); a `table` request has no count. `Array.isArray` guards the read
+ * exactly as `checkSealedRequestPrePayment` does, so a clear body with a non-array
+ * `vaults` keeps reaching the handler's own `bad_vaults` check rather than being
+ * relabelled a count mismatch.
+ */
+function preValidateClearCount(tier: "scan" | "table") {
+  return (req: Request, res: Response, next: NextFunction): void => {
+    if (tier !== "scan" || isSealed(req.body)) {
+      next();
+      return;
+    }
+    const vaults = (req.body as { vaults?: unknown })?.vaults;
+    if (Array.isArray(vaults) && vaults.length !== clampCount(req.header("x-vr-count"))) {
+      res.status(422).json(errBody("count_mismatch"));
+      return;
+    }
+    next();
+  };
+}
+
 export function mountArcRail(
   app: Express,
   deps: Omit<HandlerDeps, "rail" | "tier" | "getPayer" | "getTxId"> & {
@@ -160,6 +194,7 @@ export function mountArcRail(
       path,
       ...pre,
       preValidateSealed(tier, deps),
+      preValidateClearCount(tier),
       gateway.require(price),
       asyncHandler(async (req: Request, res: Response) => {
         // `req.payment` is always populated here: reaching this wrapper at all means

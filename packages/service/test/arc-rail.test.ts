@@ -18,6 +18,10 @@ const ARC_NETWORK = "eip155:5042002";
 // (viem's `signTypedData` needs no network access) — never funded, never touches a
 // real chain.
 const TEST_PRIVATE_KEY = ("0x" + "ab".repeat(32)) as `0x${string}`;
+/** One well-formed vault id, for clear bodies that must agree with `X-VR-Count: 1` —
+ * `preValidateClearCount` refuses a body whose list length disagrees with the header it
+ * is priced on, so `{ vaults: [] }` is no longer a valid stand-in at count 1. */
+const ONE_VAULT = "1:0xabababababababababababababababababababab";
 
 type VerifyMode = { isValid: boolean; payer?: string; invalidReason?: string };
 type SettleMode = { success: boolean; transaction?: string; payer?: string; errorReason?: string };
@@ -106,7 +110,7 @@ test("an unpaid scan request returns 402 with a payment-required header advertis
   const rail = await mountRail(fac.url);
   try {
     const res = await fetch(`${rail.base}/arc/v1/scan/s`, {
-      method: "POST", headers: { "content-type": "application/json", "x-vr-count": "1" }, body: JSON.stringify({ vaults: [] }),
+      method: "POST", headers: { "content-type": "application/json", "x-vr-count": "1" }, body: JSON.stringify({ vaults: [ONE_VAULT] }),
     });
     expect(res.status).toBe(402);
     const header = res.headers.get("payment-required");
@@ -232,6 +236,84 @@ test("a sealed envelope whose own vault count disagrees with X-VR-Count is rejec
     expect(fac.calls.supported).toBe(0);
     expect(fac.calls.verify).toBe(0);
     expect(fac.calls.settle).toBe(0);
+  } finally {
+    rail.close();
+    fac.close();
+  }
+});
+
+// --- clear-body count binding (pre-payment, because this rail settles first) --------
+//
+// `validateBucket` only reads the header, so a clear body could name any number of vaults
+// inside a bucket-valid `X-VR-Count` and get them all for the bucket price. Circle settles
+// inside `gateway.require` — before any handler runs — so the handler's own
+// `count_mismatch` would land after the money moved; `preValidateClearCount` is mounted
+// ahead of `gateway.require` for exactly that reason, which is what the facilitator call
+// counts below assert.
+
+test("a clear scan body whose vault count disagrees with X-VR-Count is rejected 422 count_mismatch before any facilitator call", async () => {
+  const fac = fakeFacilitator({
+    verify: { isValid: true, payer: "0xtestpayer" },
+    settle: { success: true, transaction: "0xshouldnothappen", payer: "0xtestpayer" },
+  });
+  const scanCalls: string[][] = [];
+  const rail = await mountRail(fac.url, { scan: async ids => { scanCalls.push(ids); return { vaults: [], sources: [] }; } });
+  try {
+    // Count 3 is a valid "s"-bucket value, so validateBucket passes it; the body names
+    // five vaults, which is also in the "s" bucket — the mismatch is the whole point.
+    const res = await fetch(`${rail.base}/arc/v1/scan/s`, {
+      method: "POST",
+      headers: { "content-type": "application/json", "x-vr-count": "3" },
+      body: JSON.stringify({
+        vaults: [
+          "1:0xabababababababababababababababababababab",
+          "1:0xacacacacacacacacacacacacacacacacacacacac",
+          "1:0xadadadadadadadadadadadadadadadadadadadad",
+          "1:0xaeaeaeaeaeaeaeaeaeaeaeaeaeaeaeaeaeaeaeae",
+          "1:0xafafafafafafafafafafafafafafafafafafafaf",
+        ],
+      }),
+    });
+    expect(res.status).toBe(422);
+    expect(await res.json()).toEqual({ reason: "count_mismatch", error: "count_mismatch" });
+    expect(scanCalls).toEqual([]);
+    expect(fac.calls.supported).toBe(0);
+    expect(fac.calls.verify).toBe(0);
+    expect(fac.calls.settle).toBe(0);
+  } finally {
+    rail.close();
+    fac.close();
+  }
+});
+
+test("a clear scan body whose count matches X-VR-Count still reaches the facilitator", async () => {
+  const fac = fakeFacilitator();
+  const rail = await mountRail(fac.url);
+  try {
+    const res = await fetch(`${rail.base}/arc/v1/scan/s`, {
+      method: "POST",
+      headers: { "content-type": "application/json", "x-vr-count": "1" },
+      body: JSON.stringify({ vaults: ["1:0xabababababababababababababababababababab"] }),
+    });
+    expect(res.status).toBe(402); // unpaid, so the 402 is the expected answer
+    expect(fac.calls.supported).toBe(1);
+  } finally {
+    rail.close();
+    fac.close();
+  }
+});
+
+test("a clear table body is unaffected by the count check, since a table has no count", async () => {
+  const fac = fakeFacilitator();
+  const rail = await mountRail(fac.url);
+  try {
+    const res = await fetch(`${rail.base}/arc/v1/table`, {
+      method: "POST",
+      headers: { "content-type": "application/json", "x-vr-count": "99" },
+      body: JSON.stringify({ protocol: "erc4626", chainId: "1" }),
+    });
+    expect(res.status).toBe(402);
+    expect(fac.calls.supported).toBe(1);
   } finally {
     rail.close();
     fac.close();
@@ -398,7 +480,7 @@ test("a failed settle after a successful verify never reaches the handler and ne
   try {
     const gw = new GatewayClient({ chain: "arcTestnet", privateKey: TEST_PRIVATE_KEY });
     await expect(
-      gw.pay(`${rail.base}/arc/v1/scan/s`, { method: "POST", body: { vaults: [] }, headers: { "x-vr-count": "1" } }),
+      gw.pay(`${rail.base}/arc/v1/scan/s`, { method: "POST", body: { vaults: [ONE_VAULT] }, headers: { "x-vr-count": "1" } }),
     ).rejects.toThrow();
     expect(settledCalls.length).toBe(0);
   } finally {

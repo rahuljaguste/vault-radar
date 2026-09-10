@@ -119,6 +119,20 @@ export function makeScanHandler(d: HandlerDeps) {
       if (!Array.isArray(vaults) || !vaults.length || vaults.length > 100 || !vaults.every(v => VAULT_ID_RE.test(v))) {
         return res.status(422).json(errBody("bad_vaults"));
       }
+      // The price of a scan is `X-VR-Count`, and the work is `request.vaults`, so the two
+      // must be the same number or the request is underpriced. The sealed branch above
+      // already enforces this (checkSealedRequestPrePayment's count check, or
+      // checkSealedRequest's); a clear body reached the data call without it, so
+      // `X-VR-Count: 1` with a hundred vaults in the body bought a hundred vaults'
+      // worth of upstream work for the one-vault price. Checked here, before the
+      // DataProvider call, so the refusal costs nothing upstream — and, on Hedera, ahead
+      // of settlement so it costs the payer nothing either. Arc settles before any
+      // handler runs, so that rail enforces the same rule in a pre-payment middleware
+      // (rails/arc.ts's preValidateClearCount); this remains the rail-independent
+      // backstop, and the only line of defence for a handler mounted without a rail.
+      if (!sealedIn && clampCount(req.header("x-vr-count")) !== vaults.length) {
+        return res.status(422).json(errBody("count_mismatch"));
+      }
     } else {
       const table = request as TableRequest;
       if (typeof table.protocol !== "string" || typeof table.chainId !== "string") {

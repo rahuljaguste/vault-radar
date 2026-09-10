@@ -45,3 +45,25 @@ test("checkSig returns false, never throws, on null/undefined/malformed input", 
   expect(checkSig(undefined as any, k.publicKey)).toBe(false);
   expect(checkSig({ sig: { alg: "ML-DSA-65", pub_hash: "x", value: "not-base64!!" } } as any, k.publicKey)).toBe(false);
 });
+test("checkSig binds sig.pub_hash to the verifying key, so a mislabelled signature fails", () => {
+  // The attack this closes: sign with key A, label the signature with the hash of a
+  // *different* key B that a caller has pinned on chain. Without the binding the caller
+  // verifies against A (valid) and compares pub_hash to B's pin (matches), and reports a
+  // receipt as key-bound that the pinned key never signed.
+  const a = deriveSigningKeys(SEED);
+  const b = deriveSigningKeys("22".repeat(32));
+  const signed = attachSig({ x: "y" }, a);
+  expect(checkSig(signed, a.publicKey)).toBe(true);
+
+  // Same valid ML-DSA signature by A, relabelled with B's public-key hash.
+  const mislabelled = { ...signed, sig: { ...signed.sig, pub_hash: b.pubHash } };
+  expect(verifyJson({ x: "y" }, mislabelled.sig.value, a.publicKey)).toBe(true); // the signature itself is still good
+  expect(checkSig(mislabelled, a.publicKey)).toBe(false); // but the object is not
+  expect(checkSig(mislabelled, b.publicKey)).toBe(false); // and B never signed it either
+
+  // Any other shape of wrong hash is refused on the same grounds.
+  for (const pub_hash of ["", "00".repeat(32), a.pubHash.toUpperCase(), a.pubHash.slice(0, 63)]) {
+    expect(checkSig({ ...signed, sig: { ...signed.sig, pub_hash } }, a.publicKey)).toBe(false);
+  }
+  expect(checkSig({ ...signed, sig: { ...signed.sig, pub_hash: undefined } } as any, a.publicKey)).toBe(false);
+});

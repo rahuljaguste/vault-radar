@@ -216,8 +216,8 @@ test("the table route prices flat at TABLE_PRICE_USD regardless of X-VR-Count", 
     });
     expect(res.status).toBe(402);
     const decoded = decodePaymentRequiredHeader(res.headers.get("payment-required")!);
-    // TABLE_PRICE_USD = "0.03" -> convertToTokenAmount("0.03", 6) = "30000".
-    expect(decoded.accepts[0].amount).toBe("30000");
+    // TABLE_PRICE_USD = "0.06" -> convertToTokenAmount("0.06", 6) = "60000".
+    expect(decoded.accepts[0].amount).toBe("60000");
   } finally {
     rail.close();
     fac.close();
@@ -403,6 +403,76 @@ test("hederaPayerFromRequest prefers the facilitator-verified payer over the tra
     expect(res.status).toBe(200);
     expect(capturedPayer).toBe(VERIFIED_PAYER);
     expect(capturedPayer).not.toBe(PAYER_ACCOUNT);
+  } finally {
+    rail.close();
+    fac.close();
+  }
+});
+
+// --- clear-mode count binding -------------------------------------------------------
+//
+// `X-VR-Count` is what the route is priced on and `request.vaults` is what the handler
+// works on, so a clear body must not be able to name more vaults than it paid for. The
+// sealed path always checked this (`checkSealedRequest`'s count check); the clear path did
+// not, so `X-VR-Count: 1` with a hundred vaults in the body bought a hundred vaults of
+// upstream work for the one-vault price. On this rail @x402/express settles only after a
+// 2xx, so the handler's own 422 is itself pre-settlement — which is what the facilitator's
+// settle count asserts below.
+//
+// Placed last in this file on purpose: the mismatch test verifies a payment the request
+// then refuses, so no settle/settle-failure hook ever fires for it and its entry stays in
+// `verifiedPayerByTxKey` until the 10-minute TTL sweeps it. That is the documented
+// abandoned-request case (see the TTL comment in rails/hedera.ts), not a regression — but
+// the maps are module-level, so running this before the `_mapSizesForTests` assertions
+// above would make them fail on a leak they are not about.
+
+test("a clear scan body whose vault count disagrees with X-VR-Count is refused 422 count_mismatch, and never settles", async () => {
+  const fac = fakeFacilitator({
+    verify: { isValid: true, payer: VERIFIED_PAYER },
+    settle: { success: true, transaction: SETTLED_TX, payer: VERIFIED_PAYER },
+  });
+  const scanCalls: string[][] = [];
+  const rail = await mountRail(fac.url, { scan: async ids => { scanCalls.push(ids); return { vaults: [], sources: [] }; } });
+  try {
+    // Paid for one vault (the payment header carries amount 1500 = count 1), asked for three.
+    const res = await fetch(`${rail.base}/hedera/v1/scan`, {
+      method: "POST",
+      headers: { "content-type": "application/json", "x-vr-count": "1", "payment-signature": buildPaymentSignatureHeader() },
+      body: JSON.stringify({
+        vaults: [
+          "1:0xabababababababababababababababababababab",
+          "1:0xacacacacacacacacacacacacacacacacacacacac",
+          "1:0xadadadadadadadadadadadadadadadadadadadad",
+        ],
+      }),
+    });
+    expect(res.status).toBe(422);
+    expect(await res.json()).toEqual({ reason: "count_mismatch", error: "count_mismatch" });
+    // No upstream work for the under-paid request...
+    expect(scanCalls).toEqual([]);
+    // ...and the 4xx meant the verified payment was never settled, so nothing was charged.
+    expect(fac.calls.verify).toBe(1);
+    expect(fac.calls.settle).toBe(0);
+  } finally {
+    rail.close();
+    fac.close();
+  }
+});
+
+test("a clear scan body whose count matches X-VR-Count still completes and settles", async () => {
+  const fac = fakeFacilitator({
+    verify: { isValid: true, payer: VERIFIED_PAYER },
+    settle: { success: true, transaction: SETTLED_TX, payer: VERIFIED_PAYER },
+  });
+  const rail = await mountRail(fac.url);
+  try {
+    const res = await fetch(`${rail.base}/hedera/v1/scan`, {
+      method: "POST",
+      headers: { "content-type": "application/json", "x-vr-count": "1", "payment-signature": buildPaymentSignatureHeader() },
+      body: SCAN_BODY,
+    });
+    expect(res.status).toBe(200);
+    expect(fac.calls.settle).toBe(1);
   } finally {
     rail.close();
     fac.close();
