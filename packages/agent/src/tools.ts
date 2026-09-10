@@ -268,7 +268,7 @@ export function vaultradarTools(ctx: AgentContext, log: RunLog = new RunLog(ctx)
 
     tool(
       "vaultradar_quote",
-      "Price a scan of `count` vaults on both payment rails and report which rail the policy would use, with the wallet balances, per-rail budgets and facilitator health behind that choice. Pass the actual `vaults` too whenever you have them: under a strict privacy policy the price depends on how many chains they span, because that tier buys one table per chain. Costs nothing.",
+      "Price a scan of `count` vaults on both payment rails and report which rail the policy would use, with the wallet balances, per-rail budgets and facilitator health behind that choice. Pass the actual `vaults` too whenever you have them: under a strict privacy policy the price depends on how many chains they span, because that tier buys one table per chain. Costs nothing, and contacts nothing: the figures are computed locally from the pricing table shared with the service, and the amount the service actually demands in its 402 is checked against this quote before anything is signed.",
       {
         count: z.number().int().min(1).max(100).describe("How many vaults the scan would cover"),
         vaults: z

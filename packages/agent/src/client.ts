@@ -308,7 +308,16 @@ export class VaultRadarClient {
     return this.disc ?? this.discover();
   }
 
-  /** Price quotes for a scan of `count` vaults, on whichever rails are configured. */
+  /**
+   * Price quotes for a scan of `count` vaults, on whichever rails are configured.
+   *
+   * Local arithmetic over the same `@vaultradar/core` constants the service prices with —
+   * no request is made. Spec §5.6 originally described this as an unpaid 402 probe per
+   * rail; see that section's 2026-09-10 amendment. What the service actually demands is
+   * bound to this quote at payment time instead, by the per-rail ceilings
+   * (`quoteCeilingPolicy` on Hedera, `arcQuoteCeilingHook` on Arc) before anything is
+   * signed, and by `checkSettledPrice` against the receipt afterwards.
+   */
   async quote(count: number): Promise<{ hedera: string | null; arc: string | null }> {
     return {
       hedera: this.opts.hedera ? hederaScanPriceUsd(count) : null,
