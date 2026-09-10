@@ -7,6 +7,7 @@ import {
   checkSig,
   fromB64,
   hederaScanPriceUsd,
+  isSealed,
   open,
   verifyAttestation,
   verifyReceipt,
@@ -18,7 +19,7 @@ import {
   type Sig,
   type UnifiedVault,
 } from "@vaultradar/core";
-import { arcAddress, payArc } from "./rails/arc";
+import { arcAddress, payArc, type ArcPayResult } from "./rails/arc";
 import { payingFetchHedera, txIdFromResponse } from "./rails/hedera";
 import { readPqHashOnChain } from "./erc8004";
 
@@ -89,6 +90,13 @@ export type VaultRadarClientOpts = {
    * without payment middleware, without constructing a real Hedera signer.
    */
   payingFetch?: PayingFetch;
+  /**
+   * Overrides Arc payment entirely. `payArc` (via `arc.privateKey`) is used by default
+   * when `arc` is configured. Tests inject a fake here to exercise `paid()`'s Arc
+   * branch (bucket URL selection, payer address, opening a sealed reply) without a
+   * real `GatewayClient` or network call.
+   */
+  arcPay?: (url: string, body: unknown, headers: Record<string, string>) => Promise<ArcPayResult<ServiceResponse>>;
 };
 
 type ScanResponseBody = { vaults: UnifiedVault[]; reports: RiskReport[]; attestations: Attestation[] };
@@ -97,7 +105,7 @@ type ClearResponse = ScanResponseBody & { receipt: Receipt };
 type ServiceResponse = SealedEnvelopeResponse | ClearResponse;
 
 const isSealedResponse = (r: ServiceResponse): r is SealedEnvelopeResponse =>
-  typeof r === "object" && r !== null && "sealed" in r;
+  typeof r === "object" && r !== null && "sealed" in r && isSealed((r as { sealed: unknown }).sealed);
 
 /**
  * Paying client for a VaultRadar service instance: verifies the service's identity
@@ -110,6 +118,7 @@ export class VaultRadarClient {
   private readonly fetchImpl: typeof fetch;
   private readonly readPqHash: (chainId: string, agentId: string) => Promise<string | null>;
   private readonly payingFetch: PayingFetch | null;
+  private readonly arcPay: ((url: string, body: unknown, headers: Record<string, string>) => Promise<ArcPayResult<ServiceResponse>>) | null;
 
   constructor(private readonly opts: VaultRadarClientOpts) {
     this.fetchImpl = opts.fetchImpl ?? fetch;
@@ -118,6 +127,11 @@ export class VaultRadarClient {
     // real Hedera signer); otherwise build the real one lazily-but-eagerly here, once,
     // only when a Hedera account was actually configured.
     this.payingFetch = opts.payingFetch ?? (opts.hedera ? payingFetchHedera(opts.hedera.accountId, opts.hedera.privateKey) : null);
+    // Same pattern for Arc: `arcPay` wins when supplied (tests inject a fake to avoid a
+    // real GatewayClient); otherwise default to `payArc` bound to `arc.privateKey`.
+    // Captured to a local so the closure keeps the narrowed (non-optional) type.
+    const arc = opts.arc;
+    this.arcPay = opts.arcPay ?? (arc ? (url, body, headers) => payArc<ServiceResponse>(arc.privateKey, url, body, headers) : null);
   }
 
   /**
@@ -209,16 +223,43 @@ export class VaultRadarClient {
       if (res.status !== 200) throw new Error(`service ${res.status}: ${JSON.stringify(parsedJson)}`);
       raw = parsedJson as ServiceResponse;
     } else {
-      if (!this.opts.arc) throw new Error("arc rail not configured: pass `arc` to the VaultRadarClient constructor");
-      const paid = await payArc<ServiceResponse>(this.opts.arc.privateKey, url, body, headers);
-      if (paid.status !== 200) throw new Error(`service ${paid.status}: ${JSON.stringify(paid.data)}`);
-      txId = paid.transaction;
-      raw = paid.data;
+      if (!this.arcPay) throw new Error("arc rail not configured: pass `arc` (or `arcPay`) to the VaultRadarClient constructor");
+      let arcResult: ArcPayResult<ServiceResponse>;
+      try {
+        arcResult = await this.arcPay(url, body, headers);
+      } catch (e) {
+        // GatewayClient.pay() throws on any non-2xx response instead of returning a
+        // PayResult with a non-200 `status` (pre-payment: "Request failed with status
+        // ${status}"; post-payment: "Payment failed: ${error.error || statusText}"), so
+        // there is no live path where checking `.status` after a successful `await`
+        // would ever see a failure — the throw is the only failure signal, which is why
+        // there's no `status !== 200` check below. Note Circle's client only reads a
+        // JSON `{ error }` field from the service's response, not VaultRadar's
+        // `{ reason }` convention (handlers/scan.ts), so a service 4xx may surface here
+        // as a bare status/statusText rather than the structured reason.
+        throw new Error(`arc payment failed: ${e instanceof Error ? e.message : String(e)}`);
+      }
+      txId = arcResult.transaction;
+      raw = arcResult.data;
     }
 
-    const opened: ScanResponseBody = isSealedResponse(raw) && env ? open<ScanResponseBody>(raw.sealed, env.replySecret) : (raw as ClearResponse);
+    // The service must mirror the request's sealed-ness exactly. Treating a mismatch
+    // as an error (rather than, say, silently trusting whatever shape came back) means
+    // `sealed` on the result always reflects what was actually observed on the wire,
+    // never just what the client asked for.
+    if (env && !isSealedResponse(raw)) throw new Error("service returned a clear response to a sealed request");
+    if (!env && isSealedResponse(raw)) throw new Error("service returned a sealed response to a clear request");
+
+    const opened: ScanResponseBody = env ? open<ScanResponseBody>((raw as SealedEnvelopeResponse).sealed, env.replySecret) : (raw as ClearResponse);
     const receipt = raw.receipt;
     const attestations = opened.attestations ?? [];
+    // An attestation count that doesn't match the vault count (or an attestation for a
+    // vault that isn't in the response) is not a "verified" result even if every
+    // attestation present happens to carry a valid signature.
+    const vaultIds = new Set(opened.vaults.map(v => v.id));
+    const attestationsValid =
+      attestations.length === opened.vaults.length &&
+      attestations.every(a => vaultIds.has(a.vaultId) && verifyAttestation(a, d.sigPk));
 
     return {
       rail,
@@ -228,7 +269,7 @@ export class VaultRadarClient {
       attestations,
       receipt,
       receiptValid: verifyReceipt(receipt, d.sigPk),
-      attestationsValid: attestations.every(a => verifyAttestation(a, d.sigPk)),
+      attestationsValid,
       txId,
       priceUsd: this.priceFor(rail, tier, count),
       sealed: !!env,
