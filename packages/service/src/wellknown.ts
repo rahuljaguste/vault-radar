@@ -6,21 +6,23 @@ import type { Config } from "./config";
 import type { ServiceKeys } from "./keys";
 import { buildAgentCard } from "./keys";
 import type { DataProvider } from "./data/provider";
+import type { HcsQueue } from "./hcs";
 import { asyncHandler } from "./util/async";
-
-/** Minimal shape Task 17's HcsQueue must satisfy for receipt lookups. */
-export interface HcsLookup {
-  lookup(hash: string): Promise<unknown>;
-}
 
 // packages/service/src/wellknown.ts -> repo root is three levels up.
 const SKILL_MD_PATH = join(import.meta.dir, "..", "..", "..", "skills", "vaultradar", "SKILL.md");
+
+/** 64 lowercase hex chars — the sha256 hex format every receipt_hash/hashJson output uses. */
+const RECEIPT_HASH_RE = /^[0-9a-f]{64}$/;
 
 export type WellKnownDeps = {
   config: Config;
   keys: ServiceKeys;
   data: DataProvider;
-  hcs: HcsLookup | null;
+  hcs: HcsQueue | null;
+  /** Overrides where /skill.md reads from. Defaults to the repo's own SKILL.md; tests
+   * point this at a path that doesn't exist to exercise the 404 branch. */
+  skillPath?: string;
 };
 
 /**
@@ -33,6 +35,7 @@ export type WellKnownDeps = {
  */
 export function mountWellKnown(app: express.Express, deps: WellKnownDeps): void {
   const { config, keys, data, hcs } = deps;
+  const skillPath = deps.skillPath ?? SKILL_MD_PATH;
   const card = buildAgentCard(config, keys);
   const router = express.Router();
   const pub = cors();
@@ -79,19 +82,23 @@ export function mountWellKnown(app: express.Express, deps: WellKnownDeps): void 
 
   router.get("/v1/receipts/:hash", pub, asyncHandler(async (req, res) => {
     const hash = req.params.hash;
+    if (!RECEIPT_HASH_RE.test(hash)) {
+      res.status(400).json({ reason: "bad_hash" });
+      return;
+    }
     if (hcs) {
       res.json(await hcs.lookup(hash));
     } else {
-      res.json({ receipt_hash: hash, topicId: config.hedera.hcsTopicId, sequence: null });
+      res.json({ receipt_hash: hash, topicId: config.hedera.hcsTopicId, sequence: null, consensus_timestamp: null, initial_transaction_id: null });
     }
   }));
 
   router.get("/skill.md", pub, (_req, res) => {
-    if (!existsSync(SKILL_MD_PATH)) {
+    if (!existsSync(skillPath)) {
       res.status(404).json({ error: "skill not yet published" });
       return;
     }
-    res.type("text/markdown").send(readFileSync(SKILL_MD_PATH, "utf8"));
+    res.type("text/markdown").send(readFileSync(skillPath, "utf8"));
   });
 
   app.use(router);

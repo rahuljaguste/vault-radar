@@ -3,6 +3,7 @@ import { loadConfig } from "./config";
 import { loadKeys } from "./keys";
 import { buildApp } from "./app";
 import { LiveDataProvider } from "./data/provider";
+import { HcsQueue, makeHederaSubmit } from "./hcs";
 
 async function main() {
   const config = loadConfig();
@@ -10,16 +11,25 @@ async function main() {
   const data = new LiveDataProvider(config, {
     sql: config.databaseUrl ? makePgQuery(config.databaseUrl) : null,
   });
-  const app = await buildApp({
-    config,
-    keys,
-    data,
-    hcs: null, // TODO(Task 17): wire the HCS queue for receipt lookups.
-    nonces: new MemoryNonceStore(),
-    rails: {}, // TODO(Task 16/19): enable once rails/hedera.ts and rails/arc.ts exist.
-  });
+
+  // HcsQueue's own enqueue call is wired automatically inside buildApp/app.ts whenever
+  // `hcs` is non-null — main.ts only needs to construct it, not pass an onSettled hook
+  // itself (doing both would double-submit every receipt).
+  const hcs = config.hedera.hcsTopicId
+    ? new HcsQueue({ submit: makeHederaSubmit(config), topicId: config.hedera.hcsTopicId })
+    : null;
+
+  // TODO(Task 19): also gate `arc` here once rails/arc.ts exists.
+  const rails = { hedera: Boolean(config.hedera.payToAccountId) };
+
+  const app = await buildApp({ config, keys, data, hcs, nonces: new MemoryNonceStore(), rails });
+
   app.listen(config.port, () => {
-    console.log(`VaultRadar service listening on :${config.port} (${config.publicUrl})`);
+    const enabledRails = Object.entries(rails).filter(([, on]) => on).map(([name]) => name);
+    console.log(
+      `VaultRadar service listening on :${config.port} (${config.publicUrl}) — ` +
+      `rails: ${enabledRails.length ? enabledRails.join(",") : "none"}; hcs: ${hcs ? "enabled" : "disabled"}`,
+    );
   });
 }
 

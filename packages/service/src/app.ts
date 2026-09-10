@@ -1,17 +1,30 @@
 import express from "express";
-import type { NonceStore } from "@vaultradar/core";
+import type { NonceStore, Receipt } from "@vaultradar/core";
 import type { Config } from "./config";
 import type { ServiceKeys } from "./keys";
 import type { DataProvider } from "./data/provider";
-import { mountWellKnown, type HcsLookup } from "./wellknown";
+import type { HcsQueue } from "./hcs";
+import { mountWellKnown } from "./wellknown";
 
 export type BuildAppDeps = {
   config: Config;
   keys: ServiceKeys;
   data: DataProvider;
-  hcs: HcsLookup | null;
+  hcs: HcsQueue | null;
   nonces: NonceStore;
   rails?: { hedera?: boolean; arc?: boolean };
+  /**
+   * Extra settlement observer for the Hedera rail — composed with `hcs.enqueue` below
+   * (both run; neither replaces the other) rather than overriding it, so a caller that
+   * needs its own settlement hook (chiefly hedera-rail.test.ts) can still observe
+   * settlement directly without losing the production HCS-enqueue behavior, and without
+   * main.ts ever needing to wire hcs.enqueue itself (which would double-enqueue if it
+   * also set this field).
+   */
+  onSettled?: (receipt: Receipt, txId: string) => void;
+  /** Overrides where /skill.md reads from (forwarded to mountWellKnown). Defaults to the
+   * repo's own SKILL.md; tests point this at a non-existent path to exercise the 404 branch. */
+  skillPath?: string;
 };
 
 /**
@@ -27,7 +40,12 @@ export async function buildApp(deps: BuildAppDeps): Promise<express.Express> {
 
   if (deps.rails?.hedera) {
     const { mountHederaRail } = await import("./rails/hedera");
-    mountHederaRail(app, deps);
+    const onSettled = (receipt: Receipt, txId: string) => {
+      deps.hcs?.enqueue(receipt);
+      deps.onSettled?.(receipt, txId);
+    };
+    const hederaDeps = { ...deps, onSettled };
+    mountHederaRail(app, hederaDeps);
   }
   if (deps.rails?.arc) {
     // @ts-expect-error Task 19 adds ./rails/arc.ts; this errors again (and must be removed) once it lands

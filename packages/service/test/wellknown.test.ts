@@ -1,7 +1,8 @@
 import { expect, test } from "bun:test";
 import { buildApp } from "../src/app";
 import { loadConfig } from "../src/config";
-import { deriveKemKeys, deriveSigningKeys, checkSig, MemoryNonceStore } from "@vaultradar/core";
+import { HcsQueue } from "../src/hcs";
+import { buildReceipt, deriveKemKeys, deriveSigningKeys, checkSig, receiptHash, MemoryNonceStore } from "@vaultradar/core";
 const env = { PORT: "0", PUBLIC_URL: "http://svc.test", PQ_SIG_SEED: "77".repeat(32), PQ_KEM_SEED: "88".repeat(64), GRAPH_STUDIO_API_KEY: "k",
   HEDERA_PAYTO_ACCOUNT_ID: "0.0.1", HEDERA_OPERATOR_ID: "0.0.1", HEDERA_OPERATOR_KEY: "00", ARC_SELLER_ADDRESS: "0x" + "1".repeat(40), ERC8004_HEDERA_AGENT_ID: "7" };
 const config = loadConfig(env); const keys = { sig: deriveSigningKeys(env.PQ_SIG_SEED), kem: deriveKemKeys(env.PQ_KEM_SEED) };
@@ -26,14 +27,69 @@ test("health reports kid and pubHash", async () => {
   expect(res.headers.get("access-control-allow-origin")).toBe("*");
   expect(await res.json()).toEqual({ ok: true, kid: keys.kem.kid, pubHash: keys.sig.pubHash });
 });
-test("receipts route falls back to a null-sequence stub when hcs is not wired up", async () => {
-  const body = await (await fetch(base() + "/v1/receipts/deadbeef")).json();
-  expect(body).toEqual({ receipt_hash: "deadbeef", topicId: config.hedera.hcsTopicId, sequence: null });
+test("receipts route rejects a hash that is not 64 lowercase hex chars", async () => {
+  for (const bad of ["deadbeef", "F".repeat(64), "z".repeat(64), "a".repeat(63)]) {
+    const res = await fetch(base() + "/v1/receipts/" + bad);
+    expect(res.status).toBe(400);
+    expect(await res.json()).toEqual({ reason: "bad_hash" });
+  }
 });
-test("skill.md 404s until Task 25 publishes it", async () => {
+
+test("receipts route falls back to a null-sequence stub when hcs is not wired up", async () => {
+  const hash = "a".repeat(64);
+  const body = await (await fetch(base() + "/v1/receipts/" + hash)).json();
+  expect(body).toEqual({ receipt_hash: hash, topicId: config.hedera.hcsTopicId, sequence: null, consensus_timestamp: null, initial_transaction_id: null });
+});
+
+test("receipts route hits a wired HcsQueue for a committed receipt and misses for an unknown one", async () => {
+  const submit = async () => ({ sequence: "7", consensusTimestamp: "1700000000.000000000", transactionId: "0.0.1@1700000000.000000000" });
+  const noNetwork = async () => new Response(JSON.stringify({ messages: [], links: { next: null } }), { status: 200 });
+  const hcs = new HcsQueue({ submit, topicId: "0.0.9", fetchImpl: noNetwork });
+  const receipt = buildReceipt(
+    {
+      service: { erc8004: [] }, request_hash: "a".repeat(64), response_hash: "b".repeat(64),
+      sealed: false, sources: [], price: { amount: "1", asset: "x", rail: "hedera" },
+      payment: { rail: "hedera", txId: "t" }, tier: "scan", hcs: { topicId: "0.0.9" },
+    },
+    keys.sig,
+  );
+  const hash = receiptHash(receipt);
+  hcs.enqueue(receipt);
+  await new Promise(res => setTimeout(res, 20)); // let the queue's own drain loop settle
+
+  const appWithHcs = await buildApp({ config, keys, data, hcs, nonces: new MemoryNonceStore(), rails: {} });
+  const srv2 = appWithHcs.listen(0);
+  try {
+    const port = (srv2.address() as any).port;
+    const hit = await (await fetch(`http://127.0.0.1:${port}/v1/receipts/${hash}`)).json();
+    expect(hit).toEqual({ receipt_hash: hash, topicId: "0.0.9", sequence: "7", consensus_timestamp: "1700000000.000000000", initial_transaction_id: "0.0.1@1700000000.000000000" });
+
+    const missHash = "f".repeat(64);
+    const miss = await (await fetch(`http://127.0.0.1:${port}/v1/receipts/${missHash}`)).json();
+    expect(miss).toEqual({ receipt_hash: missHash, topicId: "0.0.9", sequence: null, consensus_timestamp: null, initial_transaction_id: null });
+  } finally {
+    srv2.close();
+  }
+});
+test("skill.md serves the published skill file", async () => {
   const res = await fetch(base() + "/skill.md");
-  expect(res.status).toBe(404);
-  expect(await res.json()).toEqual({ error: "skill not yet published" });
+  expect(res.status).toBe(200);
+  expect(res.headers.get("content-type")?.startsWith("text/markdown")).toBe(true);
+  const body = await res.text();
+  expect(body.startsWith("---")).toBe(true);
+});
+
+test("skill.md 404s when the configured skillPath doesn't exist", async () => {
+  const missingApp = await buildApp({ config, keys, data, hcs: null, nonces: new MemoryNonceStore(), rails: {}, skillPath: "/nonexistent/skill.md" });
+  const srv3 = missingApp.listen(0);
+  try {
+    const port = (srv3.address() as any).port;
+    const res = await fetch(`http://127.0.0.1:${port}/skill.md`);
+    expect(res.status).toBe(404);
+    expect(await res.json()).toEqual({ error: "skill not yet published" });
+  } finally {
+    srv3.close();
+  }
 });
 test("CORS is scoped to the public routes only, not the whole app", async () => {
   const known = await fetch(base() + "/v1/catalog");
