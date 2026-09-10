@@ -196,6 +196,14 @@ export type PurchaseOutcome =
       reason: string;
       /** Purchases that completed before the failure, so every payment stays auditable. */
       purchases: Purchase[];
+      /**
+       * Decisions from the purchases that *did* verify, before the one that didn't. A
+       * multi-chain fan-out pays per chain, so a failure on the last chain must not throw
+       * away a fully verified `alert` on the first — it was paid for, it verified, and
+       * suppressing it is the one outcome an operator cannot afford to miss. Empty when
+       * the first purchase is the one that failed.
+       */
+      decisions: Decision[];
     };
 
 /** Human-readable account of what each rail offered, for the no-usable-rail message. */
@@ -282,11 +290,14 @@ export function missingVaultDecisions(requested: string[], purchases: Purchase[]
  *
  * Usually one payment. A strict-tier plan whose vaults span several chains buys one table
  * per chain, sequentially, and stops at the first verification failure rather than
- * continuing to spend against a service that just failed a check.
+ * continuing to spend against a service that just failed a check. Decisions already
+ * derived from the chains that *did* verify survive that stop and come back on the
+ * failure branch: they were paid for and they verified, so dropping them would hide a
+ * real `alert` behind an unrelated later fault.
  *
  * Never throws for a policy or verification outcome — those come back as `ok: false` with
- * a reason and every payment that did happen in `purchases`. A transport or payment
- * failure still throws, since the caller can't usefully continue.
+ * a reason, every payment that did happen in `purchases`, and whatever verified. A
+ * transport or payment failure still throws, since the caller can't usefully continue.
  */
 export async function executePurchase(plan: PurchasePlan, serviceUrl: string, deps: PurchaseDeps): Promise<PurchaseOutcome> {
   const { client, policy } = deps;
@@ -302,7 +313,7 @@ export async function executePurchase(plan: PurchasePlan, serviceUrl: string, de
   const forced = deps.rail ?? null;
   const choice = chooseRail(forced ? { ...policy, rail_preference: forced } : policy, quotes, balances, health);
   if (choice.rail == null) {
-    return { ok: false, ctx, reason: `no usable rail — ${railSummary(policy, quotes, balances, health)}`, purchases: [] };
+    return { ok: false, ctx, reason: `no usable rail — ${railSummary(policy, quotes, balances, health)}`, purchases: [], decisions: [] };
   }
   if (forced && choice.rail !== forced) {
     // An operator or model that named a rail gets told it is unusable rather than
@@ -312,6 +323,7 @@ export async function executePurchase(plan: PurchasePlan, serviceUrl: string, de
       ctx,
       reason: `requested rail ${forced} is unusable — ${railSummary(policy, quotes, balances, health)}`,
       purchases: [],
+      decisions: [],
     };
   }
   const rail = choice.rail;
@@ -345,11 +357,27 @@ export async function executePurchase(plan: PurchasePlan, serviceUrl: string, de
 
     if (!result.receiptValid || !result.attestationsValid) {
       const failed = [!result.receiptValid ? "receipt" : null, !result.attestationsValid ? "attestations" : null].filter(Boolean).join(" and ");
+      // `decisions` holds only what earlier, fully verified purchases produced; nothing is
+      // derived from this failed one.
+      //
+      // Deliberately *no* `missingVaultDecisions` here. A vault the failed table would
+      // have covered is not "not present in the fetched table(s)" — that table was
+      // fetched, it just could not be verified, and claiming absence would be a false
+      // statement about data the agent never got to read. The failure reason is the
+      // honest account for those vaults.
+      const verified = purchases.length - 1;
+      const carried = decisions.length
+        ? `; ${decisions.length} decision(s) from ${verified} earlier verified purchase(s) still stand`
+        : "";
       return {
         ok: false,
         ctx,
-        reason: `verification failed (${failed}) — ${purchases.length === 1 ? "the purchase is" : `${purchases.length} purchases are`} recorded but no action was taken`,
+        reason:
+          purchases.length === 1
+            ? `verification failed (${failed}) — the purchase is recorded but no action was taken on it`
+            : `verification failed (${failed}) on payment ${purchases.length} of ${purchases.length} — all ${purchases.length} purchases are recorded, but nothing was derived from the failed one${carried}`,
         purchases,
+        decisions,
       };
     }
     decisions.push(...decide(result, age));
@@ -519,8 +547,12 @@ export async function runWatch(args: WatchArgs, deps: WatchDeps): Promise<WatchO
   run.requests.push(...outcome.purchases.map(p => p.request));
   if (!outcome.ok) {
     // A post-payment failure is still printed, so the operator sees the evidence that
-    // the purchase happened and why nothing was acted on.
-    if (outcome.purchases.length) for (const line of formatDecisions(outcome.purchases, [])) out(line);
+    // the purchase happened and why nothing was acted on. Decisions from earlier
+    // purchases that did verify are printed and persisted too — a `withdraw` that was
+    // paid for and verified must not be swallowed by a later chain's fault. The exit code
+    // stays 2: the run as a whole did not complete, and the reason says what carried.
+    run.decisions = outcome.decisions;
+    if (outcome.purchases.length) for (const line of formatDecisions(outcome.purchases, outcome.decisions)) out(line);
     return finish(2, outcome.reason);
   }
 

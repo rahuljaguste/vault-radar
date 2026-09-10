@@ -9,8 +9,10 @@ import {
   DEFAULT_TABLE_PROTOCOL,
   executePurchase,
   identityRefusal,
+  planChains,
   quoteFor,
   type Amounts,
+  type Purchase,
   type PurchaseOutcome,
   type PurchasePlan,
   type RailHealth,
@@ -110,7 +112,10 @@ export class RunLog {
     if (!outcome.purchases.length) return null;
     const run = await this.ensure();
     run.requests.push(...outcome.purchases.map(p => p.request));
-    if (outcome.ok) run.decisions = [...run.decisions, ...outcome.decisions];
+    // Both branches carry decisions: a failed fan-out still holds whatever earlier,
+    // fully verified purchases produced, and those belong in the run file. `decisions` is
+    // empty on a failure that happened on the first purchase, so this adds nothing then.
+    run.decisions = [...run.decisions, ...outcome.decisions];
     try {
       return saveRun(this.ctx.runsDir, run);
     } catch {
@@ -120,15 +125,15 @@ export class RunLog {
 }
 
 const ok = (value: unknown) => ({ content: [{ type: "text" as const, text: JSON.stringify(value, null, 2) }] });
-const err = (message: string) => ({
-  content: [{ type: "text" as const, text: JSON.stringify({ error: message }, null, 2) }],
+const err = (message: string, extra: Record<string, unknown> = {}) => ({
+  content: [{ type: "text" as const, text: JSON.stringify({ error: message, ...extra }, null, 2) }],
   isError: true,
 });
 
 const VAULT_ID_RE = /^\d+:0x[0-9a-fA-F]{40}$/;
 
 /** Per-vault view of a purchase, shaped so a model can quote it without re-deriving anything. */
-function reportSummary(outcome: Extract<PurchaseOutcome, { ok: true }>): { decisions: Decision[]; reports: unknown[] } {
+function reportSummary(outcome: { purchases: Purchase[]; decisions: Decision[] }): { decisions: Decision[]; reports: unknown[] } {
   const byVault = new Map(outcome.purchases.flatMap(p => p.result.reports.map(r => [r.vaultId, r] as const)));
   return {
     decisions: outcome.decisions,
@@ -143,6 +148,27 @@ function reportSummary(outcome: Extract<PurchaseOutcome, { ok: true }>): { decis
       };
     }),
   };
+}
+
+/**
+ * Per-payment detail for the model. Almost always one entry. A strict-tier scan whose
+ * vaults span several chains buys one table per chain, and each decision's own
+ * `citations.receiptHash` stays the authoritative reference for that vault either way.
+ */
+function paymentsOf(purchases: Purchase[]) {
+  return purchases.map(({ result, request, hcs }) => ({
+    rail: result.rail,
+    tier: result.tier,
+    sealed: result.sealed,
+    price_usd: result.priceUsd,
+    receipt_hash: request.receiptHash,
+    // The rail-level tx id is only set by real payment middleware; the receipt always
+    // carries the identifier the payer committed to, so fall back to it.
+    tx_id: result.txId ?? result.receipt.payment.txId,
+    hcs,
+    rejected: request.rejected,
+    verified: { receipt: result.receiptValid, attestations: result.attestationsValid },
+  }));
 }
 
 /** Sums USD decimal strings in atomic micro-USD, so N table prices add up exactly. */
@@ -177,26 +203,18 @@ export function vaultradarTools(ctx: AgentContext, log: RunLog = new RunLog(ctx)
     const runPath = await log.append(outcome);
     if (!outcome.ok) {
       const hashes = outcome.purchases.map(p => p.request.receiptHash).join(", ");
-      return err(`${outcome.reason}${hashes ? ` (receipt ${hashes}, recorded in ${runPath ?? "memory only"})` : ""}`);
+      // Still an isError result — the model must not treat this as a clean purchase — but
+      // it carries the decisions from any earlier purchase that did verify. A multi-chain
+      // fan-out pays per chain, and a fully verified `withdraw` on chain 1 is exactly the
+      // thing that must not vanish because chain 2's receipt failed.
+      return err(`${outcome.reason}${hashes ? ` (receipt ${hashes}, recorded in ${runPath ?? "memory only"})` : ""}`, {
+        ...reportSummary(outcome),
+        payments: paymentsOf(outcome.purchases),
+        run_path: runPath,
+      });
     }
 
-    // Almost always one payment. A strict-tier scan whose vaults span several chains buys
-    // one table per chain, so the per-payment detail lives in `purchases`; the singular
-    // keys describe the first payment, and each decision's own `citations.receiptHash`
-    // remains the authoritative reference for that vault either way.
-    const payments = outcome.purchases.map(({ result, request, hcs }) => ({
-      rail: result.rail,
-      tier: result.tier,
-      sealed: result.sealed,
-      price_usd: result.priceUsd,
-      receipt_hash: request.receiptHash,
-      // The rail-level tx id is only set by real payment middleware; the receipt always
-      // carries the identifier the payer committed to, so fall back to it.
-      tx_id: result.txId ?? result.receipt.payment.txId,
-      hcs,
-      rejected: request.rejected,
-      verified: { receipt: result.receiptValid, attestations: result.attestationsValid },
-    }));
+    const payments = paymentsOf(outcome.purchases);
     const first = payments[0]!;
     return ok({
       ...reportSummary(outcome),
@@ -245,20 +263,35 @@ export function vaultradarTools(ctx: AgentContext, log: RunLog = new RunLog(ctx)
 
     tool(
       "vaultradar_quote",
-      "Price a scan of `count` vaults on both payment rails and report which rail the policy would use, with the wallet balances, per-rail budgets and facilitator health behind that choice. Costs nothing.",
-      { count: z.number().int().min(1).max(100).describe("How many vaults the scan would cover") },
-      async ({ count }) => {
+      "Price a scan of `count` vaults on both payment rails and report which rail the policy would use, with the wallet balances, per-rail budgets and facilitator health behind that choice. Pass the actual `vaults` too whenever you have them: under a strict privacy policy the price depends on how many chains they span, because that tier buys one table per chain. Costs nothing.",
+      {
+        count: z.number().int().min(1).max(100).describe("How many vaults the scan would cover"),
+        vaults: z
+          .array(z.string().regex(VAULT_ID_RE, "must be <chainId>:<0x address>"))
+          .max(100)
+          .optional()
+          .describe("The vault ids themselves, if known — needed to price a strict-tier (table) purchase correctly"),
+      },
+      async ({ count, vaults }) => {
         const tier = chooseTier(ctx.policy);
+        // A strict-tier purchase is one table per distinct chain, so the preview has to
+        // count chains, not vaults. Without the ids there is nothing to count, and the
+        // quote can only assume a single chain — said out loud below rather than quietly.
+        const chains = vaults?.length ? planChains({ kind: "policy", vaults }, tier.tier) : [];
+        const requests = Math.max(1, chains.length);
+        const effectiveCount = vaults?.length ?? count;
         const [scanQuotes, tierQuotes] = await Promise.all([
-          quoteFor(ctx.client, "scan", count),
-          quoteFor(ctx.client, tier.tier, count),
+          quoteFor(ctx.client, "scan", effectiveCount),
+          quoteFor(ctx.client, tier.tier, effectiveCount, requests),
         ]);
         const [balances, health] = await Promise.all([ctx.balances(), ctx.health()]);
         const choice = chooseRail(ctx.policy, tierQuotes, balances, health);
+        const assumesOneChain = tier.tier === "table" && !vaults?.length;
         return ok({
-          count,
+          count: effectiveCount,
           tier: tier.tier,
           sealed: tier.seal,
+          ...(tier.tier === "table" ? { tables: requests, chains } : {}),
           scan_quotes_usd: scanQuotes,
           quotes_usd_for_policy_tier: tierQuotes,
           balances_usd: balances,
@@ -266,6 +299,9 @@ export function vaultradarTools(ctx: AgentContext, log: RunLog = new RunLog(ctx)
           facilitator_health: health,
           chosen_rail: choice.rail,
           reason: choice.reason,
+          ...(assumesOneChain
+            ? { note: "This policy buys a table per chain; without the vault ids the quote assumes one chain. Pass `vaults` for an exact price." }
+            : {}),
         });
       },
     ),

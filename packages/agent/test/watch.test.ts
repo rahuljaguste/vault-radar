@@ -219,6 +219,80 @@ test("a strict-tier plan spanning more chains than the budget covers buys nothin
   expect(saved.requests).toEqual([]);
 });
 
+test("a later chain failing verification does not throw away the earlier chain's verified decisions", async () => {
+  const dir = runsDir();
+  // Chain 1's table verifies; chain 137's comes back with a rewritten request_hash, so its
+  // receipt no longer covers what was asked for. Chain 1 was paid for and did verify, so
+  // its `withdraw` must survive — suppressing it would hide a real alert behind an
+  // unrelated later fault. The run still exits 2: it did not complete.
+  const OFF_CHAIN = "137:0x" + "d".repeat(40);
+  let calls = 0;
+  const tamperSecond = new VaultRadarClient({
+    serviceUrl: base,
+    hedera: { accountId: "0.0.42", privateKey: UNUSED_HEDERA_KEY },
+    payingFetch: async (url, init) => {
+      calls += 1;
+      const res = await fetch(url, init);
+      if (calls === 1) return res; // chain 1: untouched
+      const body = (await res.json()) as { receipt: { request_hash: string } };
+      body.receipt.request_hash = "0".repeat(64);
+      return new Response(JSON.stringify(body), { status: 200, headers: { "content-type": "application/json" } });
+    },
+    readPqHash: async () => keys.sig.pubHash,
+  });
+  const { deps: d, lines } = deps({ client: tamperSecond, policy: policy({ privacy: "strict" }) });
+  const out = await runWatch({ vaults: [ALERT, OFF_CHAIN], serviceUrl: base, runsDir: dir }, d);
+
+  expect(out.exitCode).toBe(2);
+  expect(out.message).toMatch(/verification failed \(receipt\)/);
+  // The reason says what carried, so the operator knows a decision still stands.
+  expect(out.message).toContain("still stand");
+
+  const saved = JSON.parse(readFileSync(out.runPath!, "utf8")) as RunRecord;
+  expect(saved.requests).toHaveLength(2); // both payments recorded
+  // Chain 1's fully verified decision is persisted, and the off-chain vault is accounted
+  // for against only the *verified* purchases.
+  const covered = saved.decisions.find(x => x.vaultId === ALERT);
+  expect(covered).toBeDefined();
+  expect(covered!.action).toBe("withdraw");
+  expect(covered!.citations.receiptHash).toBe(saved.requests[0].receiptHash);
+  // Nothing is derived from the failed purchase itself.
+  expect(saved.decisions.some(x => x.citations.receiptHash === saved.requests[1].receiptHash)).toBe(false);
+  // And the off-chain vault is NOT claimed absent: chain 137's table was fetched, it just
+  // could not be verified, so "not present in the fetched table(s)" would be a false
+  // statement about data the agent never got to read.
+  expect(saved.decisions.some(x => x.vaultId === OFF_CHAIN)).toBe(false);
+
+  // And the printed table shows chain 1's row rather than an empty table.
+  const text = lines.join("\n");
+  expect(text).toContain(ALERT);
+  expect(text).toContain("withdraw");
+  expect(text).toContain("receipt FAILED"); // the failed payment is still shown as failed
+  expect(text).not.toContain("not present in the fetched table(s)");
+});
+
+test("a failure on the very first purchase carries no decisions", async () => {
+  const dir = runsDir();
+  const failFirst = new VaultRadarClient({
+    serviceUrl: base,
+    hedera: { accountId: "0.0.42", privateKey: UNUSED_HEDERA_KEY },
+    payingFetch: async (url, init) => {
+      const res = await fetch(url, init);
+      const body = (await res.json()) as { receipt: { request_hash: string } };
+      body.receipt.request_hash = "0".repeat(64);
+      return new Response(JSON.stringify(body), { status: 200, headers: { "content-type": "application/json" } });
+    },
+    readPqHash: async () => keys.sig.pubHash,
+  });
+  const { deps: d } = deps({ client: failFirst, policy: policy({ privacy: "cheap" }) });
+  const out = await runWatch({ vaults: [ALERT], serviceUrl: base, runsDir: dir }, d);
+  expect(out.exitCode).toBe(2);
+  expect(out.message).not.toContain("still stand");
+  const saved = JSON.parse(readFileSync(out.runPath!, "utf8")) as RunRecord;
+  expect(saved.requests).toHaveLength(1);
+  expect(saved.decisions).toEqual([]);
+});
+
 test("cheap privacy sends a clear request", async () => {
   const dir = runsDir();
   const { deps: d } = deps({ policy: policy({ privacy: "cheap" }) });

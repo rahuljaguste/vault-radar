@@ -110,6 +110,88 @@ test("a strict policy quotes the table price, because that is what it would actu
   expect(body.chosen_rail).toBe("hedera");
 });
 
+test("a strict-tier quote prices one table per distinct chain when given the vault ids", async () => {
+  const ctx = context({ policy: h.policy({ privacy: "strict" }) });
+  const log = new RunLog(ctx);
+  const two = await call(ctx, log, "vaultradar_quote", {
+    count: 2,
+    vaults: [ALERT_VAULT, "137:0x" + "d".repeat(40)],
+  });
+  expect(two.body.tier).toBe("table");
+  expect(two.body.tables).toBe(2);
+  expect(two.body.chains).toEqual(["1", "137"]);
+  expect(two.body.quotes_usd_for_policy_tier.hedera).toBe("0.06"); // 2 x 0.03
+  expect(two.body.note).toBeUndefined();
+
+  // Two vaults on one chain is still a single table.
+  const one = await call(ctx, log, "vaultradar_quote", { count: 2, vaults: [ALERT_VAULT, STALE_VAULT] });
+  expect(one.body.tables).toBe(1);
+  expect(one.body.chains).toEqual(["1"]);
+  expect(one.body.quotes_usd_for_policy_tier.hedera).toBe("0.03");
+
+  // Without the ids the chain spread is unknowable, so the quote says it assumed one
+  // chain rather than quietly under-pricing a fan-out.
+  const blind = await call(ctx, log, "vaultradar_quote", { count: 2 });
+  expect(blind.body.tables).toBe(1);
+  expect(blind.body.note).toContain("assumes one chain");
+
+  // A scan-tier policy is one request regardless of how many chains the vaults span.
+  const scanCtx = context();
+  const scan = await call(scanCtx, new RunLog(scanCtx), "vaultradar_quote", {
+    count: 2,
+    vaults: [ALERT_VAULT, "137:0x" + "d".repeat(40)],
+  });
+  expect(scan.body.tier).toBe("scan");
+  expect(scan.body.tables).toBeUndefined();
+  expect(scan.body.quotes_usd_for_policy_tier.hedera).toBe("0.002");
+  expect(scan.body.note).toBeUndefined();
+});
+
+test("a later chain's verification failure still returns the earlier chain's verified decisions", async () => {
+  // Same regression as in watch: the scan tool pays per chain under a strict policy, and a
+  // fully verified `withdraw` on chain 1 must not vanish because chain 2's receipt failed.
+  let calls = 0;
+  const ctx = context({
+    policy: h.policy({ privacy: "strict" }),
+    client: new VaultRadarClient({
+      serviceUrl: h.base,
+      hedera: { accountId: "0.0.42", privateKey: UNUSED_HEDERA_KEY },
+      payingFetch: async (url, init) => {
+        calls += 1;
+        const res = await fetch(url, init);
+        if (calls === 1) return res; // chain 1: untouched
+        const body = (await res.json()) as { receipt: { request_hash: string } };
+        body.receipt.request_hash = "0".repeat(64);
+        return new Response(JSON.stringify(body), { status: 200, headers: { "content-type": "application/json" } });
+      },
+      readPqHash: async () => h.keys.sig.pubHash,
+    }),
+  });
+  const log = new RunLog(ctx);
+  const { body, isError } = await call(ctx, log, "vaultradar_scan", {
+    vaults: [ALERT_VAULT, "137:0x" + "d".repeat(40)],
+  });
+
+  // Still an error: the model must not read this as a clean purchase.
+  expect(isError).toBe(true);
+  expect(body.error).toMatch(/verification failed \(receipt\)/);
+  expect(body.error).toContain("still stand");
+  // But chain 1's verified decision comes back, with its own citations.
+  expect(body.decisions).toHaveLength(1);
+  expect(body.decisions[0]).toMatchObject({ vaultId: ALERT_VAULT, action: "withdraw" });
+  expect(body.reports[0]).toMatchObject({ vaultId: ALERT_VAULT, verdict: "alert" });
+  // Both payments are reported, the second marked unverified.
+  expect(body.payments).toHaveLength(2);
+  expect(body.payments[0].verified).toEqual({ receipt: true, attestations: true });
+  expect(body.payments[1].verified.receipt).toBe(false);
+  expect(body.decisions[0].citations.receiptHash).toBe(body.payments[0].receipt_hash);
+  // And the run file keeps both payments plus the one decision that stands.
+  expect(log.current()!.requests).toHaveLength(2);
+  expect(log.current()!.decisions).toHaveLength(1);
+  const saved = JSON.parse(readFileSync(body.run_path, "utf8")) as RunRecord;
+  expect(saved.decisions).toHaveLength(1);
+});
+
 test("vaultradar_scan pays, verifies, decides, and appends a RunRecord the dashboard can read", async () => {
   const ctx = context();
   const log = new RunLog(ctx);
