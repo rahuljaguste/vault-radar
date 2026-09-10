@@ -7,7 +7,7 @@ import { MemoryNonceStore, type UnifiedVault } from "@vaultradar/core";
 import { buildApp, loadConfig, loadKeys, makeScanHandler, type DataProvider, type HandlerDeps } from "@vaultradar/service";
 import { VaultRadarClient, type Policy } from "@vaultradar/agent";
 import { RateLimiter } from "../lib/ratelimit";
-import { MAX_PRICE_USD, defaultPolicyPath, handleScan, redact, toMicroUsd } from "../lib/scan";
+import { MAX_PRICE_USD, chargedMicroUsd, defaultPolicyPath, handleScan, redact, toMicroUsd } from "../lib/scan";
 import { SpendLedger, usdToMicro } from "../lib/spend";
 import type { RunRecord } from "../lib/types";
 
@@ -634,12 +634,119 @@ test("429 scan_rate_1h once the global hourly allowance is used up, whatever the
   expect(runFiles()).toHaveLength(2);
 });
 
-test("the ledger records the receipt's price, not the quote, so the cap tracks what was charged", async () => {
+test("the ledger records at least the quote, so a payee cannot charge the cap nothing", async () => {
+  // A real purchase: the receipt's price and the quote agree, so either rule gives 0.002.
   const ledger = new SpendLedger({ DASHBOARD_SPEND_CAP_USD: "100.00", DASHBOARD_MAX_SCANS_PER_HOUR: "100" });
   const res = await handleScan(post([OK_VAULT, WATCH_VAULT]), deps({ ledger }));
   expect(res.status).toBe(200);
   expect((await res.json()).priceUsd).toBe("0.002");
   expect(ledger.snapshot().spentMicroUsd).toBe(usdToMicro("0.002"));
+
+  // The figure in the receipt belongs to the payee, and this is a spending cap. Taking it on
+  // trust let a service answer every purchase with `price: "0"` and consume no allowance at
+  // all while still being paid the quote — switching the cap off. `chargedMicroUsd` is the
+  // rule, asserted directly because the in-process service always prices honestly.
+  expect(chargedMicroUsd(2000, "0")).toBe(2000);
+  expect(chargedMicroUsd(2000, "0.000001")).toBe(2000);
+  expect(chargedMicroUsd(2000, "0.002")).toBe(2000);
+  // Above the quote is believed: that is the service saying it charged more.
+  expect(chargedMicroUsd(2000, "0.05")).toBe(50_000);
+  // No price, or one that is not a number, falls back to the quote rather than to zero.
+  expect(chargedMicroUsd(2000, null)).toBe(2000);
+  expect(chargedMicroUsd(2000, "")).toBe(2000);
+  expect(chargedMicroUsd(2000, "free")).toBe(2000);
+  expect(chargedMicroUsd(2000, "NaN")).toBe(2000);
+});
+
+test("a service that under-reports its price still consumes the quoted allowance", async () => {
+  // End to end through the route with a service that signs a receipt claiming it charged
+  // nothing. The ledger must still count the quote, which is what stops an unbounded number
+  // of such purchases.
+  const ledger = new SpendLedger({ DASHBOARD_SPEND_CAP_USD: "0.003", DASHBOARD_MAX_SCANS_PER_HOUR: "100" });
+  const zeroPriced = () =>
+    deps({
+      ledger,
+      makeClient: (serviceUrl, hedera) => {
+        const client = new VaultRadarClient({ serviceUrl, hedera, payingFetch: fetch, readPqHash: async () => keys.sig.pubHash });
+        const realScan = client.scan.bind(client);
+        // Stands in for a service whose signed receipt understates the price; the agent
+        // itself flags that as `receiptValid: false`, but only after the money moved, which
+        // is exactly why the ledger must not trust the lower figure.
+        client.scan = async (...args: Parameters<typeof realScan>) => ({ ...(await realScan(...args)), priceUsd: "0" });
+        return client;
+      },
+    });
+
+  // Two one-vault scans at 0.0015 each fill a 0.003 cap.
+  expect((await handleScan(post([OK_VAULT]), zeroPriced())).status).toBe(200);
+  expect(ledger.snapshot().spentMicroUsd).toBe(usdToMicro("0.0015"));
+  expect((await handleScan(post([OK_VAULT]), zeroPriced())).status).toBe(200);
+  expect(ledger.snapshot().spentMicroUsd).toBe(usdToMicro("0.003"));
+
+  // The third is refused, which it would not be if "0" had been taken at face value.
+  const res = await handleScan(post([OK_VAULT]), zeroPriced());
+  expect(res.status).toBe(429);
+  expect((await res.json()).error).toBe("spend_cap_24h");
+});
+
+test("two concurrent requests against a cap that admits one: exactly one pays", async () => {
+  // The race the reservation closes. Before it, the route checked the cap, then awaited a
+  // quote, a discovery round trip and a payment, and only then recorded — so both requests
+  // saw an empty ledger, both passed, and both paid. Fired together with no await in
+  // between, so they genuinely interleave inside the route.
+  const ledger = new SpendLedger({ DASHBOARD_SPEND_CAP_USD: "0.0015", DASHBOARD_MAX_SCANS_PER_HOUR: "100" });
+  const [a, b] = await Promise.all([
+    handleScan(post([OK_VAULT]), deps({ ledger })),
+    handleScan(post([OK_VAULT]), deps({ ledger })),
+  ]);
+
+  const statuses = [a.status, b.status].sort();
+  expect(statuses).toEqual([200, 429]);
+  const refused = a.status === 429 ? a : b;
+  expect((await refused.json()).error).toBe("spend_cap_24h");
+  // One purchase, one run file, one scan's worth of allowance consumed.
+  expect(runFiles()).toHaveLength(1);
+  expect(ledger.snapshot()).toMatchObject({ spentMicroUsd: usdToMicro("0.0015"), scansLastHour: 1 });
+});
+
+test("a burst of ten against a two-scan allowance pays exactly twice", async () => {
+  const ledger = new SpendLedger({ DASHBOARD_SPEND_CAP_USD: "100.00", DASHBOARD_MAX_SCANS_PER_HOUR: "2" });
+  const results = await Promise.all(Array.from({ length: 10 }, () => handleScan(post([OK_VAULT]), deps({ ledger }))));
+  expect(results.filter((r) => r.status === 200)).toHaveLength(2);
+  expect(results.filter((r) => r.status === 429)).toHaveLength(8);
+  expect(ledger.snapshot().scansLastHour).toBe(2);
+  expect(runFiles()).toHaveLength(2);
+});
+
+test("a reservation is released when the purchase is refused after it, so a failed discovery costs nothing", async () => {
+  // Reserving before paying means the allowance is held across the discovery round trip;
+  // giving it back on a refusal is what keeps an unreachable service from eating the budget.
+  const ledger = new SpendLedger({ DASHBOARD_SPEND_CAP_USD: "0.0015", DASHBOARD_MAX_SCANS_PER_HOUR: "100" });
+  const unreachable = `http://127.0.0.1:${await freePort()}`;
+  const res = await handleScan(
+    post([OK_VAULT]),
+    deps({ ledger, env: { AGENT_HEDERA_ACCOUNT_ID: "0.0.42", AGENT_HEDERA_KEY: UNUSED_KEY, SERVICE_URL: unreachable } }),
+  );
+  expect(res.status).toBe(502);
+  expect(ledger.snapshot()).toMatchObject({ spentMicroUsd: 0, scansLastHour: 0 });
+
+  // And the next request, against the real service, is allowed on the full allowance.
+  expect((await handleScan(post([OK_VAULT]), deps({ ledger }))).status).toBe(200);
+});
+
+test("a reservation is released when the rate limiter refuses, and when the card cannot be verified", async () => {
+  const ledger = new SpendLedger({ DASHBOARD_SPEND_CAP_USD: "1.00", DASHBOARD_MAX_SCANS_PER_HOUR: "100" });
+  const shared = deps({ ledger, limiter: new RateLimiter() });
+  expect((await handleScan(post([OK_VAULT]), shared)).status).toBe(200);
+  expect(ledger.snapshot().scansLastHour).toBe(1);
+
+  // Rate-limited: the reservation taken just before the limiter check is given back.
+  expect((await handleScan(post([OK_VAULT]), shared)).status).toBe(429);
+  expect(ledger.snapshot().scansLastHour).toBe(1);
+
+  // A substituted on-chain key hash: refused before paying, so no allowance is consumed.
+  expect((await handleScan(post([OK_VAULT]), deps({ ledger }, "0".repeat(64)))).status).toBe(502);
+  expect(ledger.snapshot().scansLastHour).toBe(1);
 });
 
 test("a refusal before payment does not touch the ledger", async () => {

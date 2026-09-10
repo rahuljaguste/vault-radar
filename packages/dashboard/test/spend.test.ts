@@ -141,6 +141,105 @@ test("the snapshot reports what the page shows: spent, cap, window start and the
   });
 });
 
+/* --------------------------------------------------------- reserve / settle / release */
+
+test("reserve holds the amount synchronously, so a concurrent burst cannot all pass the check", () => {
+  // The race this closes: `refuse` then, many awaits later, `record`. Three callers that
+  // interleave — each checking before any of them records — all passed a cap that admits
+  // one. `reserve` does the check and the hold in a single synchronous body, so the second
+  // and third callers already see the first one's hold.
+  const { ledger } = fixture({ DASHBOARD_SPEND_CAP_USD: "0.0015", DASHBOARD_MAX_SCANS_PER_HOUR: "100" });
+  const scan = usdToMicro("0.0015");
+  const first = ledger.reserve(scan);
+  const second = ledger.reserve(scan);
+  const third = ledger.reserve(scan);
+  expect(first.ok).toBe(true);
+  expect(second.ok).toBe(false);
+  expect(third.ok).toBe(false);
+  if (!second.ok) expect(second.refusal.reason).toBe("spend_cap_24h");
+
+  // The hold is visible in the snapshot before anything is settled: that is what makes it a
+  // hold rather than a promise to record later.
+  expect(ledger.snapshot()).toMatchObject({ spentMicroUsd: scan, scansLastHour: 1 });
+});
+
+test("the hourly scan allowance is reserved the same way", () => {
+  const { ledger } = fixture({ DASHBOARD_SPEND_CAP_USD: "100.00", DASHBOARD_MAX_SCANS_PER_HOUR: "2" });
+  expect(ledger.reserve(1500).ok).toBe(true);
+  expect(ledger.reserve(1500).ok).toBe(true);
+  const third = ledger.reserve(1500);
+  expect(third.ok).toBe(false);
+  if (!third.ok) expect(third.refusal.reason).toBe("scan_rate_1h");
+});
+
+test("settle replaces the held amount and keeps the reservation's place in both windows", () => {
+  const { ledger, advance, at } = fixture({ DASHBOARD_SPEND_CAP_USD: "1.00", DASHBOARD_MAX_SCANS_PER_HOUR: "10" });
+  const reserved = ledger.reserve(1500);
+  expect(reserved.ok).toBe(true);
+  if (!reserved.ok) return;
+  const reservedAt = at();
+
+  advance(5_000);
+  ledger.settle(reserved.id, 4000);
+  expect(ledger.snapshot()).toEqual({
+    spentMicroUsd: 4000,
+    capMicroUsd: 1_000_000,
+    // The window still starts when the reservation was taken, not when it settled.
+    windowStartedAt: reservedAt,
+    scansLastHour: 1,
+    maxScansPerHour: 10,
+  });
+
+  // Settling an id that is not held is a no-op rather than a new entry.
+  ledger.settle(9_999, 50_000);
+  expect(ledger.snapshot().spentMicroUsd).toBe(4000);
+});
+
+test("a settled amount may exceed the cap, because the purchase already happened", () => {
+  // The ledger's job then is to report the truth and refuse the *next* purchase.
+  const { ledger } = fixture({ DASHBOARD_SPEND_CAP_USD: "0.01", DASHBOARD_MAX_SCANS_PER_HOUR: "100" });
+  const reserved = ledger.reserve(1500);
+  if (!reserved.ok) throw new Error("expected a reservation");
+  ledger.settle(reserved.id, usdToMicro("5.00"));
+  expect(ledger.snapshot().spentMicroUsd).toBe(5_000_000);
+  expect(ledger.canSpend(1)).toBe(false);
+});
+
+test("release gives back both the amount and the scan slot, for a purchase that never happened", () => {
+  const { ledger } = fixture({ DASHBOARD_SPEND_CAP_USD: "0.0015", DASHBOARD_MAX_SCANS_PER_HOUR: "1" });
+  const reserved = ledger.reserve(1500);
+  if (!reserved.ok) throw new Error("expected a reservation");
+  expect(ledger.reserve(1500).ok).toBe(false);
+
+  ledger.release(reserved.id);
+  expect(ledger.snapshot()).toMatchObject({ spentMicroUsd: 0, scansLastHour: 0 });
+  // And the allowance is genuinely available again.
+  expect(ledger.reserve(1500).ok).toBe(true);
+});
+
+test("releasing an unknown or already-released id is a no-op", () => {
+  const { ledger } = fixture({});
+  const reserved = ledger.reserve(1500);
+  if (!reserved.ok) throw new Error("expected a reservation");
+  ledger.release(reserved.id);
+  ledger.release(reserved.id);
+  ledger.release(12_345);
+  expect(ledger.snapshot().spentMicroUsd).toBe(0);
+  expect(ledger.snapshot().scansLastHour).toBe(0);
+});
+
+test("reserve ids are distinct, so one purchase's settle cannot move another's entry", () => {
+  const { ledger } = fixture({ DASHBOARD_SPEND_CAP_USD: "1.00", DASHBOARD_MAX_SCANS_PER_HOUR: "10" });
+  const a = ledger.reserve(1000);
+  const b = ledger.reserve(2000);
+  if (!a.ok || !b.ok) throw new Error("expected two reservations");
+  expect(a.id).not.toBe(b.id);
+  ledger.settle(a.id, 9000);
+  expect(ledger.snapshot().spentMicroUsd).toBe(11_000); // 9000 + 2000, b untouched
+  ledger.release(a.id);
+  expect(ledger.snapshot().spentMicroUsd).toBe(2000);
+});
+
 test("reset forgets every purchase, and entries are pruned rather than accumulating forever", () => {
   const { ledger, advance } = fixture({ DASHBOARD_MAX_SCANS_PER_HOUR: "1000" });
   for (let i = 0; i < 100; i++) ledger.record(10);

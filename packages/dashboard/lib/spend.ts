@@ -3,12 +3,17 @@
  * money.
  *
  * `lib/ratelimit.ts` caps how *often* one client may buy, and `lib/scan.ts` caps what *one*
- * purchase may cost. Neither bounds the total: the per-client limiter keys on a header a
- * direct caller can set to anything (so N forged values buy N scans per window), and the
- * per-scan ceiling is happy to be paid a hundred times. This module is the missing
- * aggregate — a rolling 24-hour spend cap and a global hourly scan count, both applied to
- * every purchase regardless of who asked, so the worst case for the operator's wallet is
- * bounded by configuration rather than by how hard someone tries.
+ * purchase may cost. Neither bounds the total: the per-client limiter keys on a header only
+ * a trusted proxy makes meaningful, and the per-scan ceiling is happy to be paid a hundred
+ * times. This module is the missing aggregate — a rolling 24-hour spend cap and a global
+ * hourly scan count, both applied to every purchase regardless of who asked, so the worst
+ * case for the operator's wallet is bounded by configuration rather than by how hard
+ * someone tries.
+ *
+ * Spenders must go through `reserve` / `settle` / `release` rather than `refuse` then
+ * `record`: the route awaits a payment between deciding and knowing the outcome, and a
+ * limit whose effect lands only afterwards is no limit against a concurrent burst. See
+ * `reserve`.
  *
  * In-process and therefore per-instance and reset by a restart, the same caveat the rate
  * limiter carries. It is a budget, not an accounting system: it bounds a demo deployment's
@@ -45,7 +50,12 @@ export type SpendSnapshot = {
   maxScansPerHour: number;
 };
 
-type Entry = { at: number; microUsd: number };
+/** A held allowance, to be `settle`d at what was actually spent or `release`d if the
+ * purchase never happened. The id is opaque and only meaningful to the ledger that
+ * issued it. */
+export type Reservation = { ok: true; id: number } | { ok: false; refusal: SpendRefusal };
+
+type Entry = { id: number; at: number; microUsd: number };
 
 /**
  * Reads the two limits out of an environment. An unparseable or non-positive value is a
@@ -65,6 +75,7 @@ export function limitsFrom(env: Record<string, string | undefined>): { capMicroU
 
 export class SpendLedger {
   private entries: Entry[] = [];
+  private nextId = 1;
   private readonly capMicroUsd: number;
   private readonly maxScansPerHour: number;
   private readonly now: () => number;
@@ -131,8 +142,56 @@ export class SpendLedger {
   }
 
   /**
-   * Records a completed purchase. Called after the payment, with the price the receipt
-   * states where one is available, so the ledger tracks money that actually moved.
+   * Holds `microUsd` of allowance against both limits, or refuses.
+   *
+   * This is the method a spender must use, not `refuse` followed later by `record`. The
+   * route awaits a quote, a discovery round trip and a payment between deciding and
+   * knowing the outcome, and a check whose effect lands only after all of that is not a
+   * cap at all: N concurrent requests each saw an empty ledger, each passed, and each paid.
+   * The cap read as 1.00 USD and admitted as many purchases as arrived in one burst.
+   *
+   * Reserving closes that window because the check and the write happen in a single
+   * synchronous body with no `await` between them. JavaScript runs one turn at a time, so
+   * a second request cannot observe the ledger between this method's test and its insert —
+   * the reservation is already counted by the time any concurrent caller looks.
+   *
+   * The hourly scan allowance is reserved by the same insert: a held entry counts as a
+   * scan, so a burst cannot get past the count either.
+   */
+  reserve(microUsd: number): Reservation {
+    const refusal = this.refuse(microUsd);
+    if (refusal) return { ok: false, refusal };
+    const id = this.nextId++;
+    // `refuse` already pruned for this `now()`; pushing here keeps the whole
+    // check-then-hold sequence inside one synchronous turn.
+    this.entries.push({ id, at: this.now(), microUsd: this.sanitize(microUsd) });
+    return { ok: true, id };
+  }
+
+  /**
+   * Replaces a held amount with what was actually spent, keeping the reservation's place
+   * in both windows. A settled amount may exceed the cap — the purchase already happened,
+   * and the ledger's job is to report the truth and refuse the *next* one.
+   */
+  settle(id: number, microUsd: number): void {
+    const entry = this.entries.find(e => e.id === id);
+    if (entry) entry.microUsd = this.sanitize(microUsd);
+  }
+
+  /**
+   * Gives a reservation back, for a purchase that provably never happened (a refusal
+   * between the reservation and the payment). The scan slot is returned too, since nothing
+   * was bought. Never call this when the outcome is unknown: an unsettled payment must stay
+   * counted, or a rail that charges and then fails becomes an unmetered way to spend.
+   */
+  release(id: number): void {
+    this.entries = this.entries.filter(e => e.id !== id);
+  }
+
+  /**
+   * Books a completed purchase in one step, for a caller with nothing left to adjust.
+   * Equivalent to `reserve` ignoring the refusal plus an immediate `settle`, so it never
+   * rejects: the money has already moved by the time anything calls this.
    *
    * A purchase whose price could not be read still records a zero-cost *scan*, because the
    * hourly scan count is the limit that matters when the price is unknown — a stream of
@@ -141,7 +200,12 @@ export class SpendLedger {
   record(microUsd: number): void {
     const t = this.now();
     this.prune(t);
-    this.entries.push({ at: t, microUsd: Number.isFinite(microUsd) && microUsd > 0 ? microUsd : 0 });
+    this.entries.push({ id: this.nextId++, at: t, microUsd: this.sanitize(microUsd) });
+  }
+
+  /** Any non-finite or negative amount counts as zero spend (but still as a scan). */
+  private sanitize(microUsd: number): number {
+    return Number.isFinite(microUsd) && microUsd > 0 ? microUsd : 0;
   }
 
   /** What has been spent in the current window, and against what limits. */

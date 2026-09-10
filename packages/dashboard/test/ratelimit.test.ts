@@ -1,5 +1,5 @@
 import { expect, test } from "bun:test";
-import { RateLimiter, WINDOW_MS, clientKey, scanLimiter } from "../lib/ratelimit";
+import { DEFAULT_TRUSTED_PROXY_HOPS, RateLimiter, WINDOW_MS, clientKey, scanLimiter, trustedProxyHops } from "../lib/ratelimit";
 
 /** A limiter whose clock the test drives, so nothing here sleeps. */
 function fixture(windowMs = WINDOW_MS) {
@@ -90,11 +90,48 @@ test("the exported scan limiter is set to the spec's 30-second window", () => {
  *  forwarded headers mean anything. */
 const PROXIED = { TRUST_PROXY: "1" };
 
-test("clientKey takes the first x-forwarded-for entry behind a trusted proxy, which is the original client", () => {
-  const req = new Request("http://localhost/api/scan", {
-    headers: { "x-forwarded-for": "203.0.113.7, 70.41.3.18, 150.172.238.178" },
-  });
-  expect(clientKey(req, PROXIED)).toBe("203.0.113.7");
+test("clientKey takes the entry TRUSTED_PROXY_HOPS from the END, which is the one a caller cannot write", () => {
+  // Taking the *first* entry was wrong on any proxy that appends rather than replaces. On
+  // Fly.io the client sends whatever it likes and Fly appends the address it actually saw,
+  // so the first entry is the client's invention and the last is Fly's observation — which
+  // means TRUST_PROXY=1 on Fly still handed out a fresh 30-second window per forged value.
+  const forged = "203.0.113.7, 70.41.3.18, 150.172.238.178";
+  const req = new Request("http://localhost/api/scan", { headers: { "x-forwarded-for": forged } });
+  expect(clientKey(req, PROXIED)).toBe("150.172.238.178");
+  expect(clientKey(req, PROXIED)).not.toBe("203.0.113.7");
+
+  // Two appending hops of your own in front: two from the end.
+  expect(clientKey(req, { ...PROXIED, TRUSTED_PROXY_HOPS: "2" })).toBe("70.41.3.18");
+  expect(clientKey(req, { ...PROXIED, TRUSTED_PROXY_HOPS: "3" })).toBe("203.0.113.7");
+
+  // More hops configured than entries present: the header cannot have come from that chain,
+  // so there is no entry to attribute and everyone shares the bucket.
+  expect(clientKey(req, { ...PROXIED, TRUSTED_PROXY_HOPS: "4" })).toBe("unknown");
+});
+
+test("both real proxy shapes key on the client: Fly appends, Vercel replaces", () => {
+  // Fly.io: the client sent "1.1.1.1"; Fly appended the peer address it observed.
+  const fly = new Request("http://localhost/", { headers: { "x-forwarded-for": "1.1.1.1, 198.51.100.9" } });
+  expect(clientKey(fly, PROXIED)).toBe("198.51.100.9");
+  // A caller varying its forged prefix gets the same key every time, so the limiter holds.
+  const flyAgain = new Request("http://localhost/", { headers: { "x-forwarded-for": "2.2.2.2, 198.51.100.9" } });
+  expect(clientKey(flyAgain, PROXIED)).toBe(clientKey(fly, PROXIED));
+
+  // Vercel: the header is replaced with the address it observed, so there is one entry.
+  const vercel = new Request("http://localhost/", { headers: { "x-forwarded-for": "198.51.100.9" } });
+  expect(clientKey(vercel, PROXIED)).toBe("198.51.100.9");
+  // The default hop count is right for both, which is the point of the default.
+  expect(clientKey(vercel, PROXIED)).toBe(clientKey(fly, PROXIED));
+});
+
+test("TRUSTED_PROXY_HOPS defaults to 1 and falls back to it for any unusable value", () => {
+  expect(DEFAULT_TRUSTED_PROXY_HOPS).toBe(1);
+  expect(trustedProxyHops({})).toBe(1);
+  expect(trustedProxyHops({ TRUSTED_PROXY_HOPS: "3" })).toBe(3);
+  expect(trustedProxyHops({ TRUSTED_PROXY_HOPS: " 2 " })).toBe(2);
+  for (const bad of ["", "  ", "0", "-1", "1.5", "two", "NaN", "Infinity"]) {
+    expect(trustedProxyHops({ TRUSTED_PROXY_HOPS: bad })).toBe(1);
+  }
 });
 
 test("clientKey trims whitespace and falls back to x-real-ip, then to a shared bucket", () => {

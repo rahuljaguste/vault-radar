@@ -1,6 +1,6 @@
 import { writeFileSync } from "node:fs";
 import { DEPLOYMENTS } from "../packages/core/src/standardized/registry";
-import { queryDeployment } from "../packages/core/src/standardized/gateway";
+import { gatewayUrl, queryDeployment } from "../packages/core/src/standardized/gateway";
 import type { Deployment } from "../packages/core/src/standardized/types";
 
 /**
@@ -25,9 +25,20 @@ const LAG_LIVE_S = 3600;
 /** The `_meta` fields the gate reads. */
 export type MetaResult = { deployment: string; block: string; timestamp: string; hasIndexingErrors: boolean };
 
-/** Queries one deployment's `_meta`, or throws. Injectable so the unit test can stand in a
- *  fake gateway rather than reaching the real one. */
-export type QueryMeta = (d: Deployment) => Promise<MetaResult>;
+/**
+ * Which gateway endpoint to ask.
+ *
+ * - `"pinned"`: `/deployments/id/<deploymentId>` when a pin exists, else
+ *   `/subgraphs/id/<subgraphId>` — exactly the URL `gatewayUrl` builds for data queries, so
+ *   the head lag this gate reports is the lag of the deployment the service actually reads.
+ * - `"subgraph"`: always `/subgraphs/id/<subgraphId>`, which resolves to whatever deployment
+ *   the publisher currently points that subgraph at. The only way to notice a repoint.
+ */
+export type Endpoint = "pinned" | "subgraph";
+
+/** Queries one deployment's `_meta` at one endpoint, or throws. Injectable so the unit test
+ *  can stand in a fake gateway serving both. */
+export type QueryMeta = (d: Deployment, endpoint: Endpoint) => Promise<MetaResult>;
 
 export const META_QUERY = `{ _meta { block { number timestamp } hasIndexingErrors deployment } }`;
 
@@ -35,35 +46,53 @@ export const META_QUERY = `{ _meta { block { number timestamp } hasIndexingError
 export type Reconciled = { deployment: Deployment; note: string };
 
 /**
- * Folds one query result into the registry entry, without ever replacing a pinned
+ * Folds the query results into the registry entry, without ever replacing a pinned
  * `deploymentId`.
  *
- * - no pin yet: adopt the observed deployment (this is the populate case, and the only one).
- * - pin agrees: a normal verification, status from the indexing lag.
- * - pin disagrees: keep the pin, `status: "repointed"`, and say both ids.
+ * - no pin yet: adopt the deployment the subgraph resolves to (the populate case, and the
+ *   only case that writes a pin).
+ * - pin agrees with what the subgraph now serves: a normal verification, status from lag.
+ * - pin disagrees: keep the pin, `status: "repointed"`, and name both ids.
+ * - the repoint check could not run: status from lag, and the note says so. Silence here
+ *   would read as agreement.
+ *
+ * `serving` is the deployment id the *subgraph-id* endpoint resolves to, or null when that
+ * query failed. It cannot be taken from `pinned.deployment`: a pinned URL addresses one
+ * immutable deployment, so `_meta.deployment` there is the pin restated and comparing the
+ * two could only ever be equal — which is what made the first version of this check inert
+ * against the very thing it was added to detect.
  */
-export function reconcile(existing: Deployment, meta: MetaResult, now: number): Reconciled {
-  const lag = now - Number(meta.timestamp);
+export function reconcile(existing: Deployment, pinned: MetaResult, serving: string | null, now: number): Reconciled {
+  const lag = now - Number(pinned.timestamp);
   const verifiedAt = String(now);
-  const byLag: Deployment["status"] = meta.hasIndexingErrors ? "down" : lag <= LAG_LIVE_S ? "live" : "stale";
+  const byLag: Deployment["status"] = pinned.hasIndexingErrors ? "down" : lag <= LAG_LIVE_S ? "live" : "stale";
 
   if (existing.deploymentId === null) {
+    // Nothing pinned, so the pinned query *was* the subgraph query; either source names the
+    // deployment to adopt.
+    const adopt = serving ?? pinned.deployment;
     return {
-      deployment: { ...existing, deploymentId: meta.deployment, status: byLag, headLagSeconds: lag, verifiedAt },
-      note: `${byLag} lag=${lag}s deployment=${meta.deployment} (pinned for the first time)`,
+      deployment: { ...existing, deploymentId: adopt, status: byLag, headLagSeconds: lag, verifiedAt },
+      note: `${byLag} lag=${lag}s deployment=${adopt} (pinned for the first time)`,
     };
   }
-  if (existing.deploymentId === meta.deployment) {
+  if (serving === null) {
     return {
       deployment: { ...existing, status: byLag, headLagSeconds: lag, verifiedAt },
-      note: `${byLag} lag=${lag}s deployment=${meta.deployment}`,
+      note: `${byLag} lag=${lag}s deployment=${existing.deploymentId} (repoint check unavailable)`,
+    };
+  }
+  if (existing.deploymentId === serving) {
+    return {
+      deployment: { ...existing, status: byLag, headLagSeconds: lag, verifiedAt },
+      note: `${byLag} lag=${lag}s deployment=${existing.deploymentId}`,
     };
   }
   return {
     // `deploymentId` deliberately untouched: the pin is what `gatewayUrl` reads, and moving
     // it is a decision, not a side effect of running the gate.
     deployment: { ...existing, status: "repointed", headLagSeconds: lag, verifiedAt },
-    note: `repointed lag=${lag}s pinned=${existing.deploymentId} now_serving=${meta.deployment} (pin left alone)`,
+    note: `repointed lag=${lag}s pinned=${existing.deploymentId} now_serving=${serving} (pin left alone)`,
   };
 }
 
@@ -86,7 +115,22 @@ export async function verifyAll(deployments: Deployment[], query: QueryMeta, now
   for (const d of deployments) {
     let result: Reconciled;
     try {
-      result = reconcile(d, await query(d), now);
+      // The pinned endpoint answers "how fresh is the deployment we actually read"; that
+      // query failing is what makes a deployment `down`.
+      const pinned = await query(d, "pinned");
+      // The subgraph endpoint answers "what does this subgraph resolve to now". Only
+      // meaningful when there is a pin to compare it against, and its failure must not turn
+      // a healthy deployment into a `down` one — so it is caught separately and reported as
+      // an unavailable check.
+      let serving: string | null = null;
+      if (d.deploymentId !== null) {
+        try {
+          serving = (await query(d, "subgraph")).deployment;
+        } catch {
+          serving = null;
+        }
+      }
+      result = reconcile(d, pinned, serving, now);
     } catch (e) {
       result = unreachable(d, e instanceof Error ? e.message : String(e), now);
     }
@@ -114,12 +158,26 @@ export function summarize(deployments: Deployment[]): string {
 
 export const REGISTRY_PATH = "packages/core/src/standardized/deployments.json";
 
-/** The real gateway query, used when this file is run as a script. */
+/**
+ * The real gateway query, used when this file is run as a script.
+ *
+ * `queryDeployment` takes the whole `Deployment` and builds its URL with `gatewayUrl`, which
+ * prefers `deploymentId` when set. Asking for the subgraph endpoint is therefore a matter of
+ * handing it the same deployment with the pin blanked — no second URL builder, and
+ * `gatewayUrl` stays the single place that knows the gateway's shape. `DEPLOYMENTS` is read
+ * only; the copy is local to this call.
+ */
 function gatewayQuery(apiKey: string): QueryMeta {
-  return async d => {
-    const { meta, data } = await queryDeployment<{ _meta: { deployment: string } }>(d, META_QUERY, apiKey, {});
+  return async (d, endpoint) => {
+    const target = endpoint === "subgraph" ? { ...d, deploymentId: null } : d;
+    const { meta, data } = await queryDeployment<{ _meta: { deployment: string } }>(target, META_QUERY, apiKey, {});
     return { deployment: data._meta.deployment, block: meta.block, timestamp: meta.timestamp, hasIndexingErrors: meta.hasIndexingErrors };
   };
+}
+
+/** The two URLs the gate uses for one deployment, so a run can state where it looked. */
+export function endpointsFor(d: Deployment): { pinned: string; subgraph: string } {
+  return { pinned: gatewayUrl(d), subgraph: gatewayUrl({ ...d, deploymentId: null }) };
 }
 
 // `import.meta.main` so the test can import `verifyAll`/`reconcile` without the gate running

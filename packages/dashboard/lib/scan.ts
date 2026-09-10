@@ -240,102 +240,138 @@ export async function handleScan(req: Request, overrides: Partial<ScanDeps> = {}
 
   // 5. The aggregate caps, which are the ones that actually bound the bill: would this
   //    purchase take the rolling 24-hour total past `DASHBOARD_SPEND_CAP_USD`, or is the
-  //    global hourly scan allowance already used up? Checked before paying, across every
-  //    caller, so neither a forged client key nor a patient loop can get past them.
-  const refusal = deps.ledger.refuse(quoteMicro);
-  if (refusal) {
+  //    global hourly scan allowance already used up?
+  //
+  //    Reserved, not merely checked. Everything from here to the payment awaits — discovery
+  //    is a network round trip and so is the purchase — and a check whose effect lands only
+  //    afterwards is no cap at all against requests that arrive together: each would see an
+  //    empty ledger, each would pass, and each would pay. `reserve` holds the quote
+  //    synchronously, so a concurrent caller sees it held before it looks.
+  const reservation = deps.ledger.reserve(quoteMicro);
+  if (!reservation.ok) {
     // 429, not 400: the request is fine, the deployment is simply out of allowance for now.
-    return json({ error: refusal.reason, ...refusal }, 429);
+    return json({ error: reservation.refusal.reason, ...reservation.refusal }, 429);
   }
-
-  // 6. Only now spend the caller's rate-limit window, since every check above is
-  //    free and deterministic.
-  const limit = deps.limiter.check(clientKey(req, deps.env));
-  if (!limit.allowed) {
-    return json(
-      { error: `one paid scan per 30 seconds; try again in ${limit.retryAfterSeconds}s` },
-      429,
-      { "retry-after": String(limit.retryAfterSeconds) },
-    );
-  }
-
-  // 7. Verify who is being paid before paying them. An unsigned or substituted
-  //    card means discovery cannot be trusted, which is the whole point of
-  //    anchoring the key hash on chain.
-  const startedAt = new Date().toISOString();
-  let discovery: Awaited<ReturnType<VaultRadarClient["discover"]>>;
+  // Released by the `finally` below on every path that provably did not pay; the one path
+  // whose outcome is unknown (a throw out of `client.scan`) settles instead.
+  let settled = false;
   try {
-    discovery = await client.discover();
-  } catch (e) {
-    return json({ error: `could not reach or verify the service: ${redact(e, secrets)}` }, 502);
-  }
-  if (!discovery.cardSignatureValid) {
-    return json({ error: "the service's agent card signature did not verify; refusing to pay" }, 502);
-  }
-  const substituted = discovery.onChain.filter((o) => o.matches === false);
-  if (substituted.length > 0) {
+    // 6. Only now spend the caller's rate-limit window, since every check above is
+    //    free and deterministic.
+    const limit = deps.limiter.check(clientKey(req, deps.env));
+    if (!limit.allowed) {
+      return json(
+        { error: `one paid scan per 30 seconds; try again in ${limit.retryAfterSeconds}s` },
+        429,
+        { "retry-after": String(limit.retryAfterSeconds) },
+      );
+    }
+
+    // 7. Verify who is being paid before paying them. An unsigned or substituted
+    //    card means discovery cannot be trusted, which is the whole point of
+    //    anchoring the key hash on chain.
+    const startedAt = new Date().toISOString();
+    let discovery: Awaited<ReturnType<VaultRadarClient["discover"]>>;
+    try {
+      discovery = await client.discover();
+    } catch (e) {
+      return json({ error: `could not reach or verify the service: ${redact(e, secrets)}` }, 502);
+    }
+    if (!discovery.cardSignatureValid) {
+      return json({ error: "the service's agent card signature did not verify; refusing to pay" }, 502);
+    }
+    const substituted = discovery.onChain.filter((o) => o.matches === false);
+    if (substituted.length > 0) {
+      return json(
+        {
+          error: `the service's on-chain ERC-8004 key hash does not match the key on its card (chain ${substituted
+            .map((o) => o.chainId)
+            .join(", ")}); refusing to pay`,
+        },
+        502,
+      );
+    }
+
+    // 8. Pay, sealed or clear exactly as the policy's privacy tier dictates.
+    let result: Awaited<ReturnType<VaultRadarClient["scan"]>>;
+    try {
+      result = await client.scan(parsed.vaults, "hedera", { seal: tier.seal });
+    } catch (e) {
+      const message = redact(e, secrets);
+      console.error(`[api/scan] paid scan failed: ${message}`);
+      // The payment may or may not have gone through — `client.scan` throws both for a
+      // refused 402 (nothing spent) and for a failure after the transfer was signed. Settle
+      // the reservation at the quote rather than releasing it: an unknown outcome has to
+      // count against the cap, or a rail that fails after paying would be an unmetered way
+      // to drain the wallet.
+      deps.ledger.settle(reservation.id, quoteMicro);
+      settled = true;
+      // Record the failure as a run too, so the attempt is visible in `/runs` instead of
+      // vanishing. There is no tx id and no receipt to build a `RunRecord`'s `requests[]`
+      // from, so the run carries the reason as an `insufficient data` decision per vault —
+      // `RunRecord`'s own vocabulary for "paid, nothing trustworthy came back".
+      const failed = buildFailedRecord({ vaults: parsed.vaults, discovery, policy, serviceUrl, startedAt, txId: null, reason: `the paid scan failed: ${message}` });
+      persist(deps, failed, secrets);
+      return json({ error: `the paid scan failed: ${message}`, runId: failed.id }, 502);
+    }
+
+    // 9. The purchase happened: settle the reservation immediately, before anything else
+    //    can throw or return, at the greater of the quote and the price the receipt states.
+    //
+    //    The max matters. The receipt's figure is the payee's own statement, and this is a
+    //    spending cap — a service that answered every purchase with `price: "0"` would
+    //    otherwise consume no allowance at all while still being paid the quote, turning
+    //    the cap off entirely. The agent refuses a receipt whose price disagrees with the
+    //    quote (`receiptValid` goes false below), but that refusal comes after the money
+    //    moved, so the ledger must not take the lower number on trust. A figure *above*
+    //    the quote is recorded as stated: that is the service claiming to have charged
+    //    more, which the cap should believe.
+    deps.ledger.settle(reservation.id, chargedMicroUsd(quoteMicro, result.priceUsd));
+    settled = true;
+
+    // 10. The data is only worth showing if its signatures check out. Fail closed,
+    //     but still save the run: a service that answers with an unverifiable
+    //     receipt is exactly the thing an operator needs the evidence for.
+    const hash = receiptHash(result.receipt);
+    const age = applyAgeCheck(result, policy, deps.now());
+    const record = buildRecord({ result, discovery, policy, hash, age, serviceUrl, startedAt });
+    persist(deps, record, secrets);
+
+    if (!result.receiptValid) {
+      return json({ error: "the payment settled but the service's receipt did not verify", runId: record.id }, 502);
+    }
+    if (!result.attestationsValid) {
+      return json({ error: "the payment settled but the per-vault attestations did not verify", runId: record.id }, 502);
+    }
+
     return json(
       {
-        error: `the service's on-chain ERC-8004 key hash does not match the key on its card (chain ${substituted
-          .map((o) => o.chainId)
-          .join(", ")}); refusing to pay`,
+        runId: record.id,
+        requests: record.requests,
+        decisions: record.decisions,
+        txId: record.requests[0].txId,
+        receiptHash: hash,
+        priceUsd: result.priceUsd,
       },
-      502,
+      200,
     );
+  } finally {
+    // Any exit that did not reach a settle provably did not pay: an early 4xx/5xx above, or
+    // an unexpected throw from code that all runs before `client.scan`. Give the allowance
+    // back so a failed discovery does not eat into the day's budget.
+    if (!settled) deps.ledger.release(reservation.id);
   }
+}
 
-  // 8. Pay, sealed or clear exactly as the policy's privacy tier dictates.
-  let result: Awaited<ReturnType<VaultRadarClient["scan"]>>;
-  try {
-    result = await client.scan(parsed.vaults, "hedera", { seal: tier.seal });
-  } catch (e) {
-    const message = redact(e, secrets);
-    console.error(`[api/scan] paid scan failed: ${message}`);
-    // The payment may or may not have gone through — `client.scan` throws both for a
-    // refused 402 (nothing spent) and for a failure after the transfer was signed. Charge
-    // it to the ledger either way: an unknown outcome has to count against the cap, or a
-    // rail that fails after paying would be an unmetered way to drain the wallet.
-    deps.ledger.record(quoteMicro);
-    // Record the failure as a run too, so the attempt is visible in `/runs` instead of
-    // vanishing. There is no tx id and no receipt to build a `RunRecord`'s `requests[]`
-    // from, so the run carries the reason as an `insufficient data` decision per vault —
-    // `RunRecord`'s own vocabulary for "paid, nothing trustworthy came back".
-    const failed = buildFailedRecord({ vaults: parsed.vaults, discovery, policy, serviceUrl, startedAt, txId: null, reason: `the paid scan failed: ${message}` });
-    persist(deps, failed, secrets);
-    return json({ error: `the paid scan failed: ${message}`, runId: failed.id }, 502);
-  }
-
-  // 9. The purchase happened: count it against the aggregate cap before anything else can
-  //    return. Recorded at the price the *receipt* states when it is readable, so the
-  //    ledger tracks what the service says it charged rather than what was quoted.
-  deps.ledger.record(result.priceUsd ? usdToMicro(result.priceUsd) : quoteMicro);
-
-  // 10. The data is only worth showing if its signatures check out. Fail closed,
-  //     but still save the run: a service that answers with an unverifiable
-  //     receipt is exactly the thing an operator needs the evidence for.
-  const hash = receiptHash(result.receipt);
-  const age = applyAgeCheck(result, policy, deps.now());
-  const record = buildRecord({ result, discovery, policy, hash, age, serviceUrl, startedAt });
-  persist(deps, record, secrets);
-
-  if (!result.receiptValid) {
-    return json({ error: "the payment settled but the service's receipt did not verify", runId: record.id }, 502);
-  }
-  if (!result.attestationsValid) {
-    return json({ error: "the payment settled but the per-vault attestations did not verify", runId: record.id }, 502);
-  }
-
-  return json(
-    {
-      runId: record.id,
-      requests: record.requests,
-      decisions: record.decisions,
-      txId: record.requests[0].txId,
-      receiptHash: hash,
-      priceUsd: result.priceUsd,
-    },
-    200,
-  );
+/**
+ * What to charge the ledger for a completed purchase: never less than the quote, and more
+ * only when the receipt says so. `priceUsd` is absent or unreadable for a receipt this
+ * service mangled, and an unreadable figure must not read as zero.
+ */
+export function chargedMicroUsd(quoteMicro: number, receiptPriceUsd: string | null): number {
+  if (!receiptPriceUsd) return quoteMicro;
+  const stated = usdToMicro(receiptPriceUsd);
+  return Number.isFinite(stated) ? Math.max(quoteMicro, stated) : quoteMicro;
 }
 
 /** Writes a run, treating a write failure as a logged problem rather than a reason to

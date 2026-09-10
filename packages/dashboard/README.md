@@ -112,6 +112,11 @@ Read from the process environment at request time. The repo root's
 | `AGENT_HEDERA_ACCOUNT_ID` | `POST /api/scan` (server only) | none | The paying Hedera account. Absent disables paid scans. |
 | `AGENT_HEDERA_KEY` | `POST /api/scan` (server only) | none | That account's ECDSA private key. Never logged, never returned, never bundled for the browser. Every error that leaves the handler is redacted against it first. |
 | `POLICY_PATH` | `POST /api/scan` (server only) | `packages/agent/policy.example.json` | The operator's budget, privacy tier and `max_age_seconds`, read by the agent's own `loadPolicy`. Resolved against the repo root. An unreadable or invalid policy is a 503 naming the offending field, never a silent default. |
+| `DASHBOARD_SPEND_CAP_USD` | `lib/spend.ts` | `1.00` | Rolling 24-hour total across every caller. Reserved before each payment, so a burst of concurrent requests cannot all pass the same check. An unusable value falls back to the default, never to no limit. |
+| `DASHBOARD_MAX_SCANS_PER_HOUR` | `lib/spend.ts` | `20` | Global hourly scan allowance, reserved the same way. This is the limit that bites when each purchase is individually cheap. |
+| `SCAN_ACCESS_TOKEN` | `POST /api/scan` (server only) | unset | When set, the route requires `Authorization: Bearer <token>` and answers 401 otherwise. Unset leaves the route open, which is the spec's promised public flow; the aggregate caps are what make that safe. |
+| `TRUST_PROXY` | `lib/ratelimit.ts` | unset | `TRUST_PROXY=1` only when a proxy in front of this server sets `x-forwarded-for`. Unset means every caller shares one rate-limit bucket, because a direct caller can forge that header. |
+| `TRUSTED_PROXY_HOPS` | `lib/ratelimit.ts` | `1` | How many proxies in front append to `x-forwarded-for`; the entry this many positions from the **end** is the one a caller cannot choose. `1` is correct for both documented hosts, for different reasons: **Fly.io appends** the address it observed, so a client that sends `x-forwarded-for: 1.1.1.1` produces `1.1.1.1, <real client>` and only the last entry is Fly's; **Vercel replaces** the header with the address it observed, so there is a single entry and it is Vercel's. Raise it only when another appending proxy of your own sits in front of that one. |
 
 ## Commands
 

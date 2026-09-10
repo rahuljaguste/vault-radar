@@ -25,30 +25,46 @@ export type Done = {
   cardSignatureValid: boolean;
   /** The receipt's `sig.pub_hash` against the card's `pq.sig.pub_hash`. */
   keyMatchesCard: boolean;
-  /** One entry per ERC-8004 identity the card lists; empty when it lists none. */
+  /**
+   * One entry per ERC-8004 identity the *receipt* names in its signed `service.erc8004`.
+   * Empty means the receipt claims no on-chain identity, which is never "verified" — see
+   * `isVerified`.
+   */
   anchors: Anchor[];
+  /** Every identity the receipt names also appears on the card that published the key. */
+  identitiesInCard: boolean;
   hash: string;
 };
 
 type Result = { status: "idle" } | { status: "checking" } | { status: "error"; message: string } | Done;
 
 /**
- * A receipt only reads "verified" when all of these hold: its signature checks out, the
- * card that published the key vouches for itself, the receipt names that same key, and —
- * when the card claims on-chain identities — every one of those anchors the key too.
+ * A receipt reads "verified" only when its signature checks out, the card that published
+ * the key vouches for itself, the receipt names that same key, and every ERC-8004 identity
+ * the *receipt itself* claims anchors that key on chain.
  *
- * The middle two are what make the first one mean anything. Checking a signature against
- * whatever key a freshly fetched card happens to advertise proves only that the card and
- * the receipt came from the same place; anyone who can answer for the service's URL can
- * serve a card with their own key and a receipt signed by it, and the page would have said
- * "Signature valid." The on-chain pin is the part an impostor cannot rewrite.
+ * Checking a signature against whatever key a freshly fetched card advertises proves only
+ * that the card and the receipt came from the same place: anyone who can answer for the
+ * service's URL can serve a card with their own key and a receipt signed by it, and the
+ * page would have said "Signature valid." The on-chain pin is the part an impostor cannot
+ * rewrite — which is why the identities come from `receipt.service.erc8004`, inside the
+ * signed body, rather than from the card. Reading them off the card let the impostor supply
+ * an *empty* list and skip the on-chain check altogether, and an empty list used to read as
+ * verified.
+ *
+ * So an empty list is "unproven", never "verified": there is nothing anchoring the key. The
+ * identities are additionally cross-checked against the card, because a receipt naming an
+ * identity the key's own publisher does not claim is two parties disagreeing about who this
+ * service is.
  */
 export function isVerified(r: Done): boolean {
   return (
     r.signatureValid &&
     r.cardSignatureValid &&
     r.keyMatchesCard &&
-    (r.anchors.length === 0 || r.anchors.every((a) => a.state === "matches"))
+    r.identitiesInCard &&
+    r.anchors.length > 0 &&
+    r.anchors.every((a) => a.state === "matches")
   );
 }
 
@@ -97,15 +113,23 @@ export default function VerifyPage() {
         card.pq.sig.pub_hash.trim().toLowerCase() === publishedHash &&
         receipt.sig.pub_hash.trim().toLowerCase() === publishedHash;
 
-      const identities = Array.isArray(card.erc8004) ? card.erc8004 : [];
+      // From the receipt's *signed* body, not the card: the card is fetched live from
+      // whoever is answering for the service URL, so a list read off it is a list the
+      // service being verified gets to choose — including an empty one, which would skip
+      // the on-chain check entirely.
+      const claimed = Array.isArray(receipt.service?.erc8004) ? receipt.service.erc8004 : [];
+      const onCard = Array.isArray(card.erc8004) ? card.erc8004 : [];
+      const identitiesInCard = claimed.every((c) =>
+        onCard.some((o) => o.chainId === c.chainId && o.agentId === c.agentId),
+      );
       const anchors: Anchor[] = await Promise.all(
-        identities.map(async (id) => {
-          const checked = await checkAnchor(id, card.pq.sig.pub_hash);
+        claimed.map(async (id) => {
+          const checked = await checkAnchor(id, publishedHash);
           return { chainId: checked.chainId, agentId: checked.agentId, state: checked.state };
         }),
       );
 
-      setResult({ status: "done", signatureValid, cardSignatureValid, keyMatchesCard, anchors, hash: receiptHash(receipt) });
+      setResult({ status: "done", signatureValid, cardSignatureValid, keyMatchesCard, identitiesInCard, anchors, hash: receiptHash(receipt) });
     } catch (err) {
       setResult({ status: "error", message: `Verification failed to run: ${(err as Error).message}` });
     }
@@ -116,9 +140,10 @@ export default function VerifyPage() {
       <h2>Verify a receipt</h2>
       <p>
         Paste a receipt&rsquo;s JSON below. Its ML-DSA-65 signature is checked in your browser against the service&rsquo;s
-        published key, that key is checked against the hash the service has pinned on the ERC-8004 registry, and the
-        receipt hash is recomputed. The receipt itself is never sent anywhere: the only requests your browser makes are
-        the one-time fetch of the agent card and a read-only call to a public RPC endpoint for the on-chain key.
+        published key, and that key is checked against the hash pinned on the ERC-8004 registry for every identity the
+        receipt itself names — a receipt that names none cannot be verified, only read. The receipt hash is recomputed
+        too. The receipt is never sent anywhere: the only requests your browser makes are the one-time fetch of the agent
+        card and a read-only call to a public RPC endpoint for the on-chain key.
       </p>
       <textarea
         value={text}
@@ -138,17 +163,26 @@ export default function VerifyPage() {
   );
 }
 
+/** The one-line answer, naming the first thing that failed rather than a generic refusal. */
+export function headline(r: Done): string {
+  if (isVerified(r)) return "Verified.";
+  if (!r.signatureValid) return "NOT verified: the signature is INVALID.";
+  if (!r.cardSignatureValid) return "NOT verified: the agent card does not carry a valid signature of its own.";
+  if (!r.keyMatchesCard) return "NOT verified: the signature is good, but the key behind it is not the published one.";
+  if (!r.identitiesInCard) return "NOT verified: the receipt names an on-chain identity the service's own card does not claim.";
+  if (r.anchors.length === 0) {
+    return "UNPROVEN: the signature is good, but the receipt claims no on-chain identity, so nothing anchors the key.";
+  }
+  if (r.anchors.some((a) => a.state === "mismatch")) return "NOT verified: the on-chain registry pins a different key.";
+  return "UNPROVEN: the on-chain anchor could not be read, so the key binding is unconfirmed.";
+}
+
 function Verdict({ result }: { result: Done }) {
   const verified = isVerified(result);
   return (
     <>
       <p className={verified ? "ok" : "error"}>
-        {verified
-          ? "Verified."
-          : result.signatureValid
-            ? "NOT verified: the signature checks out, but the key behind it does not."
-            : "NOT verified: the signature is INVALID."}{" "}
-        Receipt hash: <code>{result.hash}</code>
+        {headline(result)} Receipt hash: <code>{result.hash}</code>
       </p>
       <dl>
         <dt>Receipt signature</dt>
@@ -157,12 +191,14 @@ function Verdict({ result }: { result: Done }) {
         <dd className={result.cardSignatureValid ? "ok" : "error"}>{result.cardSignatureValid ? "valid" : "invalid"}</dd>
         <dt>Key hash matches the card</dt>
         <dd className={result.keyMatchesCard ? "ok" : "error"}>{result.keyMatchesCard ? "yes" : "no"}</dd>
+        <dt>Identities the receipt names are on the card</dt>
+        <dd className={result.identitiesInCard ? "ok" : "error"}>{result.identitiesInCard ? "yes" : "no"}</dd>
         <dt>On-chain anchor</dt>
         <dd>
           {result.anchors.length === 0 ? (
-            <span className="warn">
-              the card lists no ERC-8004 identity, so the key is not anchored anywhere and only the service&rsquo;s own
-              word supports it
+            <span className="error">
+              the receipt names no ERC-8004 identity in its signed body, so there is nothing to check the key against and
+              only the service&rsquo;s own word supports it
             </span>
           ) : (
             result.anchors.map((a) => (
@@ -177,7 +213,7 @@ function Verdict({ result }: { result: Done }) {
       {result.anchors.some((a) => a.state === "unavailable") && (
         <p className="muted">
           &ldquo;unavailable&rdquo; means the registry could not be read, or holds no hash for that agent — not that the
-          key is wrong. Nothing is claimed either way.
+          key is wrong. Nothing is claimed either way, which is why the verdict above is unproven rather than a refusal.
         </p>
       )}
     </>
