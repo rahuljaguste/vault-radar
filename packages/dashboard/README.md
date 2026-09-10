@@ -88,6 +88,14 @@ service does not implement, and a service that cannot be reached at all.
 Every counter on that page lives in the service process and **resets when the
 service restarts**. The page states this above the numbers.
 
+**Deploying this publicly: `/admin` has no access control of its own.** The admin
+token authenticates this *server* to the service; it is never asked of the
+visitor, per spec §13.1, so anyone who can reach the dashboard can read the
+operator's counters. A public deployment should either put the page behind its own
+access control (the platform's auth, a proxy, an allowlist) or switch it off by
+leaving `ADMIN_TOKEN` unset, which leaves the page rendering an explanation
+instead of numbers.
+
 ## API routes
 
 | Route | Returns |

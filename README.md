@@ -9,7 +9,7 @@ Built for ETHOnline 2026. Partner tracks targeted below.
 | The Graph, Best Use of Composable or Standardized Graph Products | One template per schema family in `packages/core/src/standardized/templates.ts`, run across 15 pinned deployments in `packages/core/src/standardized/deployments.json`. The ERC-4626 module in `substreams/erc4626-vault-metrics/` imports Pinax `erc4626` and ships to two chains from one WASM binary. |
 | The Graph, Best AI Tooling or AI Use Case (From Scratch) | The agent in `packages/agent/src/client.ts` discovers, seals, pays, opens and verifies before it reasons. It refuses stale data on its own clock, not on the service's word. Package: `<<FILL: substreams.dev package URL for erc4626-vault-metrics>>` |
 | Hedera, AI & Agentic Payments on Hedera | The x402 rail in `packages/service/src/rails/hedera.ts` prices per vault and settles HTS USDC through Blocky402. A real settled request: `<<FILL: HashScan transaction URL for a settled Hedera scan>>` |
-| Arc, Best Agentic Economy Application with Circle Agent Stack | Bucketed Arc routes on the agent card, the Circle Gateway rail (in progress, see scope notes), and the dashboard at `<<FILL: deployed dashboard URL>>` showing a live Arc payment. A real settled request: `<<FILL: Arcscan transaction URL for a settled Arc payment>>` |
+| Arc, Best Agentic Economy Application with Circle Agent Stack | Bucketed Arc routes on the agent card, the Circle Gateway rail, and the dashboard at `<<FILL: deployed dashboard URL>>` showing a live Arc payment. A real settled request: `<<FILL: Arcscan transaction URL for a settled Arc payment>>` |
 | Arc, Launch on Arc Testnet & Push to Mainnet | Arc testnet config lives in `packages/service/src/config.ts` under `arc`, network `eip155:5042002`. The mainnet path is a config swap, documented in the run section below. |
 
 Live service: `<<FILL: deployed service URL, e.g. https://vaultradar.fly.dev>>`
@@ -65,7 +65,7 @@ Full write-up for judges: [docs/standards-leverage.md](docs/standards-leverage.m
 | lending 3.1.0 | aave-v3 (Ethereum, Base), compound-v3, spark, morpho-aave-v3, euler |
 | yield-aggregator 1.3.1 | yearn-v2 (Ethereum, Arbitrum), convex-finance, aura-finance, arrakis-finance (Ethereum, Optimism, Polygon), gamma-strategies (Ethereum, Polygon) |
 
-Live deployments as of the last verification gate run: `<<FILL: live/total count printed by bun run verify-deployments>>`. Every query goes to the pinned `deploymentId`, never a subgraph name, so a re-point cannot silently change the data underneath a risk verdict.
+Live deployments as of the last verification gate run: `<<FILL: live/total count printed by bun run verify-deployments>>`. Every query goes to the pinned `deploymentId` once the verification gate has run, so a re-point cannot silently change the data underneath a risk verdict. Until it has, every `deploymentId` in `deployments.json` is still null and the registry resolves by subgraph id instead (`packages/core/src/standardized/gateway.ts`); pinning the ids needs a Studio key, which `bun run verify-deployments` writes back on its first successful run.
 
 **One module, two chains.** `substreams/erc4626-vault-metrics/` imports Pinax's public `erc4626` package as a dependency and never scans logs itself. `chain_id` is a Substreams runtime parameter, so the same compiled WASM runs on Ethereum mainnet and on Base. Only the manifest differs: `substreams.yaml` versus `substreams.base.yaml`. Both sinks write to one Postgres, because every table's primary key includes `chain_id`.
 
@@ -149,7 +149,7 @@ curl -s localhost:8787/.well-known/agent.json | jq '{endpoints, prices, pq}'
 bun run agent watch --vaults 1:0xVAULT_ADDRESS,8453:0xVAULT_ADDRESS --policy packages/agent/policy.example.json
 ```
 
-The `watch` command and its policy file are Tasks 22 and 23, specified but not yet built. The client library underneath them is built and tested.
+The `watch` command and its policy file are built and covered by `bun test`: the loop lives in `packages/agent/src/watch.ts`, and two ready-made policies ship as `packages/agent/policy.example.json` (balanced, sealed scan) and `packages/agent/policy.strict.json` (strict, whole-protocol table). `scripts/demo.sh` drives both — step 3 runs `watch` under the balanced policy and step 4 runs it again under the strict one.
 
 ### Dashboard
 
@@ -216,7 +216,7 @@ Honest scope notes, so nothing here is read as more than it is:
 - **HCS-14 UAID is not implemented.** The agent card has no `uaid` field. Identity is ERC-8004 plus the signed card, nothing more.
 - **Falcon signatures are not implemented.** Signatures are ML-DSA-65 only. Falcon was considered as a smaller-signature option and dropped.
 - **The upstream x402 payment to The Graph gateway was cut.** Standardized queries use a Studio API key. The service does not pay the gateway per query.
-- **In flight at the time of writing.** The HCS commitment queue, the ERC-8004 registration script, the Arc rail, the Fly deployment, and the agent policy and CLI are specified in `docs/superpowers/plans/2026-09-09-vaultradar.md` and described above in future tense. Everything else in this README is built and covered by `bun test`.
+- **What is built, and what waits on credentials.** The HCS commitment queue, the ERC-8004 registration script (`scripts/identity.ts`), the Arc rail, and the agent policy and CLI are built and covered by `bun test`. What is not done is everything that needs a funded account or a host: the Fly deployment, the identity registration run against both registries, and the live links marked `<<FILL>>` above.
 - **KEM key rotation and forward secrecy are out of scope.** So are on-chain PQ payment signatures and zero-knowledge proofs of the risk computation.
 
 ## License

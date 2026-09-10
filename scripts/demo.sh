@@ -9,11 +9,12 @@
 # Run against the deployed service:
 #   SERVICE_URL=https://vaultradar.fly.dev bash scripts/demo.sh
 #
-# Steps 3, 4 and 5 drive pieces that are specified but not yet built (the agent CLI
-# from Tasks 22 and 23, the Arc rail and its hello-arc client from Task 19). The
-# commands below are the contract those tasks implement, so they are written out in
-# full. Until the files exist the script prints the command instead of running it,
-# rather than aborting, so the earlier and later steps still demo.
+# Steps 3, 4 and 5 run the three paid entrypoints: `agent watch` under the balanced
+# policy (a sealed per-vault scan on Hedera), `agent watch` again under the strict
+# policy (the whole-protocol table, so the vendor never learns which vault is held),
+# and `hello-arc.ts` (a bucketed Arc payment through Circle Gateway). All three exist;
+# `run_or_show` still guards each on its entrypoint file, so a tree missing one prints
+# that step's command instead of aborting the whole demo.
 
 set -euo pipefail
 
