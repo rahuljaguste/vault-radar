@@ -5,6 +5,7 @@
   --border: #dddddd;
   --stripe: #f4f4f4;
   --ok: #146c2e;
+  --warn: #8a5300;
   --error: #a3202a;
 }
 
@@ -128,8 +129,42 @@ code {
   color: var(--ok);
 }
 
+.warn {
+  color: var(--warn);
+}
+
 .error {
   color: var(--error);
+}
+
+.muted {
+  color: var(--muted);
+}
+
+/* Status words carry the verdict/health colour, so keep them readable at a glance. */
+td.ok,
+td.warn,
+td.error,
+td.muted {
+  font-weight: 600;
+}
+
+/* A row of controls plus the status text that belongs with them. */
+.toolbar {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 0.75rem;
+}
+
+.toolbar button {
+  margin-top: 0;
+}
+
+label {
+  display: block;
+  color: var(--muted);
+  margin-bottom: 0.35rem;
 }
 
 textarea {
@@ -161,6 +196,7 @@ button:disabled {
     --border: #333333;
     --stripe: #171717;
     --ok: #3ddc73;
+    --warn: #e8b339;
     --error: #ff6b6b;
   }
 }
