@@ -121,6 +121,32 @@ test("scan merges the subgraph record with the substreams-sink record for the sa
   expect(result.sources.some(s => s.ref === "substreams:erc4626-vault-metrics")).toBe(true);
 });
 
+test("scan() includes a substreams-sink vault with no Messari counterpart, unmerged", async () => {
+  // A different address from FIXTURE_VAULT, and absent from the lendFx fixture the
+  // gateway route serves: mergeVaults's messari-side loop finds no match for it, so
+  // this exercises the union side of the merge (the erc4626-only "for (const sv of
+  // erc4626) if (!claimed.has(sv.id))" branch), not the same-id merge path the
+  // previous test covers.
+  const SINK_ONLY_VAULT = "0x" + "9".repeat(40);
+  const headTs = FIXTURE_TS + 10;
+  const headBlock = 1010;
+  const { fetchImpl } = fakeFetch({ [RPC_URL]: rpcRoute(headTs, headBlock), [gatewayUrl(AAVE_BASE_SUBGRAPH)]: gatewayRoute(lendFx) });
+  const sql: SqlQuery = async (text: string) => {
+    if (text.includes("cursors_8453")) return { rows: [{ block_num: "1000" }] };
+    if (text.includes("FROM vault_latest")) return { rows: [{ vault: SINK_ONLY_VAULT, share_price: "3.0", total_assets: "50" }] };
+    return { rows: [] };
+  };
+  const provider = new LiveDataProvider(config, { fetchImpl, sql });
+  const result = await provider.scan([`8453:${SINK_ONLY_VAULT}`]);
+
+  expect(result.vaults).toHaveLength(1);
+  const v = result.vaults[0];
+  expect(v.id).toBe(`8453:${SINK_ONLY_VAULT}`);
+  expect(v.kind).toBe("erc4626");
+  expect(v.sources).toHaveLength(1);
+  expect(v.sources[0].kind).toBe("substreams");
+});
+
 test("table('erc4626', ...) reads the substreams sink; without a sql pool it returns empty instead of throwing", async () => {
   // erc4626 table never calls fetchStandardized, so no gateway route is needed, but
   // getChainHead(chainId) still runs unconditionally at the top of table() — route

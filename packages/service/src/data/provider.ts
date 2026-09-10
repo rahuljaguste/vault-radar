@@ -86,11 +86,17 @@ function mergeVaults(messari: UnifiedVault[], erc4626: UnifiedVault[]): UnifiedV
   return merged;
 }
 
-/** One SourceRef summarizing an erc4626 sink read, or none if it matched no vaults. */
+/**
+ * One SourceRef summarizing an erc4626 sink read, or none if it matched no vaults.
+ * `readErc4626Vaults` always attaches exactly one source to every vault it returns, so
+ * `vaults[0]?.sources[0]` should never actually be missing here — the optional chain
+ * and zeroed-out fallback exist so a future change to that invariant degrades to an
+ * honest "unknown block/timestamp" placeholder instead of throwing.
+ */
 function sinkSourceRef(chainId: string, vaults: UnifiedVault[]): SourceRef | null {
   if (!vaults.length) return null;
-  const s = vaults[0].sources[0];
-  return { ref: SINK_REF, chainId, block: s.block, timestamp: s.timestamp };
+  const s = vaults[0]?.sources[0];
+  return s ? { ref: SINK_REF, chainId, block: s.block, timestamp: s.timestamp } : { ref: SINK_REF, chainId, block: "0", timestamp: "0" };
 }
 
 /**
