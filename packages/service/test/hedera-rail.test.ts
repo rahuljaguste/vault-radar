@@ -1,9 +1,9 @@
 import { expect, test } from "bun:test";
 import express from "express";
-import { TransferTransaction, TransactionId, AccountId, TokenId } from "@x402/hedera";
+import { TransferTransaction, TransactionId, AccountId, Hbar, TokenId } from "@x402/hedera";
 import { encodePaymentSignatureHeader, decodePaymentRequiredHeader } from "@x402/core/http";
 import type { PaymentPayload } from "@x402/core/types";
-import { deriveKemKeys, deriveSigningKeys, MemoryNonceStore, type SourceRef, type UnifiedVault } from "@vaultradar/core";
+import { deriveKemKeys, deriveSigningKeys, hederaScanPriceAtomic, MemoryNonceStore, type SourceRef, type UnifiedVault } from "@vaultradar/core";
 import { decodeHederaPayment, hederaPayerFromRequest, hederaTxIdFromRequest, _mapSizesForTests } from "../src/rails/hedera";
 import { buildApp, type BuildAppDeps } from "../src/app";
 import { loadConfig } from "../src/config";
@@ -45,6 +45,30 @@ function buildPaymentSignatureHeader(payerAccount = PAYER_ACCOUNT, feePayer = DE
     x402Version: 2,
     accepted: { scheme: "exact", network: "hedera:testnet", asset: TOKEN_ID, amount: "1500", payTo: PAYTO_ACCOUNT, maxTimeoutSeconds: 120, extra: { feePayer } },
     payload: { transaction: transactionB64 },
+  };
+  return encodePaymentSignatureHeader(payload);
+}
+
+/**
+ * The same thing for the HBAR-priced scan route: native HBAR rather than an HTS token, so
+ * the transfer is an hbar transfer and `accepted.asset` is `0.0.0`. The amount must equal
+ * what the route computes for the same `X-VR-Count` (1_000_000 tinybars per vault) or
+ * x402's requirements matching rejects the payload before the rail sees it.
+ */
+function buildHbarPaymentSignatureHeader(tinybars: number, feePayer = DEFAULT_FEE_PAYER): string {
+  const tx = new TransferTransaction()
+    .addHbarTransfer(AccountId.fromString(PAYER_ACCOUNT), Hbar.fromTinybars(-tinybars))
+    .addHbarTransfer(AccountId.fromString(PAYTO_ACCOUNT), Hbar.fromTinybars(tinybars))
+    .setTransactionId(TransactionId.generate(AccountId.fromString(FEE_PAYER_ACCOUNT)))
+    .setNodeAccountIds([AccountId.fromString("0.0.3")])
+    .freeze();
+  const payload: PaymentPayload = {
+    x402Version: 2,
+    accepted: {
+      scheme: "exact", network: "hedera:testnet", asset: "0.0.0", amount: String(tinybars),
+      payTo: PAYTO_ACCOUNT, maxTimeoutSeconds: 120, extra: { feePayer },
+    },
+    payload: { transaction: Buffer.from(tx.toBytes()).toString("base64") },
   };
   return encodePaymentSignatureHeader(payload);
 }
@@ -301,6 +325,9 @@ test("a verified and settled payment reaches the handler, returns 200 with a rec
     expect(res.status).toBe(200);
     const j = await res.json();
     expect(j.receipt).toBeDefined();
+    // The USDC-priced route: micro-USDC of the configured HTS token (TOKEN_ID is this
+    // config's `hedera.usdcToken`), which is what this payer actually transferred.
+    expect(j.receipt.price).toEqual({ amount: hederaScanPriceAtomic(1), asset: TOKEN_ID, rail: "hedera" });
 
     expect(settledCalls.length).toBe(1);
     // The settled tx id comes from the facilitator's settle response (ctx.result.transaction),
@@ -312,6 +339,44 @@ test("a verified and settled payment reaches the handler, returns 200 with a rec
     expect(settledCalls[0][0]).toEqual(j.receipt);
 
     expect(_mapSizesForTests()).toEqual({ payer: 0, receipt: 0 });
+  } finally {
+    rail.close();
+    fac.close();
+  }
+});
+
+// The HBAR-priced scan route charges tinybars of native HBAR, but the receipt used to be
+// built from the rail and tier alone — so it stated micro-USDC of the configured USDC
+// token. A payer who spent 2,000,000 tinybars got a signed, HCS-committed receipt reading
+// `amount: "2000", asset: "0.0.429274"`, and an auditor reading it would conclude USDC was
+// paid. The receipt's price now comes from the mount, which is the only thing that knows
+// what the route charges.
+test("a paid HBAR scan's receipt states tinybars of HBAR, not micro-USDC", async () => {
+  const vaults = [
+    "1:0xabababababababababababababababababababab",
+    "1:0xacacacacacacacacacacacacacacacacacacacac",
+  ];
+  const tinybars = vaults.length * 1_000_000;
+  const fac = fakeFacilitator({
+    verify: { isValid: true, payer: VERIFIED_PAYER },
+    settle: { success: true, transaction: SETTLED_TX, payer: VERIFIED_PAYER },
+  });
+  const rail = await mountRail(fac.url);
+  try {
+    const res = await fetch(`${rail.base}/hedera/v1/scan-hbar`, {
+      method: "POST",
+      headers: {
+        "content-type": "application/json",
+        "x-vr-count": String(vaults.length),
+        "payment-signature": buildHbarPaymentSignatureHeader(tinybars),
+      },
+      body: JSON.stringify({ vaults }),
+    });
+    expect(res.status).toBe(200);
+    const j = await res.json();
+    // Exactly what the 402 demanded and the payer signed for.
+    expect(j.receipt.price).toEqual({ amount: String(tinybars), asset: "0.0.0", rail: "hedera" });
+    expect(fac.calls.settle).toBe(1);
   } finally {
     rail.close();
     fac.close();

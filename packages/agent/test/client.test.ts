@@ -95,10 +95,17 @@ const nonces = new MemoryNonceStore();
 const app = await buildApp({ config, keys, data, hcs: null, nonces, rails: {} });
 const scanDeps: HandlerDeps = {
   keys, config, data, nonces, rail: "hedera", tier: "scan",
+  // What `mountHederaRail` supplies for these two routes; the handler takes the receipt's
+  // price per mount rather than deriving it, since the HBAR scan route is the same tier at
+  // a different price and asset.
+  price: count => ({ amount: hederaScanPriceAtomic(count), asset: config.hedera.usdcToken }),
   getPayer: () => "0.0.42", getTxId: () => "0.0.42@1.0",
 };
 app.post("/hedera/v1/scan", makeScanHandler(scanDeps));
-app.post("/hedera/v1/table", makeScanHandler({ ...scanDeps, tier: "table" }));
+app.post(
+  "/hedera/v1/table",
+  makeScanHandler({ ...scanDeps, tier: "table", price: () => ({ amount: String(Math.round(Number(TABLE_PRICE_USD) * 1e6)), asset: config.hedera.usdcToken }) }),
+);
 const srv = app.listen(port);
 
 function client(readPqHash: () => Promise<string | null> = async () => keys.sig.pubHash) {

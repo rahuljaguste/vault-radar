@@ -153,7 +153,7 @@ function preValidateClearCount(tier: "scan" | "table") {
 
 export function mountArcRail(
   app: Express,
-  deps: Omit<HandlerDeps, "rail" | "tier" | "getPayer" | "getTxId"> & {
+  deps: Omit<HandlerDeps, "rail" | "tier" | "price" | "getPayer" | "getTxId"> & {
     /** Fires once settlement completes for a request this rail already answered 200 for
      * (same contract as `rails/hedera.ts`'s `onSettled`). */
     onSettled?: (receipt: Receipt, txId: string) => void;
@@ -188,8 +188,8 @@ export function mountArcRail(
    * `res.locals.receipt` are simultaneously available with nothing async in between to
    * correlate across.
    */
-  const mountTier = (path: string, tier: "scan" | "table", price: string, pre: RequestHandler[]) => {
-    const handler = makeScanHandler({ ...deps, rail: "arc", tier, getPayer: arcPayerFromRequest, getTxId: arcTxIdFromRequest });
+  const mountTier = (path: string, tier: "scan" | "table", price: string, receiptPrice: HandlerDeps["price"], pre: RequestHandler[]) => {
+    const handler = makeScanHandler({ ...deps, rail: "arc", tier, price: receiptPrice, getPayer: arcPayerFromRequest, getTxId: arcTxIdFromRequest });
     app.post(
       path,
       ...pre,
@@ -228,8 +228,15 @@ export function mountArcRail(
     );
   };
 
+  // Two prices per mount, and they are not duplicates of each other: `price` is the string
+  // Circle's middleware charges (`$`-prefixed USD), `receiptPrice` is what the signed
+  // receipt states for a given vault count. On this rail they agree on a USD decimal and
+  // the asset is simply "USDC", which is what the receipt said before this was threaded
+  // through — identical values, now stated by the mount that knows them.
   for (const b of ["s", "m", "l"] as const) {
-    mountTier(`/arc/v1/scan/${b}`, "scan", `$${ARC_BUCKET_PRICE[b]}`, [validateBucket(b)]);
+    mountTier(`/arc/v1/scan/${b}`, "scan", `$${ARC_BUCKET_PRICE[b]}`, count => ({ amount: ARC_BUCKET_PRICE[arcBucket(count)], asset: "USDC" }), [
+      validateBucket(b),
+    ]);
   }
-  mountTier("/arc/v1/table", "table", `$${TABLE_PRICE_USD}`, []);
+  mountTier("/arc/v1/table", "table", `$${TABLE_PRICE_USD}`, () => ({ amount: TABLE_PRICE_USD, asset: "USDC" }), []);
 }

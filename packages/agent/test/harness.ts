@@ -1,5 +1,5 @@
 import { createServer } from "node:net";
-import { MemoryNonceStore, type UnifiedVault } from "@vaultradar/core";
+import { MemoryNonceStore, TABLE_PRICE_USD, hederaScanPriceAtomic, type UnifiedVault } from "@vaultradar/core";
 import { buildApp, loadConfig, loadKeys, makeScanHandler, type DataProvider, type HandlerDeps, type HcsSink } from "@vaultradar/service";
 import { VaultRadarClient } from "../src/client";
 import type { Policy } from "../src/policy";
@@ -130,10 +130,17 @@ export async function startHarness(): Promise<Harness> {
   // standing in for what the real x402 middleware sets once payment has cleared.
   const scanDeps: HandlerDeps = {
     keys, config, data, nonces, rail: "hedera", tier: "scan",
+    // The same price `mountHederaRail` gives these two routes, so the receipts signed here
+    // state what a real mount would. The handler takes it per mount rather than deriving it,
+    // because `/hedera/v1/scan-hbar` is the same tier priced in tinybars.
+    price: count => ({ amount: hederaScanPriceAtomic(count), asset: config.hedera.usdcToken }),
     getPayer: () => "0.0.42", getTxId: () => TEST_TX_ID,
   };
   app.post("/hedera/v1/scan", makeScanHandler(scanDeps));
-  app.post("/hedera/v1/table", makeScanHandler({ ...scanDeps, tier: "table" }));
+  app.post(
+    "/hedera/v1/table",
+    makeScanHandler({ ...scanDeps, tier: "table", price: () => ({ amount: String(Math.round(Number(TABLE_PRICE_USD) * 1e6)), asset: config.hedera.usdcToken }) }),
+  );
   app.listen(port);
 
   return {

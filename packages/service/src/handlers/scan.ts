@@ -13,10 +13,6 @@ import {
   seal,
   fromB64,
   clampCount,
-  hederaScanPriceAtomic,
-  TABLE_PRICE_USD,
-  arcBucket,
-  ARC_BUCKET_PRICE,
   type NonceStore,
   type ScanRequest,
   type TableRequest,
@@ -37,6 +33,19 @@ export type HandlerDeps = {
   nonces: NonceStore;
   rail: "hedera" | "arc";
   tier: "scan" | "table";
+  /**
+   * What this route charges for `count` vaults, in the units and asset the route is
+   * actually priced in — copied verbatim into the signed receipt's `price`.
+   *
+   * Supplied by the mount rather than derived here from `{rail, tier}`, because a rail can
+   * mount the same tier at more than one price: `/hedera/v1/scan-hbar` is the same scan
+   * handler priced in tinybars of HBAR, and deriving the receipt from the rail alone
+   * labelled its payments as micro-USDC of the configured USDC token. A payer who spent
+   * 2,000,000 tinybars got a signed, HCS-committed receipt reading
+   * `amount: "2000", asset: "0.0.429274"` — an auditor reading it concludes USDC was paid,
+   * and the signature means they have every reason to believe it.
+   */
+  price: (count: number) => { amount: string; asset: string };
   /** Reads the verified payer off the request once the payment middleware has run. */
   getPayer: (req: Request) => string | null;
   /**
@@ -187,9 +196,7 @@ export function makeScanHandler(d: HandlerDeps) {
     const body = { vaults: result.vaults, reports, attestations };
 
     const count = d.tier === "scan" ? (request as ScanRequest).vaults.length : 0;
-    const amount = d.rail === "hedera"
-      ? d.tier === "scan" ? hederaScanPriceAtomic(count) : String(Math.round(Number(TABLE_PRICE_USD) * 1e6))
-      : d.tier === "scan" ? ARC_BUCKET_PRICE[arcBucket(count)] : TABLE_PRICE_USD;
+    const price = d.price(count);
 
     // getTxId is read here, before buildReceipt runs, since the receipt's payment.txId
     // must be the identifier the payer already committed to at the time this handler
@@ -202,7 +209,7 @@ export function makeScanHandler(d: HandlerDeps) {
         response_hash: responseHash(body),
         sealed: sealedIn,
         sources: result.sources,
-        price: { amount, asset: d.rail === "hedera" ? d.config.hedera.usdcToken : "USDC", rail: d.rail },
+        price: { amount: price.amount, asset: price.asset, rail: d.rail },
         payment: { rail: d.rail, txId },
         tier: d.tier,
         hcs: { topicId: d.config.hedera.hcsTopicId ?? "" },

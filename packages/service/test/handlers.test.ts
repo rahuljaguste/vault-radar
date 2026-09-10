@@ -10,6 +10,7 @@ import {
   verifyAttestation,
   requestHash,
   hederaScanPriceAtomic,
+  arcBucket,
   ARC_BUCKET_PRICE,
   TABLE_PRICE_USD,
 } from "@vaultradar/core";
@@ -47,16 +48,32 @@ function makeData(overrides: { scan?: any; table?: any; catalog?: any } = {}) {
   };
 }
 
+/**
+ * The `price` the real mount for this rail and tier supplies (see `rails/hedera.ts` and
+ * `rails/arc.ts`), so a bare-mounted handler signs the receipt production would. The
+ * handler no longer derives this from `{rail, tier}` itself, because one rail mounts the
+ * same tier at two prices: `/hedera/v1/scan-hbar` is the scan handler priced in tinybars.
+ */
+const routePrice = (rail: "hedera" | "arc", tier: "scan" | "table"): HandlerDeps["price"] =>
+  rail === "hedera"
+    ? tier === "scan"
+      ? (count) => ({ amount: hederaScanPriceAtomic(count), asset: config.hedera.usdcToken })
+      : () => ({ amount: String(Math.round(Number(TABLE_PRICE_USD) * 1e6)), asset: config.hedera.usdcToken })
+    : tier === "scan"
+      ? (count) => ({ amount: ARC_BUCKET_PRICE[arcBucket(count)], asset: "USDC" })
+      : () => ({ amount: TABLE_PRICE_USD, asset: "USDC" });
+
 // Mounts a fresh app + server per test so different tier/rail/data/capMs combinations
 // (and their nonce stores) never interact across tests.
 function mount(overrides: Partial<HandlerDeps> & { data: any }) {
   const app = express();
   app.use(express.json());
-  const deps: HandlerDeps = {
-    keys, config, nonces: new MemoryNonceStore(), rail: "hedera", tier: "scan",
+  const resolved = {
+    keys, config, nonces: new MemoryNonceStore(), rail: "hedera" as const, tier: "scan" as const,
     getPayer: () => "0.0.1234", getTxId: () => "0.0.1234@1.000",
     ...overrides,
   };
+  const deps: HandlerDeps = { price: routePrice(resolved.rail, resolved.tier), ...resolved };
   app.post("/scan", makeScanHandler(deps));
   const srv = app.listen(0);
   const url = () => `http://127.0.0.1:${(srv.address() as any).port}/scan`;

@@ -3,7 +3,7 @@ import { mkdtempSync, readFileSync, readdirSync, rmSync, writeFileSync } from "n
 import { createServer } from "node:net";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { MemoryNonceStore, attachSig, type UnifiedVault } from "@vaultradar/core";
+import { MemoryNonceStore, attachSig, hederaScanPriceAtomic, type UnifiedVault } from "@vaultradar/core";
 import { buildApp, loadConfig, loadKeys, makeScanHandler, type DataProvider, type HandlerDeps } from "@vaultradar/service";
 import { VaultRadarClient, type Policy } from "@vaultradar/agent";
 import { RateLimiter } from "../lib/ratelimit";
@@ -124,6 +124,9 @@ const keys = loadKeys(config);
 const app = await buildApp({ config, keys, data, hcs: null, nonces: new MemoryNonceStore(), rails: {} });
 const scanDeps: HandlerDeps = {
   keys, config, data, nonces: new MemoryNonceStore(), rail: "hedera", tier: "scan",
+  // What `mountHederaRail` supplies for this route, so the receipt states the price the
+  // route is actually charged at.
+  price: (count) => ({ amount: hederaScanPriceAtomic(count), asset: config.hedera.usdcToken }),
   getPayer: () => "0.0.42", getTxId: () => "0.0.42@1700000000.000000001",
 };
 app.post("/hedera/v1/scan", makeScanHandler(scanDeps));
