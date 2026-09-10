@@ -17,7 +17,11 @@ const FIXTURE_TS = Number(lendFx._meta.block.timestamp); // 1760000000
 const baseEnv = {
   PORT: "0", PUBLIC_URL: "http://svc.test", PQ_SIG_SEED: "77".repeat(32), PQ_KEM_SEED: "88".repeat(64),
   GRAPH_STUDIO_API_KEY: "test-key", HEDERA_PAYTO_ACCOUNT_ID: "0.0.1", HEDERA_OPERATOR_ID: "0.0.1",
-  HEDERA_OPERATOR_KEY: "00", ARC_SELLER_ADDRESS: "0x" + "1".repeat(40), BASE_RPC_URL: RPC_URL,
+  HEDERA_OPERATOR_KEY: "00", ARC_SELLER_ADDRESS: "0x" + "1".repeat(40),
+  // Both overridden to the same fake endpoint: every test controls its own RPC
+  // behavior via fakeFetch, so chain 1 must not fall through to the real default
+  // (ETH_RPC_URL's public endpoint) whenever a test only exercises chain 1.
+  ETH_RPC_URL: RPC_URL, BASE_RPC_URL: RPC_URL,
 };
 const config = loadConfig(baseEnv);
 
@@ -72,6 +76,25 @@ test("a working RPC head classifies a fresh subgraph vault as fresh; a failing R
   expect(staleResult.vaults[0].freshness).toBe("stale");
 });
 
+test("a failing RPC forces the substreams-sink (erc4626) source stale too, never fresh", async () => {
+  // rpcErrorRoute makes client.getBlock() reject, exactly like an unreachable RPC, so
+  // getChainHead's catch branch fires. Uses table() (not scan()) so this exercises
+  // readErc4626Vaults in isolation, with no Messari counterpart to merge against —
+  // otherwise a correctly-stale Messari source could mask a wrongly-fresh sink source
+  // in the merged result's recomputed freshness.
+  const { fetchImpl } = fakeFetch({ [RPC_URL]: rpcErrorRoute() });
+  const sql: SqlQuery = async (text: string) => {
+    if (text.includes("cursors_8453")) return { rows: [{ block_num: "1000" }] };
+    if (text.includes("FROM vault_latest")) return { rows: [{ vault: FIXTURE_VAULT, share_price: "1.0", total_assets: "500" }] };
+    return { rows: [] };
+  };
+  const provider = new LiveDataProvider(config, { fetchImpl, sql });
+  const result = await provider.table("erc4626", "8453");
+  expect(result.vaults).toHaveLength(1);
+  expect(result.vaults[0].freshness).not.toBe("fresh");
+  expect(result.vaults[0].freshness).toBe("stale");
+});
+
 test("scan merges the subgraph record with the substreams-sink record for the same vault: Messari fields win, sources concatenate, freshness is recomputed", async () => {
   const headTs = FIXTURE_TS + 10;
   const headBlock = 1010; // 10 blocks ahead of the cursor's 1000; chain 8453 is 2s/block -> 20s age, well under substreams' 300s threshold.
@@ -99,7 +122,11 @@ test("scan merges the subgraph record with the substreams-sink record for the sa
 });
 
 test("table('erc4626', ...) reads the substreams sink; without a sql pool it returns empty instead of throwing", async () => {
-  const { fetchImpl } = fakeFetch({}); // no RPC/gateway route needed: erc4626 table never calls fetchStandardized
+  // erc4626 table never calls fetchStandardized, so no gateway route is needed, but
+  // getChainHead(chainId) still runs unconditionally at the top of table() — route
+  // RPC_URL to a normal success (this test doesn't assert on freshness) rather than
+  // leaving it unrouted, which would make viem retry a failure a few times first.
+  const { fetchImpl } = fakeFetch({ [RPC_URL]: rpcRoute(FIXTURE_TS + 10, 1000) });
   const sql: SqlQuery = async (text: string) => {
     if (text.includes("cursors_1")) return { rows: [{ block_num: "100" }] };
     if (text.includes("FROM vault_latest")) return { rows: [{ vault: FIXTURE_VAULT, share_price: "2.0", total_assets: "10" }] };

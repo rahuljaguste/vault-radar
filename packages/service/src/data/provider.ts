@@ -25,11 +25,17 @@ type CacheEntry<T> = { value: T; expiresAt: number };
 
 const HEAD_TTL_S = 15;
 const CHAIN_TTL_S = 60;
-// A head this far in the future ages every source on the chain out immediately
-// (classifyFreshness compares headTs - sourceTs against a threshold measured in
-// minutes), which is exactly "force stale, never silently look fresh" for a chain
-// whose RPC is unreachable or simply not configured.
-const STALE_HEAD: Head = { ts: Number.MAX_SAFE_INTEGER, block: 0 };
+// A head this far in the future ages every subgraph (Messari) source on the chain out
+// immediately (classifyFreshness compares headTs - sourceTs against a threshold
+// measured in minutes). `block` must ALSO be maximal, not 0: readErc4626Vaults derives
+// its own synthetic source timestamp as `head.ts - max(0, (head.block - cursorBlock) *
+// blockTimeS)`. With block=0 and any real (positive) cursor block, that difference is
+// negative and clamps to 0, so the derived timestamp collapses to `head.ts` itself —
+// compared against a headTs of the same value, that reads as an age of zero, i.e.
+// "fresh", exactly backwards for an unreachable chain. Making block maximal too pushes
+// (head.block - cursorBlock) hugely positive instead, so the derived timestamp lands
+// far in the past relative to headTs and the substreams source is correctly stale.
+const STALE_HEAD: Head = { ts: Number.MAX_SAFE_INTEGER, block: Number.MAX_SAFE_INTEGER };
 
 export type LiveDataProviderDeps = { fetchImpl?: typeof fetch; sql?: SqlQuery | null; now?: () => number };
 
