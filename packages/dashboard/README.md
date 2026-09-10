@@ -30,10 +30,24 @@ visitor's browser. A scan bought here settles on chain from
 
 Requests are sealed with the hybrid post-quantum KEM before they leave the
 dashboard's server, so nothing on the network path learns which vaults were
-asked about. Purchases are limited to one per client address per 30 seconds
-(in-memory, per server instance) and are additionally capped by the agent
-policy's per-rail budget. When `AGENT_HEDERA_ACCOUNT_ID` or `AGENT_HEDERA_KEY`
-is missing, the page says so and links a finished run instead.
+asked about. When `AGENT_HEDERA_ACCOUNT_ID` or `AGENT_HEDERA_KEY` is missing, the
+page says so and links a finished run instead.
+
+Before paying, the handler verifies the service's signed agent card and refuses
+if its on-chain ERC-8004 key hash disagrees with the key on the card. After
+paying, it verifies the ML-DSA-65 receipt and every per-vault attestation, and
+returns an error rather than unverified verdicts if either check fails (the run
+file is still written, as evidence). It then applies its own 900-second bar to
+the signed attestation timestamps, so a vault the service called fresh can still
+be refused.
+
+Spending limits: one scan per client address per 30 seconds (in memory, per
+server instance) plus a hard per-scan price ceiling of 0.10 USD checked against
+the quote before anything is paid. The metered price tops out at 0.051 USD for
+100 vaults, so the ceiling is a stop against a pricing change, not a gate on
+normal use. Spec §13.2 asks for the agent policy's per-rail budget instead;
+that arrives when `packages/agent/src/policy.ts` lands on `main`, and the TODOs
+in `lib/scan.ts` and `lib/decide.ts` name exactly what to swap in.
 
 ### `/admin`, precisely
 
@@ -54,7 +68,7 @@ service restarts**. The page states this above the numbers.
 | `GET /api/runs` | `{ runs: [{ id, startedAt, requestCount }] }` for every run on disk. |
 | `GET /api/runs?vaults=<comma-separated ids>` | `{ matches: [...] }`: the prior runs covering any of those vaults, newest first, with the verdict and action each matched vault got. `400` with `{ error }` on an unparseable list. |
 | `GET /api/runs/[id]` | The full `RunRecord`, `400` on an invalid id, `404` when no run carries it. |
-| `POST /api/scan` | Buys a scan. `503` when the agent keys are absent, `400` on a bad vault list, `429` when rate-limited. **Not present in this commit**: `/portfolio`'s form posts here and reports the route as missing until it lands. |
+| `POST /api/scan` | `{ vaults: string[] }` buys one sealed scan and returns `{ runId, requests, decisions, txId, receiptHash, priceUsd }`. `503` when the agent keys are absent, `400` on a bad vault list, `429` when rate-limited, `502` when the service cannot be verified or paid. The implementation is `lib/scan.ts`; the route file is a wrapper so the handler's dependencies can be injected by its test. |
 
 ## Environment
 
@@ -69,8 +83,10 @@ Read from the process environment at request time. The repo root's
 | `DEMO` | `lib/runs.ts` | unset | `DEMO=1` ignores `RUNS_DIR` entirely and serves `public/demo-run.json`, which is what a hosted deployment with no local runs uses. |
 | `ADMIN_TOKEN` | `/admin` (server only) | none | Must equal the service's `ADMIN_TOKEN`. Unset means `/admin` explains that rather than failing. |
 | `AGENT_HEDERA_ACCOUNT_ID` | `POST /api/scan` (server only) | none | The paying Hedera account. Absent disables paid scans. |
-| `AGENT_HEDERA_KEY` | `POST /api/scan` (server only) | none | That account's ECDSA private key. Never logged, never returned, never bundled for the browser. |
-| `POLICY_PATH` | `POST /api/scan` (server only) | `packages/agent/policy.example.json` | Budget, privacy tier, rail preference and `max_age_seconds` for purchases made from the browser. |
+| `AGENT_HEDERA_KEY` | `POST /api/scan` (server only) | none | That account's ECDSA private key. Never logged, never returned, never bundled for the browser. Every error that leaves the handler is redacted against it first. |
+
+`POLICY_PATH` is **not** read by this app yet. The scan route's limits are the
+constants in `lib/scan.ts`; see the `/portfolio` notes above.
 
 ## Commands
 

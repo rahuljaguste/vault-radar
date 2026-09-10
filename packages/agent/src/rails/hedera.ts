@@ -8,9 +8,13 @@ import { createClientHederaSigner, PrivateKey } from "@x402/hedera";
  * the Blocky402 facilitator as fee payer) and retries once. Not exercised by the test
  * suite (it talks to Hedera testnet), so `VaultRadarClient` accepts a `payingFetch`
  * override that tests use to bypass this entirely.
+ *
+ * `network` must be the CAIP-2 identifier `"hedera:testnet"`, the same string the
+ * scheme is registered under below. `"testnet"` throws "Unsupported Hedera network"
+ * from `assertSupportedHederaNetwork` before any request is made.
  */
 export function payingFetchHedera(accountId: string, privateKey: string) {
-  const signer = createClientHederaSigner(accountId, PrivateKey.fromStringECDSA(privateKey), { network: "testnet" } as any);
+  const signer = createClientHederaSigner(accountId, PrivateKey.fromStringECDSA(privateKey), { network: "hedera:testnet" });
   const client = new x402Client().register("hedera:testnet", new ExactHederaScheme(signer));
   // Deliberately untyped as `typeof fetch`: bun's ambient `fetch` type additionally
   // requires a static `preconnect` method that the wrapped function doesn't have.
