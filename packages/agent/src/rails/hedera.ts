@@ -2,6 +2,9 @@ import { decodePaymentResponseHeader, wrapFetchWithPayment, x402Client } from "@
 import type { PaymentPolicy } from "@x402/fetch";
 import { ExactHederaScheme } from "@x402/hedera/exact/client";
 import { createClientHederaSigner, PrivateKey } from "@x402/hedera";
+import { overQuoteReason, type QuoteSource } from "./quote";
+
+export { QUOTE_TOLERANCE_BPS, maxAcceptableAtomic, overQuoteReason, type QuoteSource } from "./quote";
 
 /**
  * CAIP-2 identifier for Hedera testnet. `@x402/hedera` validates its `network` option
@@ -14,35 +17,6 @@ import { createClientHederaSigner, PrivateKey } from "@x402/hedera";
 export const HEDERA_TESTNET_CAIP2 = "hedera:testnet";
 
 /**
- * How far above the agent's own quote a 402's demanded amount may sit before the payment
- * is refused, in basis points of the quote. One percent absorbs a rounding difference
- * between the service's USD-decimal price string and the atomic amount its x402
- * middleware derives from it, and nothing else: this is not a negotiating band.
- *
- * Written `BigInt(100)` rather than `100n` because `packages/dashboard` type-checks this
- * source directly (it imports the agent as a workspace source package) against Next.js's
- * ES2017 target, which rejects BigInt literals while allowing the global.
- */
-export const QUOTE_TOLERANCE_BPS = BigInt(100);
-const BPS_DIVISOR = BigInt(10_000);
-
-/** The expected atomic amount for the request currently in flight, or null when the
- * caller has not quoted one. Read fresh on every 402, so one client can serve a
- * sequence of differently priced requests. */
-export type QuoteSource = () => string | null;
-
-/**
- * Upper bound the policy will accept for a quote, in the same atomic units: the quote
- * plus `QUOTE_TOLERANCE_BPS`. Exported so `client.ts` can apply the identical bound to
- * the *settled* amount it reads back off the receipt, rather than two nearly-equal
- * comparisons drifting apart.
- */
-export function maxAcceptableAtomic(quoteAtomic: string): bigint {
-  const quote = BigInt(quoteAtomic);
-  return quote + (quote * QUOTE_TOLERANCE_BPS) / BPS_DIVISOR;
-}
-
-/**
  * A payment policy (see `@x402/core/client`'s `PaymentPolicy`) that refuses to sign for
  * more than the agent quoted itself.
  *
@@ -53,12 +27,15 @@ export function maxAcceptableAtomic(quoteAtomic: string): bigint {
  * $0.0015) with a 402 for ninety cents was paid ninety cents, six hundred times the
  * price, with nothing in this codebase objecting. The agent already knows what the
  * request should cost, from the same `@vaultradar/core` price functions the service
- * prices with, so the quote is the bound.
+ * prices with, so the quote is the bound (`./quote`).
  *
  * Throws rather than filtering the requirement out. A policy that returns `[]` makes
  * @x402/core raise `All payment requirements were filtered out by policies`, which says
  * nothing about the amounts involved; throwing here puts both numbers in the message the
  * caller sees (wrapped by `@x402/fetch` as `Failed to create payment payload: …`).
+ *
+ * `rails/arc.ts`'s `arcQuoteCeilingHook` is the same rule on the other rail, through
+ * Circle's own pre-signing hook.
  */
 export function quoteCeilingPolicy(quote: QuoteSource): PaymentPolicy {
   return (_version, requirements) => {
@@ -66,20 +43,9 @@ export function quoteCeilingPolicy(quote: QuoteSource): PaymentPolicy {
     // No local quote for this request (nothing in this package does that today): leave
     // the requirements untouched rather than inventing a bound out of nothing.
     if (expected === null) return requirements;
-    const max = maxAcceptableAtomic(expected);
     for (const r of requirements) {
-      let amount: bigint;
-      try {
-        amount = BigInt(r.amount);
-      } catch {
-        throw new Error(`refusing to pay: the service demanded an unreadable amount ${JSON.stringify(r.amount)}`);
-      }
-      if (amount > max) {
-        throw new Error(
-          `refusing to pay: the service demanded ${amount} atomic units for a request quoted at ${expected} ` +
-            `(ceiling ${max}, ${Number(QUOTE_TOLERANCE_BPS) / 100}% over quote)`,
-        );
-      }
+      const reason = overQuoteReason(r.amount, expected);
+      if (reason) throw new Error(`refusing to pay: ${reason}`);
     }
     return requirements;
   };

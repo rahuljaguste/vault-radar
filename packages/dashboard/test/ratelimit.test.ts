@@ -76,14 +76,17 @@ test("reset forgets every recorded call", () => {
   expect(limiter.check("k").allowed).toBe(true);
 });
 
-test("the exported scan limiter is set to the spec's 30-second window", () => {
-  scanLimiter.reset();
+test("the shared scan limiter is set to the spec's 30-second window, and is one instance", () => {
+  scanLimiter().reset();
   expect(WINDOW_MS).toBe(30_000);
-  expect(scanLimiter.check("probe").allowed).toBe(true);
-  const second = scanLimiter.check("probe");
+  expect(scanLimiter().check("probe").allowed).toBe(true);
+  // Two separate calls must hit the same limiter, or the limit resets whenever Next.js
+  // re-evaluates this module — which it does, per bundle and on every hot reload.
+  const second = scanLimiter().check("probe");
   expect(second.allowed).toBe(false);
   if (!second.allowed) expect(second.retryAfterSeconds).toBeLessThanOrEqual(30);
-  scanLimiter.reset();
+  expect(scanLimiter()).toBe(scanLimiter());
+  scanLimiter().reset();
 });
 
 /** An environment with a trusted proxy in front, which is the only case where the

@@ -18,6 +18,8 @@
  * ledger is what bounds the bill.
  */
 
+import { sharedInstance } from "./process-state";
+
 /** One paid scan per client per 30 seconds, per spec §13.2. */
 export const WINDOW_MS = 30_000;
 
@@ -132,5 +134,15 @@ export function clientKey(req: Request, env: Record<string, string | undefined> 
   return "unknown";
 }
 
-/** Process-wide limiter used by `POST /api/scan`. */
-export const scanLimiter = new RateLimiter();
+/**
+ * The limiter `POST /api/scan` uses.
+ *
+ * Held on `globalThis` (see `lib/process-state.ts`) rather than as a module-level instance,
+ * for the same reason the spend ledger is: Next.js compiles a route handler and a server
+ * component into different bundles, each with its own copy of this module, and a development
+ * server's hot reload re-evaluates it — either of which would hand out a fresh limiter with
+ * empty counters. A rate limit that resets when a module is re-evaluated is not a rate limit.
+ */
+export function scanLimiter(): RateLimiter {
+  return sharedInstance("scanLimiter", () => new RateLimiter());
+}

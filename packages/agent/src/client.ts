@@ -179,7 +179,7 @@ export type VaultRadarClientOpts = {
    * branch (bucket URL selection, payer address, opening a sealed reply) without a
    * real `GatewayClient` or network call.
    */
-  arcPay?: (url: string, body: unknown, headers: Record<string, string>) => Promise<ArcPayResult<ServiceResponse>>;
+  arcPay?: (url: string, body: unknown, headers: Record<string, string>, quoteAtomic: string) => Promise<ArcPayResult<ServiceResponse>>;
 };
 
 type ScanResponseBody = { vaults: UnifiedVault[]; reports: RiskReport[]; attestations: Attestation[] };
@@ -201,7 +201,9 @@ export class VaultRadarClient {
   private readonly fetchImpl: typeof fetch;
   private readonly readPqHash: (chainId: string, agentId: string) => Promise<string | null>;
   private readonly payingFetch: PayingFetch | null;
-  private readonly arcPay: ((url: string, body: unknown, headers: Record<string, string>) => Promise<ArcPayResult<ServiceResponse>>) | null;
+  private readonly arcPay:
+    | ((url: string, body: unknown, headers: Record<string, string>, quoteAtomic: string) => Promise<ArcPayResult<ServiceResponse>>)
+    | null;
   /**
    * Expected atomic amount for the paid request currently in flight, read by the x402
    * payment policy when a 402 arrives (`rails/hedera.ts`'s `quoteCeilingPolicy`). It has
@@ -227,7 +229,9 @@ export class VaultRadarClient {
     // real GatewayClient); otherwise default to `payArc` bound to `arc.privateKey`.
     // Captured to a local so the closure keeps the narrowed (non-optional) type.
     const arc = opts.arc;
-    this.arcPay = opts.arcPay ?? (arc ? (url, body, headers) => payArc<ServiceResponse>(arc.privateKey, url, body, headers) : null);
+    this.arcPay =
+      opts.arcPay ??
+      (arc ? (url, body, headers, quoteAtomic) => payArc<ServiceResponse>(arc.privateKey, url, body, headers, quoteAtomic) : null);
   }
 
   /**
@@ -348,7 +352,10 @@ export class VaultRadarClient {
       if (!this.arcPay) throw new Error("arc rail not configured: pass `arc` (or `arcPay`) to the VaultRadarClient constructor");
       let arcResult: ArcPayResult<ServiceResponse>;
       try {
-        arcResult = await this.arcPay(url, body, headers);
+        // The quote reaches Circle's pre-signing hook, which refuses an over-quote 402
+        // before an authorization is built (`rails/arc.ts`). Needed here and not only in the
+        // receipt check below, because this rail settles before the handler runs.
+        arcResult = await this.arcPay(url, body, headers, quoteAtomic);
       } catch (e) {
         // GatewayClient.pay() throws on any non-2xx response instead of returning a
         // PayResult with a non-200 `status` (pre-payment: "Request failed with status

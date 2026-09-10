@@ -61,8 +61,6 @@ export const MAX_PRICE_USD = "0.10";
  * `0.0045000000000000005`, which compares greater than a budget of `"0.0045"`
  * and would refuse a purchase the policy allows. USDC has 6 decimals, so
  * micro-USD is exact for every amount either side can legitimately hold.
- * (`watch.ts`'s comment cites `0.03 * 3`, which is in fact exact in binary; the
- * hazard is real, that particular example is not.)
  */
 export function toMicroUsd(usd: string): number {
   return Math.round(Number(usd) * 1e6);
@@ -89,7 +87,7 @@ function defaultDeps(): ScanDeps {
       const fromEnv = process.env.POLICY_PATH?.trim();
       return fromEnv ? path.resolve(repoRoot(), fromEnv) : defaultPolicyPath();
     },
-    limiter: scanLimiter,
+    limiter: scanLimiter(),
     ledger: scanSpendLedger(),
     now: () => Math.floor(Date.now() / 1000),
     env: process.env,

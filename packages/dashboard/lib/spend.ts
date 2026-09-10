@@ -21,6 +21,8 @@
  * environment variable.
  */
 
+import { sharedInstance } from "./process-state";
+
 /** Rolling spend window: 24 hours, per spec §13.2's "capped" purchase flow. */
 export const SPEND_WINDOW_MS = 24 * 60 * 60 * 1000;
 /** Rolling window for the scan count. */
@@ -229,13 +231,17 @@ export class SpendLedger {
 }
 
 /**
- * Process-wide ledger used by `POST /api/scan`. Constructed lazily on first use, not at
- * module load, so the limits reflect the environment the server is actually running with
- * (Next.js evaluates route modules before some deployment environments are fully
- * populated, and a test that sets the variables can still get a ledger that sees them).
+ * The ledger `POST /api/scan` enforces and `/portfolio` displays.
+ *
+ * Held on `globalThis` rather than in a module-level variable (see `lib/process-state.ts`):
+ * the route handler and the server component are compiled into different bundles, each with
+ * its own copy of this module, so a module-level instance meant the page rendered the
+ * snapshot of a *different* ledger than the one doing the enforcing — reporting zero spend
+ * against a cap that had been reached.
+ *
+ * Constructed lazily on first use, not at module load, so the limits reflect the environment
+ * the server is actually running with.
  */
-let shared: SpendLedger | null = null;
 export function scanSpendLedger(): SpendLedger {
-  if (!shared) shared = new SpendLedger();
-  return shared;
+  return sharedInstance("spendLedger", () => new SpendLedger());
 }

@@ -7,6 +7,7 @@ import { encodePaymentRequiredHeader } from "@x402/core/http";
 import {
   ARC_BUCKET_PRICE,
   MemoryNonceStore,
+  TABLE_PRICE_USD,
   buildAttestation,
   buildReceipt,
   fromB64,
@@ -20,8 +21,8 @@ import {
 import { buildApp, loadConfig, loadKeys, makeScanHandler, type DataProvider, type HandlerDeps } from "@vaultradar/service";
 import { VaultRadarClient } from "../src/client";
 import { readPqHashOnChain } from "../src/erc8004";
-import { arcAddress } from "../src/rails/arc";
-import { HEDERA_TESTNET_CAIP2, payingFetchHedera, quoteCeilingPolicy } from "../src/rails/hedera";
+import { arcAddress, payArcWith } from "../src/rails/arc";
+import { HEDERA_TESTNET_CAIP2, maxAcceptableAtomic, overQuoteReason, payingFetchHedera, quoteCeilingPolicy } from "../src/rails/hedera";
 import { listRuns, saveRun, type RunRecord } from "../src/runs";
 
 const now = Math.floor(Date.now() / 1000);
@@ -458,6 +459,97 @@ test("the paying fetch registers the quote ceiling, so an over-quote 402 never r
   } finally {
     await listening.stop(true);
   }
+});
+
+test("on Arc the quote ceiling refuses an over-quote 402 through Circle's own pre-signing hook", async () => {
+  // Arc had no pre-payment ceiling at all: `payArc` handed the demanded amount straight to
+  // Circle's client, which signed an authorization for it, and the mismatch surfaced only in
+  // the receipt check — after Circle had already settled. @x402/core's default $1 spend
+  // control does not exist on this rail, so there was no bound whatsoever.
+  //
+  // Driven through a stub standing in for `GatewayClient`: it records the hook the rail
+  // registers and fires it exactly where Circle does (inside payload creation, before
+  // anything is signed), raising Circle's own `Payment creation aborted: <reason>`.
+  const quote = String(Math.round(Number(ARC_BUCKET_PRICE.s) * 1e6)); // "3000"
+  let signed = false;
+  const stub = (demandedAtomic: string) => {
+    let hook: ((c: { selectedRequirements: { amount: string } }) => Promise<void | { abort: true; reason: string }>) | null = null;
+    return {
+      onBeforePaymentCreation(h: typeof hook) {
+        hook = h;
+        return this;
+      },
+      async pay(_url: string, _options: unknown) {
+        const verdict = hook ? await hook({ selectedRequirements: { amount: demandedAtomic } }) : undefined;
+        if (verdict && "abort" in verdict) throw new Error(`Payment creation aborted: ${verdict.reason}`);
+        signed = true;
+        return { data: {}, amount: BigInt(demandedAtomic), formattedAmount: "x", transaction: "arc-tx", status: 200 };
+      },
+    };
+  };
+
+  // The bucket price itself, and the top of the 1% band, both go through and are signed.
+  for (const ok of ["3000", "3030"]) {
+    signed = false;
+    await payArcWith(stub(ok) as never, "http://svc.test/arc/v1/scan/s", { vaults: [] }, {}, quote);
+    expect(signed).toBe(true);
+  }
+
+  // One unit above the band is refused, before signing, with both numbers in the message.
+  signed = false;
+  await expect(payArcWith(stub("3031") as never, "http://svc.test/arc/v1/scan/s", { vaults: [] }, {}, quote)).rejects.toThrow(
+    /Payment creation aborted: refusing to pay/,
+  );
+  expect(signed).toBe(false);
+  await expect(payArcWith(stub("900000") as never, "http://svc.test/arc/v1/scan/s", { vaults: [] }, {}, quote)).rejects.toThrow(
+    /demanded 900000 atomic units for a request quoted at 3000/,
+  );
+  expect(signed).toBe(false);
+
+  // No quote supplied: no hook is registered, so nothing is bounded (and nothing throws).
+  signed = false;
+  await payArcWith(stub("900000") as never, "http://svc.test/arc/v1/scan/s", { vaults: [] }, {});
+  expect(signed).toBe(true);
+});
+
+test("the Arc hook and the Hedera policy refuse on the same band, with the same wording", () => {
+  // One rule, two rails. Drifting bands would mean a payment the agent refuses on Hedera and
+  // pays on Arc, which is exactly what a shared `overQuoteReason` prevents.
+  expect(overQuoteReason("3030", "3000")).toBeNull();
+  expect(overQuoteReason("3031", "3000")).toContain("demanded 3031 atomic units");
+  expect(maxAcceptableAtomic("3000")).toBe(BigInt(3030));
+
+  const fromHedera = (() => {
+    try {
+      quoteCeilingPolicy(() => "3000")(2, [requirement("3031")] as never);
+      return null;
+    } catch (e) {
+      return (e as Error).message;
+    }
+  })();
+  expect(fromHedera).toContain(overQuoteReason("3031", "3000")!);
+});
+
+test("the Arc client passes the request's quote into the rail, so the ceiling is the right one", async () => {
+  // The quote has to reach the hook per request, not be fixed at construction: a scan of one
+  // vault and a table purchase have different ceilings on the same client.
+  const seen: (string | undefined)[] = [];
+  const c = new VaultRadarClient({
+    serviceUrl: base,
+    arc: { privateKey: TEST_ARC_KEY },
+    arcPay: async (_url, _body, _headers, quoteAtomic) => {
+      seen.push(quoteAtomic);
+      // Throwing keeps this test about the plumbing; the sealed round trip is covered above.
+      throw new Error("stop here");
+    },
+    readPqHash: async () => keys.sig.pubHash,
+  });
+  await expect(c.scan([VAULT_ID], "arc")).rejects.toThrow(/arc payment failed/);
+  await expect(c.table("erc4626", "1", "arc")).rejects.toThrow(/arc payment failed/);
+  expect(seen).toEqual([
+    String(Math.round(Number(ARC_BUCKET_PRICE.s) * 1e6)), // one vault -> the "s" bucket
+    String(Math.round(Number(TABLE_PRICE_USD) * 1e6)),
+  ]);
 });
 
 test("a receipt whose price does not match the quote fails receiptValid, and priceUsd comes from the receipt", async () => {

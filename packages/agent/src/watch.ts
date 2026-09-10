@@ -144,8 +144,12 @@ export function buildRunRequest(result: PaidResult, age: AgeCheck): RunRequest {
 export async function quoteFor(client: VaultRadarClient, tier: "scan" | "table", count: number, requests = 1): Promise<Quotes> {
   const scan = await client.quote(count);
   if (tier === "scan") return scan;
-  // Multiplied in atomic micro-USD so N tables price exactly (0.03 × 3 in binary floats
-  // is 0.09000000000000001, which would then compare wrong against a budget of "0.09").
+  // Multiplied in atomic micro-USD so N tables price exactly. With the current 0.06 table
+  // price, `0.06 * 11` in binary floats is 0.6599999999999999, which compares greater than
+  // a budget of "0.66" and would refuse a plan the policy allows. Integer micro-USD does
+  // not: USDC has six decimals, so every amount either side can hold is exact there.
+  // (An earlier version of this comment cited `0.03 * 3`, which is in fact exactly 0.09 —
+  // the hazard is real, that example was not.)
   const total = formatUsdc(String(Math.round(Number(TABLE_PRICE_USD) * 1e6) * Math.max(1, requests)));
   return { hedera: scan.hedera == null ? null : total, arc: scan.arc == null ? null : total };
 }
