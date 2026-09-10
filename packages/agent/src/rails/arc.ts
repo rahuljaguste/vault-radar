@@ -78,6 +78,11 @@ export async function payArcWith<T = unknown>(
   headers: Record<string, string>,
   quoteAtomic?: string,
 ): Promise<ArcPayResult<T>> {
-  if (quoteAtomic) gateway.onBeforePaymentCreation(arcQuoteCeilingHook(quoteAtomic));
+  // `!= null`, not truthiness: `"0"` and `""` are both falsy strings and both *are*
+  // quotes — of zero. Those are the cases where the ceiling bites hardest, since
+  // `overQuoteReason` then refuses any non-zero demand at all (`BigInt("")` is `0n`).
+  // Skipping the hook for them registered no ceiling precisely when a service demanding
+  // money for a free request should have been refused outright.
+  if (quoteAtomic != null) gateway.onBeforePaymentCreation(arcQuoteCeilingHook(quoteAtomic));
   return gateway.pay(url, { method: "POST", body, headers });
 }

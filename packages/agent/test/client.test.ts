@@ -564,6 +564,21 @@ test("on Arc the quote ceiling refuses an over-quote 402 through Circle's own pr
   signed = false;
   await payArcWith(stub("900000") as never, "http://svc.test/arc/v1/scan/s", { vaults: [] }, {});
   expect(signed).toBe(true);
+
+  // A quote of zero is a quote, and the two falsy strings that express it are exactly where
+  // the ceiling matters most: a service demanding anything at all for a free request must be
+  // refused. Registering the hook on truthiness skipped both.
+  for (const zeroQuote of ["0", ""]) {
+    signed = false;
+    await expect(
+      payArcWith(stub("1") as never, "http://svc.test/arc/v1/scan/s", { vaults: [] }, {}, zeroQuote),
+    ).rejects.toThrow(/Payment creation aborted: refusing to pay/);
+    expect(signed).toBe(false);
+  }
+  // And a demand of zero against a zero quote is still within band, so it is not refused.
+  signed = false;
+  await payArcWith(stub("0") as never, "http://svc.test/arc/v1/scan/s", { vaults: [] }, {}, "0");
+  expect(signed).toBe(true);
 });
 
 test("the Arc hook and the Hedera policy refuse on the same band, with the same wording", () => {
