@@ -48,6 +48,12 @@ export function mountAdmin(app: Express, deps: AdminDeps): void {
         res.status(401).json(errBody("unauthorized"));
         return;
       }
+      // settlements.hedera.revenueAtomic counts USDC-priced Hedera settlements only —
+      // an HBAR-priced settlement (the /hedera/v1/scan-hbar route) still increments
+      // settlements.hedera.count, but its tinybar amount is deliberately excluded from
+      // revenueAtomic rather than summed into a counter this response otherwise reports
+      // (and the admin dashboard displays) as USDC. See Metrics.recordSettlement's own
+      // comment in metrics.ts for the full reasoning.
       const snapshot = await deps.metrics.snapshot({ config: deps.config, hcs: deps.hcs, keys: deps.keys, readPqHash: deps.readPqHash, rails: deps.rails });
       res.json(snapshot);
     }),
