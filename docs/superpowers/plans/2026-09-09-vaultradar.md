@@ -2223,3 +2223,23 @@ Public repo with continuous history; video uploaded (2–4 min); partner picks: 
 - [ ] **Step 5: Tests, typecheck, `next build`; commit** — `git commit -m "feat(dashboard): portfolio user view with server-side paid scans; admin metrics view"`
 
 Ordering: Task 27 runs in the service worktree after Task 19 (Arc rail) so both rails' settlement hooks exist; Task 28's portfolio view and the admin page's static shell can start in the dashboard worktree immediately against the §13.1 contract, with the admin page wired to the live endpoint after Task 27 merges.
+
+---
+
+## Added 2026-09-10: hardening from external review (verified findings)
+
+### Task 29: Hardening the paid paths and verification chain
+
+**Files:**
+- Modify: `packages/dashboard/lib/ratelimit.ts`, `packages/dashboard/lib/scan.ts`, `packages/dashboard/app/verify/page.tsx`, `packages/dashboard/lib/service.ts`, `packages/dashboard/lib/runs.ts`, `packages/service/src/handlers/scan.ts`, `packages/service/src/rails/arc.ts`, `packages/service/src/rails/hedera.ts`, `packages/service/src/hcs.ts`, `packages/core/src/pq/sign.ts`, `packages/core/src/pricing.ts`, `packages/core/src/standardized/gateway.ts`, `packages/core/src/standardized/index.ts`, `packages/agent/src/client.ts`, `packages/agent/src/rails/hedera.ts`, `scripts/verify-deployments.ts`, `scripts/demo.sh`, `substreams/erc4626-vault-metrics/substreams.yaml` and `substreams.base.yaml`, `.env.example`
+- Create: `packages/agent/policy.strict.json`, `packages/dashboard/lib/spend.ts`
+
+**Interfaces:**
+- Produces: `SpendLedger` (dashboard, in-memory): `{ canSpend(microUsd): boolean; record(microUsd): void; snapshot(): { spentMicroUsd, capMicroUsd, windowStartedAt } }` with `DASHBOARD_SPEND_CAP_USD` (default `1.00`) per rolling 24 h and `DASHBOARD_MAX_SCANS_PER_HOUR` (default `20`) global; optional `SCAN_ACCESS_TOKEN` (when set, `POST /api/scan` requires `Authorization: Bearer <token>`); `TRUST_PROXY=1` enables `x-forwarded-for`, otherwise the client key is the socket address or `"unknown"`.
+- Produces: service handler rule: in clear mode for the scan tier, `X-VR-Count` must equal `vaults.length` (422 `count_mismatch`, before any data work; Arc pre-middleware enforces it before payment for clear bodies).
+- Produces: `checkSig` additionally requires `sig.pub_hash === sha256Hex(publicKey)`; agent x402 client registers a payment policy that rejects any requirement whose amount exceeds the local quote by more than 1 percent, and `PaidResult.priceUsd` comes from `receipt.price` with a mismatch against the quote failing `receiptValid`.
+- Produces: `TABLE_PRICE_USD = "0.06"` (never cheaper than a scan of up to 100 vaults); Messari page size `first: 200`; `verify-deployments` sets `deploymentId` only when null and otherwise compares, marking `status: "repointed"` on mismatch and never overwriting; `/verify` page verifies the card signature and, when the card lists ERC-8004 ids, reads `pq.sig.pubhash` on-chain via a public RPC and shows the match state; dashboard saves a run record (with any tx id) before returning 502 on post-payment failure; `lib/service.ts` fetches time out at 10 s; `HcsQueue.done` capped at 10 000 entries (oldest evicted) and a receipt that fails 5 submits moves to the back of the queue; Pinax import pinned to a commit-hash URL; `policy.strict.json` = example policy with `privacy: "strict"`; `demo.sh` exits with a clear message when `VAULTS` is unset or still a fill marker.
+
+- [ ] **Step 1: Tests first** for each rule above (dashboard spend ledger and access token; service clear-mode count on both rails; core `checkSig` pub-hash binding; agent payment policy rejecting an over-quote requirement and receipt price mismatch; pricing crossover property `hederaScanPriceUsd(100) < TABLE_PRICE_USD`; verify script compare/repoint with a fake gateway; HCS cap and rotation).
+- [ ] **Step 2: Implement** in the order listed, smallest blast radius first; keep the §13.1 metrics shape unchanged.
+- [ ] **Step 3: Run** `bun test`, `bun run typecheck`, `bun run --cwd packages/dashboard build`; commit in two or three commits by package.
