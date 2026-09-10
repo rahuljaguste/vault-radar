@@ -364,17 +364,41 @@ export async function handleScan(req: Request, overrides: Partial<ScanDeps> = {}
     // 10. The data is only worth showing if its signatures check out. Fail closed,
     //     but still save the run: a service that answers with an unverifiable
     //     receipt is exactly the thing an operator needs the evidence for.
+    //
+    //     Checked *before* any decision is derived. `buildRecord` runs `decide`, which
+    //     turns verdicts into `hold` / `withdraw` / `rebalance` per vault — and those were
+    //     previously written to `runs/web-<hex>.json` and only then tested for validity, so
+    //     a service whose ML-DSA signature failed still left a run file full of actionable
+    //     instructions with no field marking them unverified, rendered by `/runs/[id]`
+    //     exactly like a verified one. The agent in the same situation carries no decisions
+    //     out of a failed purchase (`watch.ts`'s `executePurchase`), and neither does this.
     const hash = receiptHash(result.receipt);
     const age = applyAgeCheck(result, policy, deps.now());
+    const unverified = !result.receiptValid
+      ? "the payment settled but the service's receipt did not verify"
+      : !result.attestationsValid
+        ? "the payment settled but the per-vault attestations did not verify"
+        : null;
+    if (unverified) {
+      // The evidence an operator needs, and nothing derived from it: the payment reference
+      // and the receipt hash (which is how the receipt is looked up on HCS) survive, while
+      // every vault gets `insufficient data` carrying the reason.
+      const failed = buildFailedRecord({
+        vaults: parsed.vaults,
+        discovery,
+        policy,
+        serviceUrl,
+        startedAt,
+        txId: result.txId ?? (result.receipt.payment.txId || null),
+        receiptHash: hash,
+        reason: unverified,
+      });
+      persist(deps, failed, secrets);
+      return json({ error: unverified, runId: failed.id }, 502);
+    }
+
     const record = buildRecord({ result, discovery, policy, hash, age, serviceUrl, startedAt });
     persist(deps, record, secrets);
-
-    if (!result.receiptValid) {
-      return json({ error: "the payment settled but the service's receipt did not verify", runId: record.id }, 502);
-    }
-    if (!result.attestationsValid) {
-      return json({ error: "the payment settled but the per-vault attestations did not verify", runId: record.id }, 502);
-    }
 
     return json(
       {
@@ -436,6 +460,7 @@ function buildFailedRecord({
   serviceUrl,
   startedAt,
   txId,
+  receiptHash: hash = "",
   reason,
 }: {
   vaults: string[];
@@ -444,6 +469,9 @@ function buildFailedRecord({
   serviceUrl: string;
   startedAt: string;
   txId: string | null;
+  /** Empty when no receipt came back at all; set when one did but would not verify, since
+   *  that hash is how the receipt is looked up on HCS and is the evidence. */
+  receiptHash?: string;
   reason: string;
 }): RunRecord {
   return {
@@ -462,7 +490,7 @@ function buildFailedRecord({
       vaultId,
       action: "insufficient data" as const,
       reason,
-      citations: { block: "", source: "", txId, receiptHash: "" },
+      citations: { block: "", source: "", txId, receiptHash: hash },
     })),
   };
 }

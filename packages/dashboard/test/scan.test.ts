@@ -672,6 +672,61 @@ test("a post-payment failure still writes a run, with the reason as an insuffici
   expect(raw).toContain("[redacted]");
 });
 
+test("a receipt that does not verify yields no actionable decisions, only the failed run", async () => {
+  // The run file is the operator's record, and `/runs/[id]` renders a saved `withdraw` the
+  // same way whether or not the receipt behind it verified — `RunRecord` has no field that
+  // could say otherwise. So a purchase whose ML-DSA signature fails must not produce
+  // decisions at all, which means checking validity before `decide` runs, not after.
+  const ledger = new SpendLedger({ DASHBOARD_SPEND_CAP_USD: "1.00", DASHBOARD_MAX_SCANS_PER_HOUR: "100" });
+  const res = await handleScan(
+    post([ALERT_VAULT, WATCH_VAULT]),
+    deps({
+      ledger,
+      makeClient: (serviceUrl, hedera) =>
+        new VaultRadarClient({
+          serviceUrl,
+          hedera,
+          readPqHash: async () => keys.sig.pubHash,
+          // A real service reply with one byte of its receipt signature flipped: everything
+          // else about the purchase is genuine, so the only thing wrong is that the receipt
+          // is not a receipt this service signed.
+          payingFetch: async (url, init) => {
+            const real = await fetch(url, init);
+            const body = (await real.json()) as { receipt: { sig: { value: string } } };
+            const v = body.receipt.sig.value;
+            body.receipt.sig.value = (v[0] === "A" ? "B" : "A") + v.slice(1);
+            return new Response(JSON.stringify(body), { status: 200, headers: { "content-type": "application/json" } });
+          },
+        }),
+    }),
+  );
+
+  expect(res.status).toBe(502);
+  const body = await res.json();
+  expect(body.error).toContain("receipt did not verify");
+  expect(body.runId).toMatch(/^web-[0-9a-f]{12}$/);
+
+  const runs = runFiles();
+  expect(runs).toHaveLength(1);
+  const run = runs[0];
+  expect(run.id).toBe(body.runId);
+  // No verdicts, no prices, no actions derived from data nothing vouches for.
+  expect(run.requests).toEqual([]);
+  for (const d of run.decisions) {
+    expect(d.action).toBe("insufficient data");
+    expect(d.reason).toContain("receipt did not verify");
+  }
+  expect(run.decisions.map((d) => d.action)).not.toContain("hold");
+  expect(run.decisions.map((d) => d.action)).not.toContain("withdraw");
+  expect(run.decisions.map((d) => d.action)).not.toContain("rebalance");
+  // The evidence that the purchase happened is kept: the payment reference and the hash the
+  // receipt would be looked up by.
+  expect(run.decisions[0].citations.txId).toBe("0.0.42@1700000000.000000001");
+  expect(run.decisions[0].citations.receiptHash).toMatch(/^[0-9a-f]{64}$/);
+  // The money moved, so the allowance is consumed regardless.
+  expect(ledger.snapshot().scansLastHour).toBe(1);
+});
+
 test("a failure after payment is charged to the ledger, so a rail that fails while charging is still capped", async () => {
   const ledger = new SpendLedger({ DASHBOARD_MAX_SCANS_PER_HOUR: "100" });
   const failing = deps({
