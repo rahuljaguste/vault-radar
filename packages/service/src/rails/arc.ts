@@ -7,6 +7,7 @@ import {
   checkSealedRequestPrePayment,
   clampCount,
   isSealed,
+  knownProtocol,
   openSealedRequest,
   type Receipt,
   type ScanRequest,
@@ -151,6 +152,41 @@ function preValidateClearCount(tier: "scan" | "table") {
   };
 }
 
+/**
+ * Refuses a table request for a protocol this service does not index (422
+ * `unknown_protocol`) before `gateway.require` runs.
+ *
+ * `DataProvider.table` answers an unknown protocol with `{ vaults: [], sources: [] }`, which
+ * is honest but arrives after Circle has settled — so the payer bought an empty table and
+ * there is no reversal path (see `validateBucket`'s trace). `handlers/scan.ts` enforces the
+ * same rule rail-independently, which is sufficient on Hedera where settlement follows the
+ * 2xx; here it would be too late.
+ *
+ * Mounted after `preValidateSealed`, so a sealed request is read off the plaintext that
+ * middleware already opened and stashed on `res.locals.opened` rather than being decrypted
+ * twice. A body that is neither sealed-and-opened nor an object with both fields as strings
+ * is left alone, so it still reaches the handler's own `bad_table_request`.
+ */
+function preValidateTable(tier: "scan" | "table") {
+  return (req: Request, res: Response, next: NextFunction): void => {
+    if (tier !== "table") {
+      next();
+      return;
+    }
+    const opened = res.locals.opened as SealedRequest<ScanRequest | TableRequest> | undefined;
+    const body = (opened ? opened.request : req.body) as { protocol?: unknown; chainId?: unknown } | null;
+    if (typeof body?.protocol !== "string" || typeof body.chainId !== "string") {
+      next();
+      return;
+    }
+    if (!knownProtocol(body.protocol, body.chainId)) {
+      res.status(422).json(errBody("unknown_protocol"));
+      return;
+    }
+    next();
+  };
+}
+
 export function mountArcRail(
   app: Express,
   deps: Omit<HandlerDeps, "rail" | "tier" | "price" | "getPayer" | "getTxId"> & {
@@ -195,6 +231,7 @@ export function mountArcRail(
       ...pre,
       preValidateSealed(tier, deps),
       preValidateClearCount(tier),
+      preValidateTable(tier),
       gateway.require(price),
       asyncHandler(async (req: Request, res: Response) => {
         // `req.payment` is always populated here: reaching this wrapper at all means

@@ -303,6 +303,48 @@ test("a clear scan body whose count matches X-VR-Count still reaches the facilit
   }
 });
 
+// A table request for a protocol nobody indexes is answered with an empty table by
+// `DataProvider.table`, which on this rail arrives after Circle has already settled — the
+// payer would have bought nothing, with no reversal path. So the check runs in
+// `preValidateTable`, ahead of `gateway.require`: the facilitator is never even asked what
+// it supports.
+
+test("a clear table body naming an unindexed protocol is rejected 422 unknown_protocol before any facilitator call", async () => {
+  const fac = fakeFacilitator();
+  const rail = await mountRail(fac.url);
+  try {
+    const res = await fetch(`${rail.base}/arc/v1/table`, {
+      method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ protocol: "not-a-real-protocol", chainId: "1" }),
+    });
+    expect(res.status).toBe(422);
+    expect(await res.json()).toEqual({ reason: "unknown_protocol", error: "unknown_protocol" });
+    expect(fac.calls.supported).toBe(0);
+    expect(fac.calls.verify).toBe(0);
+    expect(fac.calls.settle).toBe(0);
+  } finally {
+    rail.close();
+    fac.close();
+  }
+});
+
+test("a sealed table envelope naming an unindexed protocol is rejected the same way, off the already-opened plaintext", async () => {
+  const fac = fakeFacilitator();
+  const rail = await mountRail(fac.url);
+  try {
+    // aave-v3 is registered on chains 1 and 8453; chain 137 names no table.
+    const { sealed } = buildSealedRequest({ protocol: "aave-v3", chainId: "137" }, "0xanypayer", rail.keys.kem.publicKey);
+    const res = await fetch(`${rail.base}/arc/v1/table`, {
+      method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify(sealed),
+    });
+    expect(res.status).toBe(422);
+    expect(await res.json()).toEqual({ reason: "unknown_protocol", error: "unknown_protocol" });
+    expect(fac.calls.supported).toBe(0);
+  } finally {
+    rail.close();
+    fac.close();
+  }
+});
+
 test("a clear table body is unaffected by the count check, since a table has no count", async () => {
   const fac = fakeFacilitator();
   const rail = await mountRail(fac.url);

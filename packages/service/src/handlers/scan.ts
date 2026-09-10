@@ -13,6 +13,7 @@ import {
   seal,
   fromB64,
   clampCount,
+  knownProtocol,
   type NonceStore,
   type ScanRequest,
   type TableRequest,
@@ -146,6 +147,13 @@ export function makeScanHandler(d: HandlerDeps) {
       const table = request as TableRequest;
       if (typeof table.protocol !== "string" || typeof table.chainId !== "string") {
         return res.status(422).json(errBody("bad_table_request"));
+      }
+      // A protocol nobody indexes would otherwise be answered with an empty table — after
+      // the payment. On this rail settlement follows the 2xx, so a 422 here costs the payer
+      // nothing; the Arc rail, which settles first, runs the same check before payment
+      // (`rails/arc.ts`'s `preValidateTable`).
+      if (!knownProtocol(table.protocol, table.chainId)) {
+        return res.status(422).json(errBody("unknown_protocol"));
       }
     }
 

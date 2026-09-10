@@ -33,17 +33,17 @@ const DEFAULT_FEE_PAYER = "0.0.7162784";
  * same fake facilitator, or x402's own requirements-matching step rejects the payload
  * before this rail ever sees it.
  */
-function buildPaymentSignatureHeader(payerAccount = PAYER_ACCOUNT, feePayer = DEFAULT_FEE_PAYER): string {
+function buildPaymentSignatureHeader(payerAccount = PAYER_ACCOUNT, feePayer = DEFAULT_FEE_PAYER, atomic = 1500): string {
   const tx = new TransferTransaction()
-    .addTokenTransfer(TokenId.fromString(TOKEN_ID), AccountId.fromString(payerAccount), -1500)
-    .addTokenTransfer(TokenId.fromString(TOKEN_ID), AccountId.fromString(PAYTO_ACCOUNT), 1500)
+    .addTokenTransfer(TokenId.fromString(TOKEN_ID), AccountId.fromString(payerAccount), -atomic)
+    .addTokenTransfer(TokenId.fromString(TOKEN_ID), AccountId.fromString(PAYTO_ACCOUNT), atomic)
     .setTransactionId(TransactionId.generate(AccountId.fromString(FEE_PAYER_ACCOUNT)))
     .setNodeAccountIds([AccountId.fromString("0.0.3")])
     .freeze();
   const transactionB64 = Buffer.from(tx.toBytes()).toString("base64");
   const payload: PaymentPayload = {
     x402Version: 2,
-    accepted: { scheme: "exact", network: "hedera:testnet", asset: TOKEN_ID, amount: "1500", payTo: PAYTO_ACCOUNT, maxTimeoutSeconds: 120, extra: { feePayer } },
+    accepted: { scheme: "exact", network: "hedera:testnet", asset: TOKEN_ID, amount: String(atomic), payTo: PAYTO_ACCOUNT, maxTimeoutSeconds: 120, extra: { feePayer } },
     payload: { transaction: transactionB64 },
   };
   return encodePaymentSignatureHeader(payload);
@@ -538,6 +538,58 @@ test("a clear scan body whose count matches X-VR-Count still completes and settl
     });
     expect(res.status).toBe(200);
     expect(fac.calls.settle).toBe(1);
+  } finally {
+    rail.close();
+    fac.close();
+  }
+});
+
+// A table request for a protocol nobody indexes used to be *charged for* and then answered
+// with an empty table: `DataProvider.table` has no entry to query, so it returns
+// `{ vaults: [], sources: [] }`. On this rail the refusal is free, because settlement only
+// follows a 2xx — which is what the settle count below asserts. (Placed here with the other
+// verify-then-refuse tests for the reason their section comment gives: no settle hook fires,
+// so the verified payment's entry stays in `verifiedPayerByTxKey` until the TTL sweeps it,
+// and the `_mapSizesForTests` assertions above are not about that.)
+test("a table request for an unindexed protocol is refused 422 unknown_protocol, and never settles", async () => {
+  const fac = fakeFacilitator({
+    verify: { isValid: true, payer: VERIFIED_PAYER },
+    settle: { success: true, transaction: SETTLED_TX, payer: VERIFIED_PAYER },
+  });
+  const rail = await mountRail(fac.url);
+  try {
+    const res = await fetch(`${rail.base}/hedera/v1/table`, {
+      method: "POST",
+      // The flat table price, 0.06 USD, is 60000 in six-decimal USDC.
+      headers: { "content-type": "application/json", "payment-signature": buildPaymentSignatureHeader(PAYER_ACCOUNT, DEFAULT_FEE_PAYER, 60_000) },
+      body: JSON.stringify({ protocol: "not-a-real-protocol", chainId: "1" }),
+    });
+    expect(res.status).toBe(422);
+    expect(await res.json()).toEqual({ reason: "unknown_protocol", error: "unknown_protocol" });
+    expect(fac.calls.verify).toBe(1);
+    expect(fac.calls.settle).toBe(0);
+  } finally {
+    rail.close();
+    fac.close();
+  }
+});
+
+test("a table request for a registered protocol on the wrong chain is refused too", async () => {
+  // aave-v3 is registered on chains 1 and 8453 only, so chain 137 names no table.
+  const fac = fakeFacilitator({
+    verify: { isValid: true, payer: VERIFIED_PAYER },
+    settle: { success: true, transaction: SETTLED_TX, payer: VERIFIED_PAYER },
+  });
+  const rail = await mountRail(fac.url);
+  try {
+    const res = await fetch(`${rail.base}/hedera/v1/table`, {
+      method: "POST",
+      headers: { "content-type": "application/json", "payment-signature": buildPaymentSignatureHeader(PAYER_ACCOUNT, DEFAULT_FEE_PAYER, 60_000) },
+      body: JSON.stringify({ protocol: "aave-v3", chainId: "137" }),
+    });
+    expect(res.status).toBe(422);
+    expect(await res.json()).toEqual({ reason: "unknown_protocol", error: "unknown_protocol" });
+    expect(fac.calls.settle).toBe(0);
   } finally {
     rail.close();
     fac.close();
