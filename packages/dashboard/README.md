@@ -33,21 +33,30 @@ dashboard's server, so nothing on the network path learns which vaults were
 asked about. When `AGENT_HEDERA_ACCOUNT_ID` or `AGENT_HEDERA_KEY` is missing, the
 page says so and links a finished run instead.
 
+The decision logic is the agent's own, not a copy of it: `lib/scan.ts` calls
+`loadPolicy`, `chooseTier`, `applyAgeCheck` and `decide` from
+`packages/agent/src/policy.ts`, so a purchase made here obeys the same operator
+policy and writes the same `RunRecord` as one made by the agent's watch loop.
+
+The policy decides what gets bought. A `balanced` privacy tier buys a sealed
+scan, `cheap` the same scan in the clear, and `strict` would buy a whole
+protocol table, which needs a protocol and chain id rather than a vault list, so
+this page refuses it with an explanation instead of quietly downgrading to a
+scan and disclosing what the policy exists to hide.
+
 Before paying, the handler verifies the service's signed agent card and refuses
 if its on-chain ERC-8004 key hash disagrees with the key on the card. After
 paying, it verifies the ML-DSA-65 receipt and every per-vault attestation, and
 returns an error rather than unverified verdicts if either check fails (the run
-file is still written, as evidence). It then applies its own 900-second bar to
-the signed attestation timestamps, so a vault the service called fresh can still
-be refused.
+file is still written, as evidence). It then applies the policy's
+`max_age_seconds` to the signed attestation timestamps, so a vault the service
+called fresh can still be refused.
 
-Spending limits: one scan per client address per 30 seconds (in memory, per
-server instance) plus a hard per-scan price ceiling of 0.10 USD checked against
-the quote before anything is paid. The metered price tops out at 0.051 USD for
-100 vaults, so the ceiling is a stop against a pricing change, not a gate on
-normal use. Spec §13.2 asks for the agent policy's per-rail budget instead;
-that arrives when `packages/agent/src/policy.ts` lands on `main`, and the TODOs
-in `lib/scan.ts` and `lib/decide.ts` name exactly what to swap in.
+Spending limits: the policy's `budget.usdc_hedera`, checked against the quote
+before anything is paid, plus one scan per client address per 30 seconds (in
+memory, per server instance). The rail is always Hedera, because that is the
+only payment key this app reads; the agent's `chooseRail`, which also weighs
+wallet balance and facilitator health across both rails, is not used here.
 
 ### `/admin`, precisely
 
@@ -84,9 +93,7 @@ Read from the process environment at request time. The repo root's
 | `ADMIN_TOKEN` | `/admin` (server only) | none | Must equal the service's `ADMIN_TOKEN`. Unset means `/admin` explains that rather than failing. |
 | `AGENT_HEDERA_ACCOUNT_ID` | `POST /api/scan` (server only) | none | The paying Hedera account. Absent disables paid scans. |
 | `AGENT_HEDERA_KEY` | `POST /api/scan` (server only) | none | That account's ECDSA private key. Never logged, never returned, never bundled for the browser. Every error that leaves the handler is redacted against it first. |
-
-`POLICY_PATH` is **not** read by this app yet. The scan route's limits are the
-constants in `lib/scan.ts`; see the `/portfolio` notes above.
+| `POLICY_PATH` | `POST /api/scan` (server only) | `packages/agent/policy.example.json` | The operator's budget, privacy tier and `max_age_seconds`, read by the agent's own `loadPolicy`. Resolved against the repo root. An unreadable or invalid policy is a 503 naming the offending field, never a silent default. |
 
 ## Commands
 
@@ -126,12 +133,16 @@ lib/
   explorer.ts         HashScan and Arcscan link building
   vaults.ts           vault-list parsing, shared by the form and the scan route
   ratelimit.ts        the paid-scan rate limiter
+  scan.ts             the POST /api/scan handler, with injectable dependencies
 test/                 bun tests for every pure module above
 empty-pg.ts           browser stub; see next.config.ts
 ```
 
 `lib/types.ts`'s `RunRecord` is a cross-package contract with
-`packages/agent/src/runs.ts`. Change both together or neither.
+`packages/agent/src/runs.ts`. Change both together or neither. Anything that
+imports `@vaultradar/service` must stay under `test/`, which this package's
+tsconfig excludes: pulling the service's sources into the dashboard's compile
+fails `next build`.
 
 `next.config.ts` aliases `pg` to `empty-pg.ts` for the browser target only:
 `@vaultradar/core` exposes a single barrel that reaches its Postgres-backed

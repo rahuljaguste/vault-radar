@@ -7,6 +7,12 @@
  * with a non-paying `payingFetch`, exactly the way `packages/agent`'s own client
  * tests do. `app/api/scan/route.ts` is a one-line wrapper over `handleScan`.
  *
+ * The decision logic is the agent's, not a copy of it: `loadPolicy`,
+ * `chooseTier`, `applyAgeCheck` and `decide` all come from
+ * `packages/agent/src/policy.ts`, so a purchase made from the browser obeys the
+ * same operator policy and produces the same `RunRecord` as one made by the
+ * agent's watch loop.
+ *
  * Secrets discipline: `AGENT_HEDERA_ACCOUNT_ID` and `AGENT_HEDERA_KEY` are read
  * here, handed straight to `VaultRadarClient`, and never written to a response,
  * a log line, or the run file. `RunRecord` has no field that could hold them.
@@ -15,40 +21,33 @@
  */
 
 import { randomBytes } from "node:crypto";
-import { VaultRadarClient, saveRun } from "@vaultradar/agent";
+import path from "node:path";
+import {
+  VaultRadarClient,
+  applyAgeCheck,
+  chooseTier,
+  decide,
+  loadPolicy,
+  saveRun,
+  type Policy,
+} from "@vaultradar/agent";
 import { receiptHash } from "@vaultradar/core";
-import { applyAgeCheck, decide } from "./decide";
 import { RateLimiter, clientKey, scanLimiter } from "./ratelimit";
-import { runsDir as defaultRunsDir } from "./runs";
+import { repoRoot, runsDir as defaultRunsDir } from "./runs";
 import { getServiceUrl } from "./service";
 import type { RunRecord } from "./types";
 import { parseVaultList } from "./vaults";
 
-/**
- * A hard per-scan ceiling, checked against the quote before anything is paid.
- * The metered price tops out at 0.051 USD for the maximum 100 vaults, so this
- * never rejects a legitimate request; it is a stop against a pricing change or a
- * count bug quietly spending more than intended.
- *
- * TODO: replace with the policy budget from `loadPolicy`/`chooseRail` in
- * `packages/agent/src/policy.ts` once that lands, which is what spec §13.2 asks
- * for. Until then this ceiling is the only cap, and the run file records it as
- * the budget so the record matches what was actually enforced.
- */
-export const MAX_PRICE_USD = "0.10";
-
-/**
- * The dashboard's own freshness bar, applied to the signed attestation
- * timestamps. Matches the agent policy's documented default.
- *
- * TODO: read from the loaded policy's `max_age_seconds` alongside the budget.
- */
-export const MAX_AGE_SECONDS = 900;
+/** Same default as `.env.example` and the agent CLI, resolved against the repo root. */
+export function defaultPolicyPath(): string {
+  return path.join(repoRoot(), "packages", "agent", "policy.example.json");
+}
 
 export type ScanDeps = {
   /** Tests inject a client with `payingFetch: fetch` and a stub `readPqHash`. */
   makeClient: (serviceUrl: string, hedera: { accountId: string; privateKey: string }) => VaultRadarClient;
   runsDir: () => string;
+  policyPath: () => string;
   limiter: RateLimiter;
   /** Seconds since the epoch, for the age check. */
   now: () => number;
@@ -59,6 +58,10 @@ function defaultDeps(): ScanDeps {
   return {
     makeClient: (serviceUrl, hedera) => new VaultRadarClient({ serviceUrl, hedera }),
     runsDir: defaultRunsDir,
+    policyPath: () => {
+      const fromEnv = process.env.POLICY_PATH?.trim();
+      return fromEnv ? path.resolve(repoRoot(), fromEnv) : defaultPolicyPath();
+    },
     limiter: scanLimiter,
     now: () => Math.floor(Date.now() / 1000),
     env: process.env,
@@ -108,7 +111,30 @@ export async function handleScan(req: Request, overrides: Partial<ScanDeps> = {}
   }
   const secrets = [privateKey, accountId];
 
-  // 2. Validate the request before touching the rate limiter, so a typo does not
+  // 2. The operator's standing instructions. `loadPolicy` throws with the offending
+  //    field named rather than inferring a spending cap, so a policy problem is a
+  //    configuration error and never a silent default.
+  let policy: Policy;
+  try {
+    policy = loadPolicy(deps.policyPath());
+  } catch (e) {
+    console.error(`[api/scan] policy unusable: ${redact(e, secrets)}`);
+    return json({ error: `the agent policy could not be loaded: ${redact(e, secrets)}` }, 503);
+  }
+
+  // A `strict` privacy policy buys the whole protocol table so the vendor never
+  // learns which vault is held. That needs a protocol and chain id, which a vault
+  // list does not supply, and quietly downgrading to a scan would disclose exactly
+  // what the policy exists to hide.
+  const tier = chooseTier(policy);
+  if (tier.tier !== "scan") {
+    return json(
+      { error: `the policy's "${policy.privacy}" privacy tier buys whole protocol tables, which this page cannot request from a vault list; use the agent CLI for table purchases` },
+      503,
+    );
+  }
+
+  // 3. Validate the request before touching the rate limiter, so a typo does not
   //    cost the caller their 30-second window.
   let body: unknown;
   try {
@@ -136,19 +162,22 @@ export async function handleScan(req: Request, overrides: Partial<ScanDeps> = {}
     return json({ error: "the agent payment key could not be loaded" }, 503);
   }
 
-  // 3. Price the request and refuse an unexpectedly expensive one before paying.
+  // 4. Enforce the policy's budget for this rail against the quote, before paying.
+  //    The agent's `chooseRail` additionally weighs wallet balance and facilitator
+  //    health across both rails; this dashboard only ever holds a Hedera key, so
+  //    the rail is fixed and the budget is the gate that matters here.
   const quote = await client.quote(parsed.vaults.length);
   if (quote.hedera === null) {
     return json({ error: "the hedera rail is not configured on this dashboard" }, 503);
   }
-  if (Number(quote.hedera) > Number(MAX_PRICE_USD)) {
+  if (Number(quote.hedera) > Number(policy.budget.usdc_hedera)) {
     return json(
-      { error: `the quote of ${quote.hedera} USD for ${parsed.vaults.length} vaults exceeds this dashboard's per-scan ceiling of ${MAX_PRICE_USD} USD` },
+      { error: `the quote of ${quote.hedera} USD for ${parsed.vaults.length} vaults exceeds the policy's hedera budget of ${policy.budget.usdc_hedera} USD` },
       400,
     );
   }
 
-  // 4. Only now spend the caller's rate-limit window, since every check above is
+  // 5. Only now spend the caller's rate-limit window, since every check above is
   //    free and deterministic.
   const limit = deps.limiter.check(clientKey(req));
   if (!limit.allowed) {
@@ -159,7 +188,7 @@ export async function handleScan(req: Request, overrides: Partial<ScanDeps> = {}
     );
   }
 
-  // 5. Verify who is being paid before paying them. An unsigned or substituted
+  // 6. Verify who is being paid before paying them. An unsigned or substituted
   //    card means discovery cannot be trusted, which is the whole point of
   //    anchoring the key hash on chain.
   const startedAt = new Date().toISOString();
@@ -184,26 +213,22 @@ export async function handleScan(req: Request, overrides: Partial<ScanDeps> = {}
     );
   }
 
-  // 6. Pay. Sealed scan on the hedera rail.
-  //    TODO: `chooseRail` and `chooseTier` from the agent's policy module decide
-  //    these two from the operator's policy; this dashboard only ever holds a
-  //    Hedera payment key, so the rail is fixed and the tier is the sealed scan
-  //    that a "balanced" privacy policy would pick.
+  // 7. Pay, sealed or clear exactly as the policy's privacy tier dictates.
   let result: Awaited<ReturnType<VaultRadarClient["scan"]>>;
   try {
-    result = await client.scan(parsed.vaults, "hedera", { seal: true });
+    result = await client.scan(parsed.vaults, "hedera", { seal: tier.seal });
   } catch (e) {
     const message = redact(e, secrets);
     console.error(`[api/scan] paid scan failed: ${message}`);
     return json({ error: `the paid scan failed: ${message}` }, 502);
   }
 
-  // 7. The data is only worth showing if its signatures check out. Fail closed,
+  // 8. The data is only worth showing if its signatures check out. Fail closed,
   //    but still save the run: a service that answers with an unverifiable
   //    receipt is exactly the thing an operator needs the evidence for.
   const hash = receiptHash(result.receipt);
-  const age = applyAgeCheck(result, MAX_AGE_SECONDS, deps.now());
-  const record = buildRecord({ result, discovery, hash, age, serviceUrl, startedAt });
+  const age = applyAgeCheck(result, policy, deps.now());
+  const record = buildRecord({ result, discovery, policy, hash, age, serviceUrl, startedAt });
   try {
     saveRun(deps.runsDir(), record);
   } catch (e) {
@@ -234,6 +259,7 @@ export async function handleScan(req: Request, overrides: Partial<ScanDeps> = {}
 function buildRecord({
   result,
   discovery,
+  policy,
   hash,
   age,
   serviceUrl,
@@ -241,6 +267,7 @@ function buildRecord({
 }: {
   result: Awaited<ReturnType<VaultRadarClient["scan"]>>;
   discovery: Awaited<ReturnType<VaultRadarClient["discover"]>>;
+  policy: Policy;
   hash: string;
   age: ReturnType<typeof applyAgeCheck>;
   serviceUrl: string;
@@ -255,14 +282,7 @@ function buildRecord({
     id: `web-${randomBytes(6).toString("hex")}`,
     startedAt,
     serviceUrl,
-    policy: {
-      // What this route actually enforced, not a file it did not read. See the
-      // TODOs on MAX_PRICE_USD and MAX_AGE_SECONDS.
-      budget: { usdc_hedera: MAX_PRICE_USD, usdc_arc: "0" },
-      privacy: "balanced",
-      rail_preference: "hedera",
-      max_age_seconds: MAX_AGE_SECONDS,
-    },
+    policy,
     discovery: {
       cardSignatureValid: discovery.cardSignatureValid,
       pubHash: discovery.card.pq.sig.pub_hash,
@@ -287,6 +307,6 @@ function buildRecord({
         rejected: age.rejected,
       },
     ],
-    decisions: decide(result, age, hash),
+    decisions: decide(result, age),
   };
 }

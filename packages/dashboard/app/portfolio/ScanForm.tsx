@@ -120,7 +120,7 @@ export function ScanForm({ keysConfigured, demoRunId }: { keysConfigured: boolea
         {keysConfigured ? (
           <p className="muted">
             &ldquo;Scan now&rdquo; buys a real x402 request. The payer is the operator&apos;s agent account, not your
-            wallet. Each scan is capped by a per-scan price ceiling and limited to one per 30 seconds per client.
+            wallet, and the spend is capped by the agent&apos;s policy budget. One scan per 30 seconds per client.
           </p>
         ) : (
           <div className="card">

@@ -21,15 +21,24 @@ export type RunSummary = { id: string; startedAt: string; requestCount: number }
 export type { RunMatch } from "./types";
 
 /**
+ * The monorepo root, two levels above `process.cwd()` when Next.js is started
+ * from `packages/dashboard` (the documented way to run this app). Repo-relative
+ * settings such as `POLICY_PATH` are resolved against it.
+ */
+export function repoRoot(): string {
+  return path.resolve(process.cwd(), "..", "..");
+}
+
+/**
  * Where run files live. `RUNS_DIR` wins when set (both the reader here and the
  * `/api/scan` writer read this same function, so they can never disagree about
- * the directory); otherwise the repo root's `runs/`, two levels above
- * `process.cwd()` when Next.js is started from `packages/dashboard`.
+ * the directory, and the agent CLI reads the same variable); otherwise the repo
+ * root's `runs/`.
  */
 export function runsDir(): string {
   const fromEnv = process.env.RUNS_DIR?.trim();
-  if (fromEnv) return path.resolve(fromEnv);
-  return path.resolve(process.cwd(), "..", "..", "runs");
+  if (fromEnv) return path.resolve(repoRoot(), fromEnv);
+  return path.join(repoRoot(), "runs");
 }
 
 function demoRunPath(): string {

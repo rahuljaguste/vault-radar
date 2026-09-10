@@ -1,13 +1,13 @@
 import { afterAll, beforeEach, expect, test } from "bun:test";
-import { mkdtempSync, readFileSync, readdirSync, rmSync } from "node:fs";
+import { mkdtempSync, readFileSync, readdirSync, rmSync, writeFileSync } from "node:fs";
 import { createServer } from "node:net";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { MemoryNonceStore, type UnifiedVault } from "@vaultradar/core";
 import { buildApp, loadConfig, loadKeys, makeScanHandler, type DataProvider, type HandlerDeps } from "@vaultradar/service";
-import { VaultRadarClient } from "@vaultradar/agent";
+import { VaultRadarClient, type Policy } from "@vaultradar/agent";
 import { RateLimiter } from "../lib/ratelimit";
-import { MAX_AGE_SECONDS, MAX_PRICE_USD, handleScan, redact } from "../lib/scan";
+import { defaultPolicyPath, handleScan, redact } from "../lib/scan";
 import type { RunRecord } from "../lib/types";
 
 /**
@@ -17,9 +17,13 @@ import type { RunRecord } from "../lib/types";
  * what the x402 middleware sets once payment clears), and the injected client
  * uses plain `fetch` as its paying fetch plus a stub on-chain key reader. No
  * Hedera signer is ever constructed and nothing is paid.
+ *
+ * The policy is a real file read by the agent's own `loadPolicy`, so these cover
+ * the policy plumbing rather than a hand-built `Policy` object.
  */
 
 const now = Math.floor(Date.now() / 1000);
+const MAX_AGE = 900;
 
 const OK_VAULT = "1:0x" + "a".repeat(40);
 const ALERT_VAULT = "1:0x" + "b".repeat(40);
@@ -77,9 +81,9 @@ const VAULTS: Record<string, UnifiedVault> = {
   [ALERT_VAULT]: vault(ALERT_VAULT, { history: ALERT_HISTORY }),
   [WATCH_VAULT]: vault(WATCH_VAULT, { history: WATCH_HISTORY }),
   [STALE_VAULT]: vault(STALE_VAULT, { freshness: "stale" }),
-  // Declared fresh by the provider but attested from well before the max-age bar,
-  // which is exactly the case the dashboard's own age check exists to catch.
-  [OLD_ATTESTATION_VAULT]: vault(OLD_ATTESTATION_VAULT, { sourceAge: MAX_AGE_SECONDS + 600 }),
+  // Declared fresh by the provider but attested from well before the policy's
+  // max-age bar, which is exactly the case the agent's own age check exists to catch.
+  [OLD_ATTESTATION_VAULT]: vault(OLD_ATTESTATION_VAULT, { sourceAge: MAX_AGE + 600 }),
 };
 
 const data: DataProvider = {
@@ -121,19 +125,36 @@ const scanDeps: HandlerDeps = {
 app.post("/hedera/v1/scan", makeScanHandler(scanDeps));
 const server = app.listen(port);
 
-const runDir = mkdtempSync(join(tmpdir(), "vaultradar-scan-runs-"));
+const scratch = mkdtempSync(join(tmpdir(), "vaultradar-scan-"));
+const runDir = join(scratch, "runs");
+const BALANCED: Policy = {
+  budget: { usdc_hedera: "1.00", usdc_arc: "1.00" },
+  privacy: "balanced",
+  rail_preference: "cheapest",
+  max_age_seconds: MAX_AGE,
+};
+
+/** Writes a policy file and returns its path, so the real `loadPolicy` reads it. */
+function policyFile(name: string, policy: unknown): string {
+  const file = join(scratch, `${name}.json`);
+  writeFileSync(file, JSON.stringify(policy, null, 2));
+  return file;
+}
+
+const balancedPolicy = policyFile("balanced", BALANCED);
 
 // Never parsed: every client below injects `payingFetch`, so `payingFetchHedera`
 // and the Hedera key parser are never reached.
 const UNUSED_KEY = "11".repeat(32);
 
-type Deps = Parameters<typeof handleScan>[1];
+type Deps = NonNullable<Parameters<typeof handleScan>[1]>;
 
-function deps(over: Partial<NonNullable<Deps>> = {}, onChainHash: string | null = keys.sig.pubHash): NonNullable<Deps> {
+function deps(over: Partial<Deps> = {}, onChainHash: string | null = keys.sig.pubHash): Deps {
   return {
     makeClient: (serviceUrl, hedera) =>
       new VaultRadarClient({ serviceUrl, hedera, payingFetch: fetch, readPqHash: async () => onChainHash }),
     runsDir: () => runDir,
+    policyPath: () => balancedPolicy,
     limiter: new RateLimiter(),
     now: () => now,
     env: { AGENT_HEDERA_ACCOUNT_ID: "0.0.42", AGENT_HEDERA_KEY: UNUSED_KEY, SERVICE_URL: base },
@@ -150,21 +171,87 @@ function post(vaults: unknown, headers: Record<string, string> = {}): Request {
 }
 
 function runFiles(): RunRecord[] {
-  return readdirSync(runDir)
+  let files: string[];
+  try {
+    files = readdirSync(runDir);
+  } catch {
+    return [];
+  }
+  return files
     .filter((f) => f.endsWith(".json"))
     .map((f) => JSON.parse(readFileSync(join(runDir, f), "utf8")) as RunRecord);
 }
 
 beforeEach(() => {
-  for (const f of readdirSync(runDir)) rmSync(join(runDir, f));
+  try {
+    for (const f of readdirSync(runDir)) rmSync(join(runDir, f));
+  } catch {
+    // The directory is created by saveRun on the first purchase.
+  }
 });
 
 afterAll(() => {
   server.close();
-  rmSync(runDir, { recursive: true, force: true });
+  rmSync(scratch, { recursive: true, force: true });
 });
 
-/* ------------------------------------------------------------- happy path */
+/* ------------------------------------------------------------------- policy */
+
+test("the shipped default policy path points at the agent's example policy", () => {
+  expect(defaultPolicyPath().endsWith(join("packages", "agent", "policy.example.json"))).toBe(true);
+});
+
+test("the agent's own loadPolicy is what reads the file, so its errors surface as a 503", async () => {
+  const res = await handleScan(post([OK_VAULT]), deps({ policyPath: () => join(scratch, "absent.json") }));
+  expect(res.status).toBe(503);
+  expect((await res.json()).error).toContain("the agent policy could not be loaded");
+  expect(runFiles()).toHaveLength(0);
+});
+
+test("an invalid policy is a 503 naming the offending field, not a silent default budget", async () => {
+  const bad = policyFile("bad", { budget: { usdc_hedera: "free", usdc_arc: "1.00" } });
+  const res = await handleScan(post([OK_VAULT]), deps({ policyPath: () => bad }));
+  expect(res.status).toBe(503);
+  expect((await res.json()).error).toContain("budget.usdc_hedera");
+});
+
+test("a strict privacy policy is refused rather than silently downgraded to a scan", async () => {
+  // `chooseTier` maps strict to the table tier, which hides the holding from the
+  // vendor. Serving it as a scan would disclose exactly what the policy protects.
+  const strict = policyFile("strict", { ...BALANCED, privacy: "strict" });
+  const res = await handleScan(post([OK_VAULT]), deps({ policyPath: () => strict }));
+  expect(res.status).toBe(503);
+  expect((await res.json()).error).toContain("whole protocol tables");
+  expect(runFiles()).toHaveLength(0);
+});
+
+test("a cheap privacy policy sends the request in the clear, as chooseTier dictates", async () => {
+  const cheap = policyFile("cheap", { ...BALANCED, privacy: "cheap" });
+  const res = await handleScan(post([OK_VAULT]), deps({ policyPath: () => cheap }));
+  expect(res.status).toBe(200);
+  const body = await res.json();
+  expect(body.requests[0].sealed).toBe(false);
+  expect(runFiles()[0].policy.privacy).toBe("cheap");
+});
+
+test("400 when the quote exceeds the policy's hedera budget, before anything is paid", async () => {
+  const broke = policyFile("broke", { ...BALANCED, budget: { usdc_hedera: "0.001", usdc_arc: "1.00" } });
+  const res = await handleScan(post([OK_VAULT, WATCH_VAULT]), deps({ policyPath: () => broke }));
+  expect(res.status).toBe(400);
+  expect((await res.json()).error).toBe(
+    "the quote of 0.002 USD for 2 vaults exceeds the policy's hedera budget of 0.001 USD",
+  );
+  expect(runFiles()).toHaveLength(0);
+});
+
+test("the budget gate does not consume the rate-limit window", async () => {
+  const broke = policyFile("broke2", { ...BALANCED, budget: { usdc_hedera: "0.001", usdc_arc: "1.00" } });
+  const limiter = new RateLimiter();
+  expect((await handleScan(post([OK_VAULT]), deps({ policyPath: () => broke, limiter }))).status).toBe(400);
+  expect((await handleScan(post([OK_VAULT]), deps({ limiter }))).status).toBe(200);
+});
+
+/* ------------------------------------------------------------------- happy path */
 
 test("a paid scan returns verdicts, decisions, the tx id and the receipt hash", async () => {
   const res = await handleScan(post([OK_VAULT]), deps());
@@ -195,7 +282,7 @@ test("a paid scan returns verdicts, decisions, the tx id and the receipt hash", 
   expect(body.decisions[0].citations.block).toBe("1000");
 });
 
-test("the run is written to RUNS_DIR with the RunRecord shape and the policy actually enforced", async () => {
+test("the run is written to RUNS_DIR with the RunRecord shape and the policy that was loaded", async () => {
   const res = await handleScan(post([OK_VAULT]), deps());
   const body = await res.json();
 
@@ -205,12 +292,8 @@ test("the run is written to RUNS_DIR with the RunRecord shape and the policy act
   expect(run.id).toBe(body.runId);
   expect(run.serviceUrl).toBe(base);
   expect(new Date(run.startedAt).toISOString()).toBe(run.startedAt);
-  expect(run.policy).toEqual({
-    budget: { usdc_hedera: MAX_PRICE_USD, usdc_arc: "0" },
-    privacy: "balanced",
-    rail_preference: "hedera",
-    max_age_seconds: MAX_AGE_SECONDS,
-  });
+  // Verbatim the policy file, so the record says what the purchase actually ran under.
+  expect(run.policy).toEqual(BALANCED);
   expect(run.discovery.cardSignatureValid).toBe(true);
   expect(run.discovery.pubHash).toBe(keys.sig.pubHash);
   expect(run.discovery.kid).toBe(keys.kem.kid);
@@ -219,14 +302,13 @@ test("the run is written to RUNS_DIR with the RunRecord shape and the policy act
   expect(run.decisions[0].action).toBe("hold");
 });
 
-test("the run file contains no key material and no account id", () => {
-  return handleScan(post([OK_VAULT]), deps()).then(() => {
-    const raw = readdirSync(runDir).map((f) => readFileSync(join(runDir, f), "utf8")).join("");
-    expect(raw).not.toContain(UNUSED_KEY);
-    // The paying account id appears nowhere in the record; the receipt's payment
-    // reference is the service's own tx id, which is public.
-    expect(raw).not.toContain('"0.0.42"');
-  });
+test("the run file contains no key material and no account id", async () => {
+  await handleScan(post([OK_VAULT]), deps());
+  const raw = readdirSync(runDir).map((f) => readFileSync(join(runDir, f), "utf8")).join("");
+  expect(raw).not.toContain(UNUSED_KEY);
+  // The paying account id appears nowhere in the record; the receipt's payment
+  // reference is the service's own tx id, which is public.
+  expect(raw).not.toContain('"0.0.42"');
 });
 
 test("every verdict maps to its action: alert to withdraw, watch to rebalance, ok to hold", async () => {
@@ -253,16 +335,25 @@ test("a vault the service reports unavailable becomes insufficient data, not an 
   expect(body.decisions[0].reason).toContain("verdict unavailable");
 });
 
-test("an attestation older than the max-age bar is rejected and blocks any action on that vault", async () => {
+test("an attestation older than the policy's max age is rejected and blocks any action on that vault", async () => {
   const res = await handleScan(post([OLD_ATTESTATION_VAULT, OK_VAULT]), deps());
   const body = await res.json();
 
-  expect(body.requests[0].rejected).toEqual([{ vaultId: OLD_ATTESTATION_VAULT, ageSeconds: MAX_AGE_SECONDS + 600 }]);
+  expect(body.requests[0].rejected).toEqual([{ vaultId: OLD_ATTESTATION_VAULT, ageSeconds: MAX_AGE + 600 }]);
   const stale = body.decisions.find((d: { vaultId: string }) => d.vaultId === OLD_ATTESTATION_VAULT);
   expect(stale.action).toBe("insufficient data");
-  expect(stale.reason).toContain("max-age check");
+  // Wording comes from the agent's own `decide`, which this route now uses directly.
+  expect(stale.reason).toContain("beyond the policy's max age");
   // The fresh vault in the same purchase is unaffected.
   expect(body.decisions.find((d: { vaultId: string }) => d.vaultId === OK_VAULT).action).toBe("hold");
+});
+
+test("a tighter policy max age rejects a vault the default policy accepts", async () => {
+  const strictAge = policyFile("strict-age", { ...BALANCED, max_age_seconds: 1 });
+  const res = await handleScan(post([OK_VAULT]), deps({ policyPath: () => strictAge }));
+  const body = await res.json();
+  expect(body.requests[0].rejected).toEqual([{ vaultId: OK_VAULT, ageSeconds: 5 }]);
+  expect(body.decisions[0].action).toBe("insufficient data");
 });
 
 test("a vault the service does not know simply does not appear, and the rest still answers", async () => {

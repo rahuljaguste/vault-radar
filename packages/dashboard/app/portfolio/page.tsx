@@ -29,8 +29,8 @@ export default async function PortfolioPage() {
         <h2>Scan your portfolio</h2>
         <p>
           Paste the vaults you hold. The dashboard buys a risk scan over x402, verifies the ML-DSA-65 receipt and every
-          per-vault attestation, applies its own freshness bar to the signed timestamps, and shows one action per vault with
-          the evidence behind it.
+          per-vault attestation, applies the agent policy&apos;s own freshness bar to the signed timestamps, and shows one
+          action per vault with the evidence behind it.
         </p>
         <p className="muted">
           The payer is the operator&apos;s funded agent account, not a wallet in your browser, so the settlement on the
