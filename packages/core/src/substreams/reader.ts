@@ -24,12 +24,33 @@ export function makePgQuery(databaseUrl: string): SqlQuery {
 // regex guard is what makes that interpolation safe against injection.
 // A missing table (chain not yet indexed) or an empty one both surface as `null`, not a
 // thrown error, so callers don't need to special-case "not deployed yet".
+//
+// Everything else that can fail here — credentials, connection refused, a pool with no
+// free clients, a statement timeout — also has to surface as `null`, because the caller
+// degrades to `freshness: "unavailable"` rather than failing the request. But returning
+// null *silently* made a database outage indistinguishable from "this chain is not indexed
+// yet", which is the difference between paging an operator and doing nothing. So anything
+// that is not Postgres `42P01` (undefined table) is logged once. Only the error's own code
+// and message go to the log, never the query text and never the connection string.
+const PG_UNDEFINED_TABLE = "42P01";
+
+/**
+ * Drops anything URL-shaped out of a message before it is logged. A driver that echoes its
+ * own DSN into an error text would otherwise put `postgres://user:password@host/db` in the
+ * log, which is the one thing this must never do — and whether any given driver does that is
+ * not something this function should have to know.
+ */
+const withoutUrls = (s: string): string => s.replace(/\b[a-z][a-z0-9+.-]*:\/\/\S*/gi, "[redacted-url]");
+
 export async function readSinkCursorBlock(q: SqlQuery, chainId: string): Promise<{ block: string } | null> {
   if (!/^\d+$/.test(chainId)) throw new Error(`readSinkCursorBlock: chainId must be numeric, got ${JSON.stringify(chainId)}`);
   let rows: any[];
   try {
     ({ rows } = await q(`SELECT block_num FROM cursors_${chainId} ORDER BY block_num DESC LIMIT 1`, []));
-  } catch {
+  } catch (e) {
+    if ((e as { code?: unknown })?.code !== PG_UNDEFINED_TABLE) {
+      console.warn(`substreams cursor read failed for chain ${chainId}: ${withoutUrls(e instanceof Error ? e.message : String(e))}`);
+    }
     return null;
   }
   return rows[0] ? { block: String(rows[0].block_num) } : null;
