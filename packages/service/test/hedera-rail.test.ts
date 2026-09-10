@@ -3,9 +3,9 @@ import express from "express";
 import { TransferTransaction, TransactionId, AccountId, TokenId } from "@x402/hedera";
 import { encodePaymentSignatureHeader, decodePaymentRequiredHeader } from "@x402/core/http";
 import type { PaymentPayload } from "@x402/core/types";
-import { deriveKemKeys, deriveSigningKeys, MemoryNonceStore } from "@vaultradar/core";
-import { decodeHederaPayment, hederaPayerFromRequest, hederaTxIdFromRequest } from "../src/rails/hedera";
-import { buildApp } from "../src/app";
+import { deriveKemKeys, deriveSigningKeys, MemoryNonceStore, type SourceRef, type UnifiedVault } from "@vaultradar/core";
+import { decodeHederaPayment, hederaPayerFromRequest, hederaTxIdFromRequest, _mapSizesForTests } from "../src/rails/hedera";
+import { buildApp, type BuildAppDeps } from "../src/app";
 import { loadConfig } from "../src/config";
 
 const TOKEN_ID = "0.0.429274";
@@ -16,9 +16,23 @@ const PAYTO_ACCOUNT = "0.0.5678";
 // business payer, so a test where they coincide couldn't tell decodeHederaPayment's
 // transfer-based derivation apart from a (wrong) transactionId-based one.
 const FEE_PAYER_ACCOUNT = "0.0.999";
+// Matches fakeFacilitator's default `feePayer` below. ExactHederaScheme's server-side
+// enhancePaymentRequirements merges the facilitator's declared feePayer into
+// requirements.extra.feePayer, and x402's findMatchingRequirements requires every key
+// in the server's computed `extra` to be present (with an equal value) in the client
+// payload's `accepted.extra` (@x402/core's paymentRequirementsMatchAccepted /
+// objectContainsSubset) — so a payload built with a different (or missing) feePayer
+// here would fail to match and never reach verify/settle at all.
+const DEFAULT_FEE_PAYER = "0.0.7162784";
 
-/** Builds a `payment-signature` header value carrying a real, freeze-able Hedera transfer. */
-function buildPaymentSignatureHeader(payerAccount = PAYER_ACCOUNT): string {
+/**
+ * Builds a `payment-signature` header value carrying a real, freeze-able Hedera
+ * transfer. `amount`/`asset`/`payTo`/`feePayer` must match what the mounted rail will
+ * itself compute for the same X-VR-Count (1, by default across these tests) and the
+ * same fake facilitator, or x402's own requirements-matching step rejects the payload
+ * before this rail ever sees it.
+ */
+function buildPaymentSignatureHeader(payerAccount = PAYER_ACCOUNT, feePayer = DEFAULT_FEE_PAYER): string {
   const tx = new TransferTransaction()
     .addTokenTransfer(TokenId.fromString(TOKEN_ID), AccountId.fromString(payerAccount), -1500)
     .addTokenTransfer(TokenId.fromString(TOKEN_ID), AccountId.fromString(PAYTO_ACCOUNT), 1500)
@@ -28,7 +42,7 @@ function buildPaymentSignatureHeader(payerAccount = PAYER_ACCOUNT): string {
   const transactionB64 = Buffer.from(tx.toBytes()).toString("base64");
   const payload: PaymentPayload = {
     x402Version: 2,
-    accepted: { scheme: "exact", network: "hedera:testnet", asset: TOKEN_ID, amount: "1500", payTo: PAYTO_ACCOUNT, maxTimeoutSeconds: 120, extra: {} },
+    accepted: { scheme: "exact", network: "hedera:testnet", asset: TOKEN_ID, amount: "1500", payTo: PAYTO_ACCOUNT, maxTimeoutSeconds: 120, extra: { feePayer } },
     payload: { transaction: transactionB64 },
   };
   return encodePaymentSignatureHeader(payload);
@@ -71,12 +85,21 @@ test("a malformed payment-signature header decodes to nulls instead of throwing"
 
 // --- (b)/(c) mounted rail: pricing, validation, and the 402 payment-required body --
 
+type VerifyMode = { isValid: boolean; payer?: string; invalidReason?: string };
+type SettleMode = { success: boolean; transaction?: string; payer?: string; errorReason?: string };
+
 /**
- * A minimal x402 facilitator: /supported succeeds, /verify and /settle report failure.
+ * A minimal x402 facilitator: /supported always succeeds; /verify and /settle default
+ * to a clean failure (the shape most of these tests want — nothing here should ever
+ * reach the resource server's paid path). Pass `verify`/`settle` to exercise the paid
+ * path instead (see the onAfterVerify/onAfterSettle/onSettleFailure tests below).
  * Tracks call counts so tests can assert a rejected request never reached the
- * facilitator at all (see the two 400-path tests below).
+ * facilitator at all.
  */
-function fakeFacilitator(feePayer = "0.0.7162784") {
+function fakeFacilitator(opts: { feePayer?: string; verify?: VerifyMode; settle?: SettleMode } = {}) {
+  const feePayer = opts.feePayer ?? DEFAULT_FEE_PAYER;
+  const verify: VerifyMode = opts.verify ?? { isValid: false, invalidReason: "test_stub" };
+  const settle: SettleMode = opts.settle ?? { success: false, errorReason: "test_stub" };
   const calls = { supported: 0, verify: 0, settle: 0 };
   const app = express();
   app.use(express.json());
@@ -86,18 +109,23 @@ function fakeFacilitator(feePayer = "0.0.7162784") {
   });
   app.post("/verify", (_req, res) => {
     calls.verify++;
-    res.json({ isValid: false, invalidReason: "test_stub" });
+    res.json(verify);
   });
   app.post("/settle", (_req, res) => {
     calls.settle++;
-    res.json({ success: false, transaction: "", network: "hedera:testnet", errorReason: "test_stub" });
+    res.json({ transaction: "", network: "hedera:testnet", ...settle });
   });
   const srv = app.listen(0);
   const port = (srv.address() as any).port;
   return { url: `http://127.0.0.1:${port}`, calls, close: () => srv.close() };
 }
 
-async function mountRail(facilitatorUrl: string) {
+type ScanFn = (ids: string[]) => Promise<{ vaults: UnifiedVault[]; sources: SourceRef[] }>;
+
+async function mountRail(
+  facilitatorUrl: string,
+  opts: { onSettled?: (receipt: unknown, txId: string) => void; scan?: ScanFn } = {},
+) {
   const config = loadConfig({
     PORT: "0", PUBLIC_URL: "http://svc.test", PQ_SIG_SEED: "77".repeat(32), PQ_KEM_SEED: "88".repeat(64),
     GRAPH_STUDIO_API_KEY: "k", HEDERA_PAYTO_ACCOUNT_ID: PAYTO_ACCOUNT, HEDERA_OPERATOR_ID: "0.0.1",
@@ -106,10 +134,17 @@ async function mountRail(facilitatorUrl: string) {
   const keys = { sig: deriveSigningKeys(config.sigSeed), kem: deriveKemKeys(config.kemSeed) };
   const data = {
     catalog: async () => ({ protocols: [], erc4626Chains: [] }),
-    scan: async () => ({ vaults: [], sources: [] }),
+    scan: opts.scan ?? (async () => ({ vaults: [], sources: [] })),
     table: async () => ({ vaults: [], sources: [] }),
   };
-  const app = await buildApp({ config, keys, data, hcs: null, nonces: new MemoryNonceStore(), rails: { hedera: true } });
+  // mountHederaRail's own deps type carries `onSettled` (app.ts forwards BuildAppDeps
+  // straight through by reference), which BuildAppDeps itself doesn't declare — typed
+  // as a variable rather than an inline literal so this doesn't trip an excess-property
+  // check on a field the production type genuinely doesn't have.
+  const deps: BuildAppDeps & { onSettled?: (receipt: unknown, txId: string) => void } = {
+    config, keys, data, hcs: null, nonces: new MemoryNonceStore(), rails: { hedera: true }, onSettled: opts.onSettled,
+  };
+  const app = await buildApp(deps);
   const srv = app.listen(0);
   const port = (srv.address() as any).port;
   return { base: `http://127.0.0.1:${port}`, close: () => srv.close() };
@@ -236,6 +271,103 @@ test("a body that claims to be a sealed envelope but fails isSealed returns 400 
     expect(res.status).toBe(400);
     expect(await res.json()).toEqual({ reason: "malformed_envelope" });
     expect(fac.calls.verify).toBe(0);
+  } finally {
+    rail.close();
+    fac.close();
+  }
+});
+
+// --- onAfterVerify / onAfterSettle / onSettleFailure: the paid path -----------------
+
+const SCAN_BODY = JSON.stringify({ vaults: ["1:0xabababababababababababababababababababab"] });
+const VERIFIED_PAYER = "0.0.4242"; // distinct from PAYER_ACCOUNT (0.0.1234, the transfer-decoded payer)
+const SETTLED_TX = "0.0.4242@1700000000.000000001";
+
+test("a verified and settled payment reaches the handler, returns 200 with a receipt, invokes onSettled exactly once, and empties both maps", async () => {
+  const fac = fakeFacilitator({
+    verify: { isValid: true, payer: VERIFIED_PAYER },
+    settle: { success: true, transaction: SETTLED_TX, payer: VERIFIED_PAYER },
+  });
+  const settledCalls: [unknown, string][] = [];
+  const rail = await mountRail(fac.url, { onSettled: (receipt, txId) => settledCalls.push([receipt, txId]) });
+  try {
+    const header = buildPaymentSignatureHeader();
+    const res = await fetch(`${rail.base}/hedera/v1/scan`, {
+      method: "POST",
+      headers: { "content-type": "application/json", "x-vr-count": "1", "payment-signature": header },
+      body: SCAN_BODY,
+    });
+    expect(res.status).toBe(200);
+    const j = await res.json();
+    expect(j.receipt).toBeDefined();
+
+    expect(settledCalls.length).toBe(1);
+    // The settled tx id comes from the facilitator's settle response (ctx.result.transaction),
+    // not from j.receipt.payment.txId — that field is the client-signed tx id decoded before
+    // settlement ever runs (HandlerDeps.getTxId's contract in handlers/scan.ts), which for
+    // this fixture is a different, freshly-generated Hedera transaction id. Both identify
+    // the same real transaction on Hedera; they're just captured at two different times.
+    expect(settledCalls[0][1]).toBe(SETTLED_TX);
+    expect(settledCalls[0][0]).toEqual(j.receipt);
+
+    expect(_mapSizesForTests()).toEqual({ payer: 0, receipt: 0 });
+  } finally {
+    rail.close();
+    fac.close();
+  }
+});
+
+test("a failed settle after a successful verify does not invoke onSettled, and both maps are cleaned up via onSettleFailure", async () => {
+  const fac = fakeFacilitator({
+    verify: { isValid: true, payer: VERIFIED_PAYER },
+    settle: { success: false, errorReason: "test_stub" },
+  });
+  const settledCalls: unknown[] = [];
+  const rail = await mountRail(fac.url, { onSettled: (...args) => settledCalls.push(args) });
+  try {
+    const header = buildPaymentSignatureHeader();
+    await fetch(`${rail.base}/hedera/v1/scan`, {
+      method: "POST",
+      headers: { "content-type": "application/json", "x-vr-count": "1", "payment-signature": header },
+      body: SCAN_BODY,
+    });
+    expect(settledCalls.length).toBe(0);
+    expect(_mapSizesForTests()).toEqual({ payer: 0, receipt: 0 });
+  } finally {
+    rail.close();
+    fac.close();
+  }
+});
+
+test("hederaPayerFromRequest prefers the facilitator-verified payer over the transfer-decoded one", async () => {
+  const fac = fakeFacilitator({
+    verify: { isValid: true, payer: VERIFIED_PAYER },
+    settle: { success: true, transaction: SETTLED_TX, payer: VERIFIED_PAYER },
+  });
+  const header = buildPaymentSignatureHeader(); // transfer-decoded payer would be PAYER_ACCOUNT ("0.0.1234")
+  let capturedPayer: string | null | undefined;
+  // data.scan runs inside the handler, strictly between the middleware's verify step
+  // (which has already populated the payer map by the time the handler is dispatched)
+  // and its settle step (which only runs after the handler's response is fully
+  // written) — the one window where the map genuinely holds a value to prefer over
+  // the transfer-decoded fallback. A minimal object with just `.header()` stands in
+  // for the Express Request here since hederaPayerFromRequest only ever calls that.
+  const rail = await mountRail(fac.url, {
+    scan: async () => {
+      const fakeReq = { header: (name: string) => (name === "payment-signature" ? header : undefined) } as unknown as express.Request;
+      capturedPayer = hederaPayerFromRequest(fakeReq);
+      return { vaults: [], sources: [] };
+    },
+  });
+  try {
+    const res = await fetch(`${rail.base}/hedera/v1/scan`, {
+      method: "POST",
+      headers: { "content-type": "application/json", "x-vr-count": "1", "payment-signature": header },
+      body: SCAN_BODY,
+    });
+    expect(res.status).toBe(200);
+    expect(capturedPayer).toBe(VERIFIED_PAYER);
+    expect(capturedPayer).not.toBe(PAYER_ACCOUNT);
   } finally {
     rail.close();
     fac.close();

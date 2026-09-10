@@ -11,6 +11,36 @@ import { asyncHandler } from "../util/async";
 type Decoded = { payer: string | null; txId: string | null };
 
 /**
+ * Both settlement-correlation maps below expire an entry 10 minutes after it's
+ * written. Cleanup normally happens synchronously via onAfterSettle/onSettleFailure
+ * (see mountHederaRail), but a client can verify a payment and then abandon the
+ * request before ever settling — no hook fires for that at all, so without a TTL
+ * those two entries would sit forever. Swept on every insert rather than with a
+ * timer, so idle test processes (and idle production processes with no further
+ * traffic) don't have a background interval to leak or to make tests
+ * non-deterministic.
+ */
+const ENTRY_TTL_MS = 10 * 60_000;
+type Expiring<T> = { value: T; expiresAt: number };
+
+function sweepExpired<T>(map: Map<string, Expiring<T>>, now: number): void {
+  for (const [key, entry] of map) if (entry.expiresAt <= now) map.delete(key);
+}
+
+/** Inserts (or refreshes) an entry with a fresh TTL, sweeping expired entries first. */
+function putWithTtl<T>(map: Map<string, Expiring<T>>, key: string, value: T): void {
+  const now = Date.now();
+  sweepExpired(map, now);
+  map.set(key, { value, expiresAt: now + ENTRY_TTL_MS });
+}
+
+/** Reads a live entry; an entry past its TTL reads as absent even if not yet swept. */
+function getFresh<T>(map: Map<string, Expiring<T>>, key: string): T | undefined {
+  const entry = map.get(key);
+  return entry && entry.expiresAt > Date.now() ? entry.value : void 0;
+}
+
+/**
  * Payer the facilitator itself verified during x402's verify step, keyed by the base64
  * transaction string inside the client's payload. ExactHederaScheme's payment flow is
  * "authorization" (its only default), which verifies before the route handler ever
@@ -21,12 +51,15 @@ type Decoded = { payer: string | null; txId: string | null };
  * facilitator has already checked the payer actually signed the transaction
  * (FacilitatorHederaSigner.verifyPayerSignature); this module's fallback has not.
  */
-const verifiedPayerByTxKey = new Map<string, string>();
+const verifiedPayerByTxKey = new Map<string, Expiring<string>>();
 
 /**
  * Receipts awaiting settlement observation, keyed the same way. Filled by the route
  * wrapper in mountTier right after the scan/table handler resolves (from
- * res.locals.receipt), consumed by onAfterSettle below.
+ * res.locals.receipt), consumed by onAfterSettle (success) or onSettleFailure
+ * (failure) below — both delete their entry unconditionally, so a failed settle never
+ * leaves it behind, and the TTL above catches the remaining case: a verified payment
+ * whose request is abandoned before either hook ever fires.
  *
  * Safe without a lock, despite both writes happening from async continuations: the
  * x402 Express middleware buffers res.end and only calls the facilitator's real
@@ -36,7 +69,7 @@ const verifiedPayerByTxKey = new Map<string, string>();
  * calls receiptByTxKey.set) before any I/O-driven callback such as a fetch response
  * runs, so the receipt is always stored before onAfterSettle can possibly look it up.
  */
-const receiptByTxKey = new Map<string, Receipt>();
+const receiptByTxKey = new Map<string, Expiring<Receipt>>();
 
 const decodedCache = new WeakMap<Request, Decoded>();
 
@@ -75,7 +108,7 @@ export function decodeHederaPayment(req: Request): Decoded {
     const b64 = txKeyFromRequest(req);
     if (b64) {
       const inspected = inspectHederaTransaction(b64);
-      let payer = verifiedPayerByTxKey.get(b64) ?? null;
+      let payer = getFresh(verifiedPayerByTxKey, b64) ?? null;
       if (!payer) {
         for (const transfers of Object.values(inspected.tokenTransfers)) {
           payer = payerFromTransfers(transfers);
@@ -135,7 +168,7 @@ export function mountHederaRail(
     if (!payer) return;
     try {
       const b64 = extractTransactionFromPayload(ctx.paymentPayload.payload as unknown as ExactHederaPayloadV2);
-      verifiedPayerByTxKey.set(b64, payer);
+      putWithTtl(verifiedPayerByTxKey, b64, payer);
     } catch {
       /* not an exact-Hedera payload; nothing to key on */
     }
@@ -144,12 +177,30 @@ export function mountHederaRail(
   server.onAfterSettle(async ctx => {
     try {
       const b64 = extractTransactionFromPayload(ctx.paymentPayload.payload as unknown as ExactHederaPayloadV2);
-      const receipt = receiptByTxKey.get(b64);
+      const receipt = getFresh(receiptByTxKey, b64);
       verifiedPayerByTxKey.delete(b64);
       receiptByTxKey.delete(b64);
       if (receipt) deps.onSettled?.(receipt, ctx.result.transaction);
     } catch {
       /* not an exact-Hedera payload; nothing to correlate */
+    }
+  });
+
+  // @x402/core calls onAfterSettle only when settlement succeeds — a facilitator that
+  // answers /settle with a clean `{success: false}` (or one whose call throws) instead
+  // routes through onSettleFailure (confirmed in @x402/core's compiled settlePayment:
+  // `if (!settleResult.success) { ...run onSettleFailure hooks...; return settleResult }`,
+  // a separate branch from the onAfterSettle one below it). Without this hook, a failed
+  // settle after a successful verify would never delete the entries onAfterVerify and
+  // the route wrapper just wrote — this mirrors onAfterSettle's cleanup, minus the
+  // onSettled call, since the payment never actually settled.
+  server.onSettleFailure(async ctx => {
+    try {
+      const b64 = extractTransactionFromPayload(ctx.paymentPayload.payload as unknown as ExactHederaPayloadV2);
+      verifiedPayerByTxKey.delete(b64);
+      receiptByTxKey.delete(b64);
+    } catch {
+      /* not an exact-Hedera payload; nothing to clean up */
     }
   });
 
@@ -187,10 +238,18 @@ export function mountHederaRail(
     app.post(path, asyncHandler(async (req: Request, res: Response) => {
       const b64 = txKeyFromRequest(req);
       await handler(req, res);
-      if (b64 && res.locals.receipt) receiptByTxKey.set(b64, res.locals.receipt as Receipt);
+      if (b64 && res.locals.receipt) putWithTtl(receiptByTxKey, b64, res.locals.receipt as Receipt);
     }));
   };
   mountTier("/hedera/v1/scan", "scan");
   mountTier("/hedera/v1/scan-hbar", "scan");
   mountTier("/hedera/v1/table", "table");
 }
+
+/**
+ * Test-only introspection of the settlement-correlation maps' sizes, to verify the
+ * cleanup invariant (every entry written by onAfterVerify/mountTier is removed by
+ * onAfterSettle or onSettleFailure, or eventually by the TTL sweep). Not part of the
+ * rail's public API — nothing outside this module's own tests should import it.
+ */
+export const _mapSizesForTests = () => ({ payer: verifiedPayerByTxKey.size, receipt: receiptByTxKey.size });
