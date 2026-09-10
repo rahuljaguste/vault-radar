@@ -3,6 +3,8 @@ import {
   buildAttestation,
   buildReceipt,
   checkSealedRequest,
+  checkSealedRequestPayer,
+  commitNonce,
   computeRisk,
   isSealed,
   openSealedRequest,
@@ -25,6 +27,8 @@ import {
 import type { DataProvider } from "../data/provider";
 import type { ServiceKeys } from "../keys";
 import type { Config } from "../config";
+import type { Metrics, Verdict } from "../metrics";
+import { errBody } from "../util/http";
 
 export type HandlerDeps = {
   keys: ServiceKeys;
@@ -44,6 +48,10 @@ export type HandlerDeps = {
   getTxId: (req: Request, res: Response) => string | null;
   /** Test-only override for the handler time cap; production callers never set this. */
   capMs?: number;
+  /** Optional: when set, every response this handler produces is recorded (tier,
+   * status, and — on a 2xx — the per-vault verdicts). Omitted in most existing tests,
+   * which don't care about metrics; production wiring (app.ts) always sets it. */
+  metrics?: Metrics;
 };
 
 const HANDLER_CAP_MS = 60_000;
@@ -59,7 +67,7 @@ const VAULT_ID_RE = /^\d+:0x[0-9a-f]{40}$/i;
  * a 4xx here costs the payer nothing because settlement only follows a 2xx.
  */
 export function makeScanHandler(d: HandlerDeps) {
-  return async (req: Request, res: Response) => {
+  const handler = async (req: Request, res: Response) => {
     const now = Math.floor(Date.now() / 1000);
     const sealedIn = isSealed(req.body);
     let request: ScanRequest | TableRequest;
@@ -67,16 +75,39 @@ export function makeScanHandler(d: HandlerDeps) {
 
     if (sealedIn) {
       let opened: SealedRequest<ScanRequest | TableRequest>;
-      try {
-        opened = openSealedRequest<ScanRequest | TableRequest>(req.body, d.keys.kem.secretKey, d.keys.kem.kid);
-      } catch {
-        return res.status(422).json({ reason: "envelope_open_failed" });
+      // res.locals.opened is set by rails/arc.ts's pre-payment middleware, which already
+      // opened this envelope and ran checkSealedRequestPrePayment (ts window, nonce not
+      // yet seen, count) *before* payment ever started — Circle settles before this
+      // handler runs, so that check has to happen ahead of gateway.require, not here.
+      // Re-opening (a real KEM decrypt) or re-running the pre-payment check would be
+      // redundant; only the payer check and the nonce commit remain for this handler to
+      // do. The Hedera rail never sets this — its own settle-after-response ordering has
+      // no such problem, so it takes the unsplit `checkSealedRequest` path below,
+      // unchanged from before this split existed.
+      const preOpened = res.locals.opened as SealedRequest<ScanRequest | TableRequest> | undefined;
+      if (preOpened) {
+        opened = preOpened;
+        const payer = d.getPayer(req);
+        if (!payer) return res.status(422).json(errBody("payer_unknown"));
+        const payerCheck = checkSealedRequestPayer(opened, payer);
+        // A payer_mismatch caught here, on Arc, is caught *after* settlement already
+        // happened (see rails/arc.ts's pre-payment middleware comment) — this request's
+        // payer already paid and is not refunded. Not something this handler can fix;
+        // documented as a known limitation of the Circle Gateway flow (README.md).
+        if (!payerCheck.ok) return res.status(422).json(errBody(payerCheck.reason));
+        commitNonce(opened, d.nonces, now);
+      } else {
+        try {
+          opened = openSealedRequest<ScanRequest | TableRequest>(req.body, d.keys.kem.secretKey, d.keys.kem.kid);
+        } catch {
+          return res.status(422).json(errBody("envelope_open_failed"));
+        }
+        const payer = d.getPayer(req);
+        if (!payer) return res.status(422).json(errBody("payer_unknown"));
+        const count = d.tier === "scan" ? clampCount(req.header("x-vr-count")) ?? undefined : undefined;
+        const chk = checkSealedRequest(opened, { now, payer, count, seen: d.nonces });
+        if (!chk.ok) return res.status(422).json(errBody(chk.reason));
       }
-      const payer = d.getPayer(req);
-      if (!payer) return res.status(422).json({ reason: "payer_unknown" });
-      const count = d.tier === "scan" ? clampCount(req.header("x-vr-count")) ?? undefined : undefined;
-      const chk = checkSealedRequest(opened, { now, payer, count, seen: d.nonces });
-      if (!chk.ok) return res.status(422).json({ reason: chk.reason });
       request = opened.request;
       replyPk = fromB64(opened.reply_pk);
     } else {
@@ -86,12 +117,12 @@ export function makeScanHandler(d: HandlerDeps) {
     if (d.tier === "scan") {
       const vaults = (request as ScanRequest).vaults;
       if (!Array.isArray(vaults) || !vaults.length || vaults.length > 100 || !vaults.every(v => VAULT_ID_RE.test(v))) {
-        return res.status(422).json({ reason: "bad_vaults" });
+        return res.status(422).json(errBody("bad_vaults"));
       }
     } else {
       const table = request as TableRequest;
       if (typeof table.protocol !== "string" || typeof table.chainId !== "string") {
-        return res.status(422).json({ reason: "bad_table_request" });
+        return res.status(422).json(errBody("bad_table_request"));
       }
     }
 
@@ -119,6 +150,11 @@ export function makeScanHandler(d: HandlerDeps) {
     }
 
     const reports = result.vaults.map(v => computeRisk(v, now));
+    // Stashed on res.locals (alongside res.locals.receipt below) rather than passed some
+    // other way, so the metrics wrapper in makeScanHandler — which only has access to
+    // req/res, not this closure — can read the per-vault verdicts for
+    // Metrics.recordRequest's unavailableVerdicts count.
+    res.locals.verdicts = reports.map(r => r.verdict);
     const attestations = result.vaults.map(v => {
       const s = v.sources[0];
       return buildAttestation(
@@ -165,5 +201,14 @@ export function makeScanHandler(d: HandlerDeps) {
     // that hook can rely on res.locals.receipt being set on every successful response.
     res.locals.receipt = receipt;
     return res.status(200).json(replyPk ? { sealed: seal(body, replyPk), receipt } : { ...body, receipt });
+  };
+
+  // Wrapping (rather than instrumenting every return statement above) keeps every early
+  // 4xx/5xx return in `handler` a plain, unannotated `res.status(...).json(...)` — this
+  // is the single place that observes the final status code and verdicts regardless of
+  // which branch produced them.
+  return async (req: Request, res: Response) => {
+    await handler(req, res);
+    d.metrics?.recordRequest(d.tier, res.statusCode, res.locals.verdicts as Verdict[] | undefined);
   };
 }

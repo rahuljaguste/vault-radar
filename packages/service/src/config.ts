@@ -17,6 +17,9 @@ export type Config = {
   };
   arc: { sellerAddress: string; facilitatorUrl: string; network: "eip155:5042002" };
   erc8004: { chainId: string; agentId: string }[];
+  /** Bearer token gating `GET /v1/admin/metrics` (spec §13.1). `null` (unset) disables
+   * the endpoint entirely (503), rather than leaving it reachable with no credential. */
+  adminToken: string | null;
 };
 
 type Env = Record<string, string | undefined>;
@@ -66,5 +69,6 @@ export function loadConfig(env: Env = process.env): Config {
       network: "eip155:5042002",
     },
     erc8004,
+    adminToken: env.ADMIN_TOKEN || null,
   };
 }

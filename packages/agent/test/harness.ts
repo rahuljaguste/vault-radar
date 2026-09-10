@@ -119,6 +119,9 @@ export async function startHarness(): Promise<Harness> {
       consensus_timestamp: "1700000000.000000001",
       initial_transaction_id: TEST_TX_ID,
     }),
+    // No agent test exercises the admin metrics endpoint through this harness; a fixed
+    // stub is enough to satisfy HcsSink's shape.
+    stats: () => ({ pending: 0, submitted: 0, failed: 0, lastSequence: TEST_HCS_SEQUENCE }),
   };
   const app = await buildApp({ config, keys, data, hcs, nonces, rails: {} });
   // The Hedera scan/table routes are mounted directly with a fixed payer and tx id,

@@ -26,6 +26,10 @@ type FetchLike = (url: string) => Promise<Response>;
 export interface HcsSink {
   enqueue(r: Receipt): void;
   lookup(h: string): Promise<LookupResult>;
+  /** Counters for the admin metrics endpoint (spec §13.1); see `HcsQueue.stats()`. Part
+   * of the interface (not just the concrete class) so `admin.ts`/`metrics.ts` can type
+   * against `HcsSink` — the same reasoning as `enqueue`/`lookup` above. */
+  stats(): { pending: number; submitted: number; failed: number; lastSequence: string | null };
 }
 
 const defaultFetch: FetchLike = url => fetch(url);
@@ -45,6 +49,14 @@ export class HcsQueue implements HcsSink {
   private running = false;
   private retryMs: number;
   private fetchImpl: FetchLike;
+  // Lifetime counters for the admin metrics endpoint (spec §13.1). `submittedCount` is
+  // every *successful* submit call; `failedCount` is every failed *attempt*, so a
+  // message that fails twice before succeeding counts as 2 failures + 1 submission, not
+  // a single outcome — that's deliberate: it's meant to surface retry pressure on HCS,
+  // not just the eventual pass/fail of each receipt.
+  private submittedCount = 0;
+  private failedCount = 0;
+  private lastSeq: string | null = null;
 
   constructor(private deps: { submit: Submit; topicId: string; retryMs?: number; fetchImpl?: FetchLike }) {
     this.retryMs = deps.retryMs ?? 2000;
@@ -54,6 +66,12 @@ export class HcsQueue implements HcsSink {
   /** Number of receipts submitted but not yet durably committed (queued or mid-retry). */
   pending(): number {
     return this.q.length;
+  }
+
+  /** Counters for the admin metrics endpoint. Reset on process restart, same as every
+   * other in-process counter this service exposes there. */
+  stats(): { pending: number; submitted: number; failed: number; lastSequence: string | null } {
+    return { pending: this.pending(), submitted: this.submittedCount, failed: this.failedCount, lastSequence: this.lastSeq };
   }
 
   enqueue(r: Receipt): void {
@@ -77,9 +95,12 @@ export class HcsQueue implements HcsSink {
           consensus_timestamp: res.consensusTimestamp,
           initial_transaction_id: res.transactionId ?? null,
         });
+        this.submittedCount++;
+        this.lastSeq = res.sequence;
         this.q.shift();
       } catch {
         // Leave the message at the head of the queue and retry after a delay.
+        this.failedCount++;
         await new Promise(resolve => setTimeout(resolve, this.retryMs));
       }
     }

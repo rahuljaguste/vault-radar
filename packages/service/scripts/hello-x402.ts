@@ -35,7 +35,10 @@ if (!accountId || !privateKey) {
 
 const card = await (await fetch(`${base}/.well-known/agent.json`)).json();
 
-const signer = createClientHederaSigner(accountId, PrivateKey.fromStringECDSA(privateKey), { network: "testnet" });
+// network must be CAIP-2 ("hedera:testnet"), not the bare "testnet" — Task 22+23's
+// agent hit this first (task-19-27-report.md carries the fix forward); a bare network
+// id here fails signer construction against @x402/hedera 2.25.0.
+const signer = createClientHederaSigner(accountId, PrivateKey.fromStringECDSA(privateKey), { network: "hedera:testnet" });
 const client = new x402Client().register("hedera:testnet", new ExactHederaScheme(signer));
 const payFetch = wrapFetchWithPayment(fetch, client);
 

@@ -33,13 +33,69 @@ export function openSealedRequest<R>(sealed: Sealed, kemSecret: Uint8Array, kid:
   }
   return p;
 }
-export function checkSealedRequest(p: SealedRequest<unknown>, o: { now: number; payer: string; count?: number; seen: NonceStore }): { ok: true } | { ok: false; reason: string } {
+type Check = { ok: true } | { ok: false; reason: string };
+
+/**
+ * Everything about a sealed request that can be validated *before* a payer is known:
+ * the ts window, that the nonce hasn't been seen before (without committing it — see
+ * `commitNonce`), and (for scan requests) that the request's own vault count matches
+ * the count the payment was priced against. None of this depends on payment state, so
+ * it is safe to run ahead of payment processing — the Arc rail does exactly that
+ * (`rails/arc.ts`'s pre-payment middleware), since on that rail settlement completes
+ * before any handler runs and there is no way to refund a request rejected afterward.
+ */
+export function checkSealedRequestPrePayment(p: SealedRequest<unknown>, o: { now: number; count?: number; seen: NonceStore }): Check {
   const ts = Number(p.ts);
   if (!Number.isFinite(ts) || Math.abs(o.now - ts) > TS_WINDOW_S) return { ok: false, reason: "ts_window" };
   if (o.seen.has(p.req_nonce)) return { ok: false, reason: "nonce_replay" };
-  if (p.payer !== o.payer) return { ok: false, reason: "payer_mismatch" };
   const vaults = (p.request as { vaults?: unknown }).vaults;
   if (o.count !== undefined && Array.isArray(vaults) && vaults.length !== o.count) return { ok: false, reason: "count_mismatch" };
-  o.seen.sweep(o.now); o.seen.add(p.req_nonce, o.now + NONCE_TTL_S);
+  return { ok: true };
+}
+
+/**
+ * The one check that genuinely cannot run before payment on every rail: whether the
+ * sealed request's claimed payer matches the payer the rail actually observed. On Arc
+ * that payer is only known once `gateway.require` has already verified (and settled)
+ * the payment, so a `payer_mismatch` caught here is caught *after* money has moved —
+ * see `rails/arc.ts`'s handler-side comment for why this is not refunded there.
+ */
+export function checkSealedRequestPayer(p: SealedRequest<unknown>, payer: string): Check {
+  return p.payer === payer ? { ok: true } : { ok: false, reason: "payer_mismatch" };
+}
+
+/**
+ * Records the request's nonce as seen, so a replay of the same sealed envelope is
+ * rejected by a later `checkSealedRequestPrePayment` call. Deliberately split out from
+ * the pre-payment check itself (which only *reads* `seen`) rather than folded into it:
+ * committing the nonce as soon as the pre-payment check passes — before the payer check
+ * even runs — would permanently burn it even for a request that goes on to fail
+ * `checkSealedRequestPayer`, or (on Arc) never reaches payment at all. A caller commits
+ * only once every check it cares about has actually passed, mirroring exactly when the
+ * combined `checkSealedRequest` below commits.
+ */
+export function commitNonce(p: SealedRequest<unknown>, seen: NonceStore, now: number): void {
+  seen.sweep(now);
+  seen.add(p.req_nonce, now + NONCE_TTL_S);
+}
+
+/**
+ * The full check, as a single call: `checkSealedRequestPrePayment` then
+ * `checkSealedRequestPayer`, committing the nonce only if both pass. Kept as the
+ * composition of the three pieces above (rather than its own independent
+ * implementation) so every existing caller — the Hedera rail, which has no
+ * settle-before-handler ordering problem and so never needed the split — and every
+ * existing test keeps working unchanged. Note this changes the *tie-break order*
+ * between `count_mismatch` and `payer_mismatch` relative to the pre-split
+ * implementation (count is now checked first, since it moved into the pre-payment
+ * phase) — no existing caller or test depends on which of the two wins when a request
+ * fails both simultaneously.
+ */
+export function checkSealedRequest(p: SealedRequest<unknown>, o: { now: number; payer: string; count?: number; seen: NonceStore }): Check {
+  const pre = checkSealedRequestPrePayment(p, o);
+  if (!pre.ok) return pre;
+  const payerCheck = checkSealedRequestPayer(p, o.payer);
+  if (!payerCheck.ok) return payerCheck;
+  commitNonce(p, o.seen, o.now);
   return { ok: true };
 }
