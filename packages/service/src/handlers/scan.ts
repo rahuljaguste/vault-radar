@@ -25,6 +25,7 @@ import {
 import type { DataProvider } from "../data/provider";
 import type { ServiceKeys } from "../keys";
 import type { Config } from "../config";
+import type { Metrics, Verdict } from "../metrics";
 import { errBody } from "../util/http";
 
 export type HandlerDeps = {
@@ -45,6 +46,10 @@ export type HandlerDeps = {
   getTxId: (req: Request, res: Response) => string | null;
   /** Test-only override for the handler time cap; production callers never set this. */
   capMs?: number;
+  /** Optional: when set, every response this handler produces is recorded (tier,
+   * status, and — on a 2xx — the per-vault verdicts). Omitted in most existing tests,
+   * which don't care about metrics; production wiring (app.ts) always sets it. */
+  metrics?: Metrics;
 };
 
 const HANDLER_CAP_MS = 60_000;
@@ -60,7 +65,7 @@ const VAULT_ID_RE = /^\d+:0x[0-9a-f]{40}$/i;
  * a 4xx here costs the payer nothing because settlement only follows a 2xx.
  */
 export function makeScanHandler(d: HandlerDeps) {
-  return async (req: Request, res: Response) => {
+  const handler = async (req: Request, res: Response) => {
     const now = Math.floor(Date.now() / 1000);
     const sealedIn = isSealed(req.body);
     let request: ScanRequest | TableRequest;
@@ -120,6 +125,11 @@ export function makeScanHandler(d: HandlerDeps) {
     }
 
     const reports = result.vaults.map(v => computeRisk(v, now));
+    // Stashed on res.locals (alongside res.locals.receipt below) rather than passed some
+    // other way, so the metrics wrapper in makeScanHandler — which only has access to
+    // req/res, not this closure — can read the per-vault verdicts for
+    // Metrics.recordRequest's unavailableVerdicts count.
+    res.locals.verdicts = reports.map(r => r.verdict);
     const attestations = result.vaults.map(v => {
       const s = v.sources[0];
       return buildAttestation(
@@ -166,5 +176,14 @@ export function makeScanHandler(d: HandlerDeps) {
     // that hook can rely on res.locals.receipt being set on every successful response.
     res.locals.receipt = receipt;
     return res.status(200).json(replyPk ? { sealed: seal(body, replyPk), receipt } : { ...body, receipt });
+  };
+
+  // Wrapping (rather than instrumenting every return statement above) keeps every early
+  // 4xx/5xx return in `handler` a plain, unannotated `res.status(...).json(...)` — this
+  // is the single place that observes the final status code and verdicts regardless of
+  // which branch produced them.
+  return async (req: Request, res: Response) => {
+    await handler(req, res);
+    d.metrics?.recordRequest(d.tier, res.statusCode, res.locals.verdicts as Verdict[] | undefined);
   };
 }

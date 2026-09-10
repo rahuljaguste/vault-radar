@@ -102,6 +102,16 @@ export function mountArcRail(
       ...pre,
       gateway.require(price),
       asyncHandler(async (req: Request, res: Response) => {
+        // `req.payment` is always populated here: reaching this wrapper at all means
+        // `gateway.require` already called `next()`, which — per the module comment
+        // above — only happens after settlement has already succeeded for this exact
+        // request. Recorded unconditionally (not gated on the handler's own response
+        // status), because the settlement itself already happened regardless of what
+        // the handler goes on to do with it — unlike `onSettled` below, which is
+        // specifically about committing *this handler's receipt* to HCS and so needs
+        // one to exist.
+        const payment = (req as PReq).payment;
+        if (payment) deps.metrics?.recordSettlement("arc", payment.amount);
         await handler(req, res);
         if (res.locals.receipt) deps.onSettled?.(res.locals.receipt as Receipt, arcTxIdFromRequest(req));
       }),

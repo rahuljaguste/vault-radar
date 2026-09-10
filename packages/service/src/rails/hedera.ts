@@ -176,6 +176,13 @@ export function mountHederaRail(
   });
 
   server.onAfterSettle(async ctx => {
+    // Recorded unconditionally, ahead of the correlation try/catch below: by the time
+    // this hook fires, @x402/core has already confirmed the facilitator settled this
+    // payment for the "hedera:testnet" scheme this `server` is scoped to — that's true
+    // regardless of whether this rail's own txKey-based correlation (below) manages to
+    // find a matching receipt, so a settlement counts here even in the (never observed,
+    // but not provably impossible) case where the correlation step itself throws.
+    deps.metrics?.recordSettlement("hedera", ctx.requirements.amount);
     try {
       const b64 = extractTransactionFromPayload(ctx.paymentPayload.payload as unknown as ExactHederaPayloadV2);
       const receipt = getFresh(receiptByTxKey, b64);

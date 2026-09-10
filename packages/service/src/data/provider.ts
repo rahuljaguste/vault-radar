@@ -10,13 +10,22 @@ import {
   type SqlQuery,
 } from "@vaultradar/core";
 import type { Config } from "../config";
+import type { Metrics } from "../metrics";
 
 export type Catalog = { protocols: { protocol: string; chain: string; status: string; vaultCount: number }[]; erc4626Chains: string[] };
+export type VaultListEntry = { id: string; protocol: string; kind: string };
 
 export interface DataProvider {
   catalog(): Promise<Catalog>;
   scan(vaultIds: string[]): Promise<{ vaults: UnifiedVault[]; sources: SourceRef[] }>;
   table(protocol: string, chainId: string): Promise<{ vaults: UnifiedVault[]; sources: SourceRef[] }>;
+  /**
+   * Optional so the many inline stub `DataProvider` objects across the existing test
+   * suite (which predate this method) keep type-checking without every one of them
+   * growing an implementation — `admin.ts`'s `/v1/vaults` route calls this via optional
+   * chaining and falls back to an empty list when it's absent.
+   */
+  vaultList?(chainId: string): Promise<VaultListEntry[]>;
 }
 
 type Head = { ts: number; block: number };
@@ -37,7 +46,11 @@ const CHAIN_TTL_S = 60;
 // far in the past relative to headTs and the substreams source is correctly stale.
 const STALE_HEAD: Head = { ts: Number.MAX_SAFE_INTEGER, block: Number.MAX_SAFE_INTEGER };
 
-export type LiveDataProviderDeps = { fetchImpl?: typeof fetch; sql?: SqlQuery | null; now?: () => number };
+export type LiveDataProviderDeps = { fetchImpl?: typeof fetch; sql?: SqlQuery | null; now?: () => number; metrics?: Metrics };
+
+/** `GET /v1/vaults?chainId=` (admin.ts) caps the combined Messari-cached + sink id list
+ * at this many entries. */
+const VAULT_LIST_LIMIT = 500;
 
 /**
  * Groups vault ids of the form "<chainId>:<address>" by chain, lower-casing both parts
@@ -111,6 +124,7 @@ export class LiveDataProvider implements DataProvider {
   private readonly fetchImpl: typeof fetch;
   private readonly sql: SqlQuery | null;
   private readonly now: () => number;
+  private readonly metrics: Metrics | null;
   private readonly headCache = new Map<string, CacheEntry<Head>>();
   private readonly chainCache = new Map<string, CacheEntry<ChainResult>>();
 
@@ -118,6 +132,7 @@ export class LiveDataProvider implements DataProvider {
     this.fetchImpl = deps.fetchImpl ?? fetch;
     this.sql = deps.sql ?? null;
     this.now = deps.now ?? (() => Math.floor(Date.now() / 1000));
+    this.metrics = deps.metrics ?? null;
   }
 
   async catalog(): Promise<Catalog> {
@@ -183,7 +198,34 @@ export class LiveDataProvider implements DataProvider {
     const deployments = DEPLOYMENTS.filter(d => d.chainId === chainId);
     const result = await fetchStandardized(deployments, this.config.graphApiKey, { [chainId]: headTs }, this.fetchImpl);
     this.chainCache.set(chainId, { value: result, expiresAt: this.now() + CHAIN_TTL_S });
+    // Recorded only on an actual fetch (this cache-miss branch), not on every cache hit
+    // `getChainStandardized` serves — otherwise `lastQueriedAt` would advance on every
+    // read regardless of whether anything was actually queried.
+    this.recordDeploymentOutcomes(deployments, headTs, result);
     return result;
+  }
+
+  /**
+   * Best-effort per-deployment health for the admin metrics endpoint (spec §13.1).
+   * `fetchStandardized` (packages/core) already queries each deployment on a chain
+   * independently via `Promise.allSettled`, but only surfaces failures as a
+   * `console.error` plus a zeroed-out `SourceRef` (`block: "0", timestamp: "0"`) —
+   * changing that shared helper to report structured outcomes is out of this task's
+   * scope, so this infers ok/fail from the same zeroed-out signal instead. A
+   * legitimately fresh deployment could in principle also read block "0" (a subgraph
+   * with no indexed block yet), which would misclassify as a failure — an acceptable,
+   * rare imprecision for a best-effort observability signal, not a correctness-critical
+   * one.
+   */
+  private recordDeploymentOutcomes(deployments: typeof DEPLOYMENTS, headTs: number, result: ChainResult): void {
+    if (!this.metrics) return;
+    for (const d of deployments) {
+      const ref = d.deploymentId ?? d.subgraphId;
+      const source = result.sources.find(s => s.ref === ref);
+      const ok = !!source && source.block !== "0";
+      const lagSeconds = ok && source ? Math.max(0, headTs - Number(source.timestamp)) : null;
+      this.metrics.recordDeployment({ protocol: d.protocol, chain: d.chain, chainId: d.chainId }, { ok, lagSeconds, error: ok ? null : "query_failed" });
+    }
   }
 
   private async getChainHead(chainId: string): Promise<Head> {
@@ -192,18 +234,56 @@ export class LiveDataProvider implements DataProvider {
 
     const rpcUrl = this.config.rpc[chainId];
     let head: Head;
+    let ok: boolean;
     if (!rpcUrl) {
       head = STALE_HEAD;
+      ok = false;
     } else {
       try {
         const client = createPublicClient({ transport: http(rpcUrl, { fetchFn: this.fetchImpl }) });
         const block = await client.getBlock({ blockTag: "latest" });
         head = { ts: Number(block.timestamp), block: Number(block.number) };
+        ok = true;
       } catch {
         head = STALE_HEAD;
+        ok = false;
       }
     }
     this.headCache.set(chainId, { value: head, expiresAt: this.now() + HEAD_TTL_S });
+    // Same cache-miss-only reasoning as recordDeploymentOutcomes above.
+    this.metrics?.recordHead(chainId, head, ok);
     return head;
+  }
+
+  /**
+   * `GET /v1/vaults?chainId=` (admin.ts): every vault id this provider already knows
+   * about for a chain, from the cached Messari-derived catalog (never triggers a fetch —
+   * `peekChain` only reads whatever is already cached from a prior `scan`/`table` call)
+   * plus, when a sink database is configured, the substreams sink's own `vault_latest`
+   * ids. Deliberately a much lighter query than `readErc4626Vaults`: this only needs ids,
+   * not full vault objects, freshness, or history, so it skips the per-vault history
+   * queries and the chain-head dependency entirely.
+   */
+  async vaultList(chainId: string): Promise<VaultListEntry[]> {
+    const out: VaultListEntry[] = [];
+    const seen = new Set<string>();
+    const cached = this.peekChain(chainId);
+    if (cached) {
+      for (const v of cached.vaults) {
+        if (seen.has(v.id)) continue;
+        seen.add(v.id);
+        out.push({ id: v.id, protocol: v.protocol, kind: v.kind });
+      }
+    }
+    if (this.sql && out.length < VAULT_LIST_LIMIT) {
+      const { rows } = await this.sql(`SELECT vault FROM vault_latest WHERE chain_id=$1 ORDER BY total_assets DESC NULLS LAST LIMIT $2`, [chainId, VAULT_LIST_LIMIT - out.length]);
+      for (const r of rows) {
+        const id = `${chainId}:${String(r.vault).toLowerCase()}`;
+        if (seen.has(id)) continue;
+        seen.add(id);
+        out.push({ id, protocol: "erc4626", kind: "erc4626" });
+      }
+    }
+    return out.slice(0, VAULT_LIST_LIMIT);
   }
 }
