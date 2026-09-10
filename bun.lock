@@ -69,6 +69,7 @@
         "@vaultradar/core": "workspace:*",
         "@x402/core": "2.25.0",
         "@x402/express": "2.25.0",
+        "@x402/fetch": "2.25.0",
         "@x402/hedera": "2.25.0",
         "cors": "^2.8.5",
         "express": "^4.21.0",
