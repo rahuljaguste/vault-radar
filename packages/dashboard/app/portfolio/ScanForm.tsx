@@ -120,7 +120,8 @@ export function ScanForm({ keysConfigured, demoRunId }: { keysConfigured: boolea
         {keysConfigured ? (
           <p className="muted">
             &ldquo;Scan now&rdquo; buys a real x402 request. The payer is the operator&apos;s agent account, not your
-            wallet, and the spend is capped by the agent&apos;s policy budget. One scan per 30 seconds per client.
+            wallet, and the spend is capped by the agent&apos;s policy budget and a per-scan ceiling. One scan per 30
+            seconds per client.
           </p>
         ) : (
           <div className="card">
@@ -384,9 +385,36 @@ async function readJson(res: Response): Promise<unknown> {
 }
 
 function errorText(body: unknown): string | null {
-  if (typeof body === "object" && body !== null && "error" in body) {
-    const value = (body as { error: unknown }).error;
+  return field(body, "error");
+}
+
+/** Reads one optional string field off an untrusted JSON body. */
+function field(body: unknown, name: string): string | null {
+  if (typeof body === "object" && body !== null && name in body) {
+    const value = (body as Record<string, unknown>)[name];
     if (typeof value === "string") return value;
+  }
+  return null;
+}
+
+/**
+ * The route answers the two spending refusals with a short machine-readable code
+ * plus the amounts. Turn them into a sentence here, so the browser never shows a
+ * bare `over_budget` to a reader.
+ */
+function spendingRefusal(body: unknown, code: string): string | null {
+  const quote = field(body, "quoteUsd");
+  if (code === "over_budget") {
+    const budget = field(body, "budgetUsd");
+    return quote && budget
+      ? `Over budget: this scan costs ${quote} USD and the agent policy allows ${budget} USD per purchase on the Hedera rail. Scan fewer vaults or raise the policy budget.`
+      : "Over budget: this scan costs more than the agent policy allows per purchase on the Hedera rail.";
+  }
+  if (code === "over_per_scan_ceiling") {
+    const ceiling = field(body, "ceilingUsd");
+    return quote && ceiling
+      ? `Over the per-scan ceiling: this scan costs ${quote} USD and the dashboard refuses to spend more than ${ceiling} USD in one purchase.`
+      : "Over the per-scan ceiling: this scan costs more than the dashboard will spend in one purchase.";
   }
   return null;
 }
@@ -403,7 +431,8 @@ function scanErrorMessage(status: number, body: unknown): string {
     return detail ?? "Rate limited: one paid scan per 30 seconds. Wait a moment and try again.";
   }
   if (status === 400) {
-    return detail ?? "The vault list was rejected.";
+    if (detail) return spendingRefusal(body, detail) ?? detail;
+    return "The vault list was rejected.";
   }
   if (status === 404) {
     return "This dashboard build has no /api/scan route, so nothing can be purchased from the browser.";

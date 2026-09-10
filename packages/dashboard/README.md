@@ -52,11 +52,29 @@ file is still written, as evidence). It then applies the policy's
 `max_age_seconds` to the signed attestation timestamps, so a vault the service
 called fresh can still be refused.
 
-Spending limits: the policy's `budget.usdc_hedera`, checked against the quote
-before anything is paid, plus one scan per client address per 30 seconds (in
-memory, per server instance). The rail is always Hedera, because that is the
-only payment key this app reads; the agent's `chooseRail`, which also weighs
-wallet balance and facilitator health across both rails, is not used here.
+Spending limits, all checked against the quote before anything is paid:
+
+1. The policy's `budget.usdc_hedera`. Over it answers `400 { error:
+   "over_budget", quoteUsd, budgetUsd }`.
+2. An absolute per-scan ceiling of 0.10 USD, independent of the policy, so a
+   policy written with a large budget cannot be drained by a pricing change or a
+   count bug. Over it answers `400 { error: "over_per_scan_ceiling", quoteUsd,
+   ceilingUsd }`. The metered price tops out at 0.051 USD for 100 vaults, so this
+   never rejects a legitimate request.
+3. One scan per client address per 30 seconds, in memory, per server instance.
+
+Both comparisons run in integer micro-USD rather than on floats, matching the
+convention in `packages/agent/src/watch.ts`: at this service's own prices,
+`0.0015 * 3` is `0.0045000000000000005`, which would refuse a purchase a budget
+of exactly `0.0045` allows.
+
+Those two refusals answer with a short code plus the amounts rather than a
+sentence; `/portfolio` turns them into readable text, so the browser never shows
+a bare `over_budget`.
+
+The rail is always Hedera, because that is the only payment key this app reads.
+The agent's `chooseRail`, which also weighs wallet balance and facilitator health
+across both rails, is not used here.
 
 ### `/admin`, precisely
 
@@ -77,7 +95,7 @@ service restarts**. The page states this above the numbers.
 | `GET /api/runs` | `{ runs: [{ id, startedAt, requestCount }] }` for every run on disk. |
 | `GET /api/runs?vaults=<comma-separated ids>` | `{ matches: [...] }`: the prior runs covering any of those vaults, newest first, with the verdict and action each matched vault got. `400` with `{ error }` on an unparseable list. |
 | `GET /api/runs/[id]` | The full `RunRecord`, `400` on an invalid id, `404` when no run carries it. |
-| `POST /api/scan` | `{ vaults: string[] }` buys one sealed scan and returns `{ runId, requests, decisions, txId, receiptHash, priceUsd }`. `503` when the agent keys are absent, `400` on a bad vault list, `429` when rate-limited, `502` when the service cannot be verified or paid. The implementation is `lib/scan.ts`; the route file is a wrapper so the handler's dependencies can be injected by its test. |
+| `POST /api/scan` | `{ vaults: string[] }` buys one scan and returns `{ runId, requests, decisions, txId, receiptHash, priceUsd }`. `503` when the agent keys or the policy are unusable, `400` on a bad vault list or a refused price (`over_budget`, `over_per_scan_ceiling`), `429` when rate-limited, `502` when the service cannot be verified or paid. The implementation is `lib/scan.ts`; the route file is a wrapper so the handler's dependencies can be injected by its test. |
 
 ## Environment
 

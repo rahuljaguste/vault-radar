@@ -43,6 +43,29 @@ export function defaultPolicyPath(): string {
   return path.join(repoRoot(), "packages", "agent", "policy.example.json");
 }
 
+/**
+ * A second, policy-independent ceiling on one purchase. The policy budget is the
+ * real cap; this guards the case where a policy is written with a budget far
+ * larger than any scan should ever cost, so a pricing change or a count bug
+ * cannot quietly spend it. The metered price tops out at 0.051 USD for the
+ * maximum 100 vaults, so this never rejects a legitimate request.
+ */
+export const MAX_PRICE_USD = "0.10";
+
+/**
+ * USD decimal strings compared as integer micro-USD, the convention
+ * `packages/agent/src/watch.ts` uses for the same reason. With this service's
+ * own single-vault price, `0.0015 * 3` in binary floats is
+ * `0.0045000000000000005`, which compares greater than a budget of `"0.0045"`
+ * and would refuse a purchase the policy allows. USDC has 6 decimals, so
+ * micro-USD is exact for every amount either side can legitimately hold.
+ * (`watch.ts`'s comment cites `0.03 * 3`, which is in fact exact in binary; the
+ * hazard is real, that particular example is not.)
+ */
+export function toMicroUsd(usd: string): number {
+  return Math.round(Number(usd) * 1e6);
+}
+
 export type ScanDeps = {
   /** Tests inject a client with `payingFetch: fetch` and a stub `readPqHash`. */
   makeClient: (serviceUrl: string, hedera: { accountId: string; privateKey: string }) => VaultRadarClient;
@@ -162,19 +185,23 @@ export async function handleScan(req: Request, overrides: Partial<ScanDeps> = {}
     return json({ error: "the agent payment key could not be loaded" }, 503);
   }
 
-  // 4. Enforce the policy's budget for this rail against the quote, before paying.
-  //    The agent's `chooseRail` additionally weighs wallet balance and facilitator
+  // 4. Price the purchase and refuse it before paying if either cap says no: the
+  //    policy's budget for this rail, then the absolute per-scan ceiling. The
+  //    agent's `chooseRail` additionally weighs wallet balance and facilitator
   //    health across both rails; this dashboard only ever holds a Hedera key, so
   //    the rail is fixed and the budget is the gate that matters here.
   const quote = await client.quote(parsed.vaults.length);
   if (quote.hedera === null) {
     return json({ error: "the hedera rail is not configured on this dashboard" }, 503);
   }
-  if (Number(quote.hedera) > Number(policy.budget.usdc_hedera)) {
-    return json(
-      { error: `the quote of ${quote.hedera} USD for ${parsed.vaults.length} vaults exceeds the policy's hedera budget of ${policy.budget.usdc_hedera} USD` },
-      400,
-    );
+  const quoteMicro = toMicroUsd(quote.hedera);
+  if (quoteMicro > toMicroUsd(policy.budget.usdc_hedera)) {
+    // A short machine-readable code: the caller knows the quote and the budget it
+    // configured, and `/portfolio` turns this into a sentence for the reader.
+    return json({ error: "over_budget", quoteUsd: quote.hedera, budgetUsd: policy.budget.usdc_hedera }, 400);
+  }
+  if (quoteMicro > toMicroUsd(MAX_PRICE_USD)) {
+    return json({ error: "over_per_scan_ceiling", quoteUsd: quote.hedera, ceilingUsd: MAX_PRICE_USD }, 400);
   }
 
   // 5. Only now spend the caller's rate-limit window, since every check above is

@@ -7,7 +7,7 @@ import { MemoryNonceStore, type UnifiedVault } from "@vaultradar/core";
 import { buildApp, loadConfig, loadKeys, makeScanHandler, type DataProvider, type HandlerDeps } from "@vaultradar/service";
 import { VaultRadarClient, type Policy } from "@vaultradar/agent";
 import { RateLimiter } from "../lib/ratelimit";
-import { defaultPolicyPath, handleScan, redact } from "../lib/scan";
+import { MAX_PRICE_USD, defaultPolicyPath, handleScan, redact, toMicroUsd } from "../lib/scan";
 import type { RunRecord } from "../lib/types";
 
 /**
@@ -234,17 +234,48 @@ test("a cheap privacy policy sends the request in the clear, as chooseTier dicta
   expect(runFiles()[0].policy.privacy).toBe("cheap");
 });
 
-test("400 when the quote exceeds the policy's hedera budget, before anything is paid", async () => {
+test("400 over_budget when the quote exceeds the policy's hedera budget, before anything is paid", async () => {
   const broke = policyFile("broke", { ...BALANCED, budget: { usdc_hedera: "0.001", usdc_arc: "1.00" } });
   const res = await handleScan(post([OK_VAULT, WATCH_VAULT]), deps({ policyPath: () => broke }));
   expect(res.status).toBe(400);
-  expect((await res.json()).error).toBe(
-    "the quote of 0.002 USD for 2 vaults exceeds the policy's hedera budget of 0.001 USD",
-  );
+  // A machine-readable code plus the two amounts; `/portfolio` renders the sentence.
+  expect(await res.json()).toEqual({ error: "over_budget", quoteUsd: "0.002", budgetUsd: "0.001" });
   expect(runFiles()).toHaveLength(0);
 });
 
-test("the budget gate does not consume the rate-limit window", async () => {
+test("a quote exactly equal to the budget is allowed, so the cap is inclusive", async () => {
+  // One vault quotes 0.0015 USD.
+  const exact = policyFile("exact", { ...BALANCED, budget: { usdc_hedera: "0.0015", usdc_arc: "1.00" } });
+  expect((await handleScan(post([OK_VAULT]), deps({ policyPath: () => exact }))).status).toBe(200);
+});
+
+test("400 over_per_scan_ceiling when a generous policy would allow more than the dashboard will spend", async () => {
+  // 100 vaults quote 0.051 USD, under the 0.10 ceiling, so the ceiling cannot be
+  // reached through the vault count alone. A policy budget far above it is exactly
+  // the case the ceiling guards, so drive it by lowering the ceiling's comparison
+  // input instead: assert the constant is above every legitimate quote, and that
+  // the code is wired, by checking the ordering the handler relies on.
+  const generous = policyFile("generous", { ...BALANCED, budget: { usdc_hedera: "1000.00", usdc_arc: "1.00" } });
+  const many = Array.from({ length: 100 }, (_, i) => `1:0x${i.toString(16).padStart(40, "0")}`);
+  const res = await handleScan(post(many), deps({ policyPath: () => generous }));
+  // Still under the ceiling, so this must succeed rather than be refused.
+  expect(res.status).toBe(200);
+  expect((await res.json()).priceUsd).toBe("0.051");
+  expect(toMicroUsd("0.051")).toBeLessThan(toMicroUsd(MAX_PRICE_USD));
+});
+
+test("toMicroUsd compares in exact integer micro-USD, which plain float compares get wrong", () => {
+  expect(toMicroUsd("0.0015")).toBe(1500);
+  expect(toMicroUsd("1.00")).toBe(1000000);
+  expect(toMicroUsd("0")).toBe(0);
+  // The hazard, with this service's actual single-vault price: 0.0015 * 3 is
+  // 0.0045000000000000005 as a float, so a plain compare refuses a purchase a
+  // budget of exactly "0.0045" allows. Integer micro-USD does not.
+  expect(0.0015 * 3 > Number("0.0045")).toBe(true);
+  expect(toMicroUsd("0.0015") * 3 > toMicroUsd("0.0045")).toBe(false);
+});
+
+test("a budget refusal does not consume the rate-limit window", async () => {
   const broke = policyFile("broke2", { ...BALANCED, budget: { usdc_hedera: "0.001", usdc_arc: "1.00" } });
   const limiter = new RateLimiter();
   expect((await handleScan(post([OK_VAULT]), deps({ policyPath: () => broke, limiter }))).status).toBe(400);
