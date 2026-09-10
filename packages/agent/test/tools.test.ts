@@ -81,6 +81,7 @@ test("vaultradar_discover reports the verified card, the on-chain key pin and th
   const { body, isError } = await call(ctx, new RunLog(ctx), "vaultradar_discover", {});
   expect(isError).toBe(false);
   expect(body.card_signature_valid).toBe(true);
+  expect(body.key_binding_valid).toBe(true);
   expect(body.pub_hash).toBe(h.keys.sig.pubHash);
   expect(body.kid).toBe(h.keys.kem.kid);
   expect(body.sig_alg).toBe("ML-DSA-65");

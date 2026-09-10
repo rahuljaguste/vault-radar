@@ -248,6 +248,11 @@ export function vaultradarTools(ctx: AgentContext, log: RunLog = new RunLog(ctx)
         return ok({
           name: d.card.name,
           card_signature_valid: d.cardSignatureValid,
+          // Reported alongside the signature because the two are independent: a card can
+          // be correctly signed by the key it ships while advertising someone else's key
+          // hash, which is the substitution the on-chain anchor exists to catch. False
+          // here means the paid tools will refuse, so the model should see it.
+          key_binding_valid: d.keyBindingValid,
           pub_hash: d.card.pq.sig.pub_hash,
           kid: d.card.pq.kem.kid,
           sig_alg: d.card.pq.sig.alg,

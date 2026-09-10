@@ -3,7 +3,7 @@ import { mkdtempSync, readFileSync, readdirSync, rmSync, writeFileSync } from "n
 import { createServer } from "node:net";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { MemoryNonceStore, type UnifiedVault } from "@vaultradar/core";
+import { MemoryNonceStore, attachSig, type UnifiedVault } from "@vaultradar/core";
 import { buildApp, loadConfig, loadKeys, makeScanHandler, type DataProvider, type HandlerDeps } from "@vaultradar/service";
 import { VaultRadarClient, type Policy } from "@vaultradar/agent";
 import { RateLimiter } from "../lib/ratelimit";
@@ -500,8 +500,54 @@ test("a rejected request does not consume the rate-limit window", async () => {
 test("502 and no payment when the service's on-chain key hash does not match its card", async () => {
   const res = await handleScan(post([OK_VAULT]), deps({}, "0".repeat(64)));
   expect(res.status).toBe(502);
-  expect((await res.json()).error).toContain("on-chain ERC-8004 key hash does not match");
+  expect((await res.json()).error).toContain("does not match its on-chain ERC-8004 registration");
   expect(runFiles()).toHaveLength(0);
+});
+
+// The anchor is the one thing a substituted card cannot choose for itself, so an anchor
+// that could not be *read* leaves the key unverified rather than verified. This route used
+// to proceed on that, and on a card that listed no identity at all — both now refuse, on
+// the agent's own `identityRefusal` rule so the two callers cannot drift apart.
+
+test("502 and no payment when the on-chain anchor cannot be read at all", async () => {
+  const ledger = new SpendLedger({ DASHBOARD_SPEND_CAP_USD: "1.00", DASHBOARD_MAX_SCANS_PER_HOUR: "100" });
+  const res = await handleScan(post([OK_VAULT]), deps({ ledger }, null));
+  expect(res.status).toBe(502);
+  expect((await res.json()).error).toContain("could not be read for any identity the card lists");
+  expect(runFiles()).toHaveLength(0);
+  // Refused before paying, so the reservation taken at step 5 was given back.
+  expect(ledger.snapshot()).toMatchObject({ spentMicroUsd: 0, scansLastHour: 0 });
+});
+
+test("502 and no payment when the service's card lists no ERC-8004 identity", async () => {
+  const ledger = new SpendLedger({ DASHBOARD_SPEND_CAP_USD: "1.00", DASHBOARD_MAX_SCANS_PER_HOUR: "100" });
+  // The real card with its identities stripped and re-signed by the real service key, so
+  // the *only* thing wrong with it is that nothing anchors the key it ships.
+  const unanchored = async () => {
+    const card = (await (await fetch(`${base}/.well-known/agent.json`)).json()) as Record<string, unknown>;
+    const stripped = attachSig({ ...card, erc8004: [] }, keys.sig);
+    return new Response(JSON.stringify(stripped), { headers: { "content-type": "application/json" } });
+  };
+  const res = await handleScan(
+    post([OK_VAULT]),
+    deps({
+      ledger,
+      makeClient: (serviceUrl, hedera) =>
+        new VaultRadarClient({
+          serviceUrl,
+          hedera,
+          readPqHash: async () => keys.sig.pubHash,
+          fetchImpl: unanchored as unknown as typeof fetch,
+          payingFetch: async () => {
+            throw new Error("must not pay a service whose key nothing anchors");
+          },
+        }),
+    }),
+  );
+  expect(res.status).toBe(502);
+  expect((await res.json()).error).toContain("lists no on-chain ERC-8004 identity");
+  expect(runFiles()).toHaveLength(0);
+  expect(ledger.snapshot()).toMatchObject({ spentMicroUsd: 0, scansLastHour: 0 });
 });
 
 test("502 when the service cannot be reached at all", async () => {

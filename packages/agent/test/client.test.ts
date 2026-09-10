@@ -8,14 +8,17 @@ import {
   ARC_BUCKET_PRICE,
   MemoryNonceStore,
   TABLE_PRICE_USD,
+  attachSig,
   buildAttestation,
   buildReceipt,
+  deriveSigningKeys,
   fromB64,
   hederaScanPriceAtomic,
   openSealedRequest,
   requestHash,
   responseHash,
   seal,
+  toB64,
   type Sealed,
 } from "@vaultradar/core";
 import { buildApp, loadConfig, loadKeys, makeScanHandler, type DataProvider, type HandlerDeps } from "@vaultradar/service";
@@ -24,6 +27,7 @@ import { readPqHashOnChain } from "../src/erc8004";
 import { arcAddress, payArcWith } from "../src/rails/arc";
 import { HEDERA_TESTNET_CAIP2, maxAcceptableAtomic, overQuoteReason, payingFetchHedera, quoteCeilingPolicy } from "../src/rails/hedera";
 import { listRuns, saveRun, type RunRecord } from "../src/runs";
+import { identityRefusal } from "../src/watch";
 
 const now = Math.floor(Date.now() / 1000);
 const VAULT_ID = "1:0x" + "a".repeat(40);
@@ -106,15 +110,65 @@ function client(readPqHash: () => Promise<string | null> = async () => keys.sig.
   });
 }
 
+/**
+ * A client whose discovery sees exactly `card`, so a card no honest service would serve
+ * (one whose advertised key hash is not the hash of the key beside it) can be driven
+ * through `discover` without standing up a second server. Only `fetchImpl` is replaced;
+ * everything `discover` then does to the response is the real code path.
+ */
+function clientServing(card: unknown, readPqHash: () => Promise<string | null>) {
+  return new VaultRadarClient({
+    serviceUrl: base,
+    hedera: { accountId: "0.0.42", privateKey: UNUSED_HEDERA_KEY },
+    payingFetch: fetch,
+    readPqHash,
+    fetchImpl: (async () =>
+      new Response(JSON.stringify(card), { headers: { "content-type": "application/json" } })) as unknown as typeof fetch,
+  });
+}
+
 test("discover verifies the card and compares on-chain hash", async () => {
   const d = await client().discover();
   expect(d.cardSignatureValid).toBe(true);
+  expect(d.keyBindingValid).toBe(true);
   expect(d.onChain).toEqual([{ chainId: "296", agentId: "7", matches: true }]);
 });
 
 test("a readPqHash returning a different hash yields matches: false", async () => {
   const d = await client(async () => "0".repeat(64)).discover();
   expect(d.onChain[0].matches).toBe(false);
+});
+
+test("an on-chain hash in upper-case hex still matches: registry hex casing is not meaning", async () => {
+  const d = await client(async () => keys.sig.pubHash.toUpperCase()).discover();
+  expect(d.onChain[0].matches).toBe(true);
+  expect(d.keyBindingValid).toBe(true);
+});
+
+// The substitution the ERC-8004 anchor exists to stop (spec §3, threat 5). The card is
+// signed by key B — correctly, so `cardSignatureValid` is true — but advertises the
+// *legitimate* service's key hash in `pq.sig.pub_hash`, which is also what the chain
+// returns. Comparing the chain against the card's claim would call that a match and the
+// agent would pin B; comparing it against the hash of the key the card actually shipped
+// is what makes it a mismatch.
+test("a card signed by one key but advertising another key's hash is a mismatch, not a match", async () => {
+  const attacker = deriveSigningKeys("cd".repeat(32));
+  const legitimate = await (await fetch(`${base}/.well-known/agent.json`)).json();
+  const substituted = attachSig(
+    {
+      ...legitimate,
+      pq: { ...legitimate.pq, sig: { ...legitimate.pq.sig, public_key: toB64(attacker.publicKey), pub_hash: keys.sig.pubHash } },
+    },
+    attacker,
+  );
+
+  const d = await clientServing(substituted, async () => keys.sig.pubHash).discover();
+  // The envelope signature is genuinely valid: it was made by the key the card ships.
+  expect(d.cardSignatureValid).toBe(true);
+  // But the hash it advertises is not that key's hash, and the chain's pin is not either.
+  expect(d.keyBindingValid).toBe(false);
+  expect(d.onChain).toEqual([{ chainId: "296", agentId: "7", matches: false }]);
+  expect(identityRefusal(d)).toContain("claims a key hash that is not the hash of the key it published");
 });
 
 test("scan without payment middleware still round-trips sealing and verification", async () => {

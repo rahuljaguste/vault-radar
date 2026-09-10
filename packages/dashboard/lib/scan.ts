@@ -27,6 +27,7 @@ import {
   applyAgeCheck,
   chooseTier,
   decide,
+  identityRefusal,
   loadPolicy,
   saveRun,
   type Policy,
@@ -268,6 +269,13 @@ export async function handleScan(req: Request, overrides: Partial<ScanDeps> = {}
     // 7. Verify who is being paid before paying them. An unsigned or substituted
     //    card means discovery cannot be trusted, which is the whole point of
     //    anchoring the key hash on chain.
+    //
+    //    The rule itself is the agent's `identityRefusal`, imported rather than restated:
+    //    a browser-initiated purchase and an agent-initiated one must refuse the same
+    //    services, and this route previously refused strictly less (it passed a card with
+    //    no ERC-8004 identity at all, and one whose every on-chain read failed — both of
+    //    which leave the key unanchored). Its sentences already read the way this route's
+    //    own did, so the returned reason is used verbatim as the error text.
     const startedAt = new Date().toISOString();
     let discovery: Awaited<ReturnType<VaultRadarClient["discover"]>>;
     try {
@@ -275,19 +283,9 @@ export async function handleScan(req: Request, overrides: Partial<ScanDeps> = {}
     } catch (e) {
       return json({ error: `could not reach or verify the service: ${redact(e, secrets)}` }, 502);
     }
-    if (!discovery.cardSignatureValid) {
-      return json({ error: "the service's agent card signature did not verify; refusing to pay" }, 502);
-    }
-    const substituted = discovery.onChain.filter((o) => o.matches === false);
-    if (substituted.length > 0) {
-      return json(
-        {
-          error: `the service's on-chain ERC-8004 key hash does not match the key on its card (chain ${substituted
-            .map((o) => o.chainId)
-            .join(", ")}); refusing to pay`,
-        },
-        502,
-      );
+    const refusal = identityRefusal(discovery);
+    if (refusal) {
+      return json({ error: refusal }, 502);
     }
 
     // 8. Pay, sealed or clear exactly as the policy's privacy tier dictates.

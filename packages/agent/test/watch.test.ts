@@ -1,11 +1,11 @@
-import { expect, test } from "bun:test";
+import { describe, expect, test } from "bun:test";
 import { mkdtempSync, readFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { VaultRadarClient } from "../src/client";
+import { VaultRadarClient, type Discovery } from "../src/client";
 import type { Policy } from "../src/policy";
 import { listRuns, type RunRecord } from "../src/runs";
-import { pollHcs, runWatch, type WatchDeps } from "../src/watch";
+import { identityRefusal, pollHcs, runWatch, type WatchDeps } from "../src/watch";
 import { ALERT_VAULT as ALERT, NOW as now, STALE_VAULT as STALE, TEST_TX_ID, UNUSED_HEDERA_KEY, startHarness } from "./harness";
 
 const h = await startHarness();
@@ -13,6 +13,8 @@ const base = h.base;
 const keys = h.keys;
 const policy = h.policy;
 const client = h.client;
+/** One real discovery against the harness, the base every `identityRefusal` case varies. */
+const realDiscovery = await client().discover();
 
 function deps(over: Partial<WatchDeps> = {}): { deps: WatchDeps; lines: string[] } {
   const lines: string[] = [];
@@ -396,4 +398,57 @@ test("a verification failure on the paid response exits 2 and records the reques
   const saved = JSON.parse(readFileSync(out.runPath!, "utf8")) as RunRecord;
   expect(saved.requests).toHaveLength(1); // the failed purchase is still auditable
   expect(saved.decisions).toEqual([]); // but produced no actions
+});
+
+/* ------------------------------------------------------------- identityRefusal */
+
+/**
+ * The identity gate in isolation. Proceeding needs a *positive* anchor — one ERC-8004
+ * registration that was read and that matched the key the card published — so the two
+ * cases that used to slip through (a card listing no identity at all, and a card whose
+ * every on-chain read failed) are refusals now: both leave the key unanchored, which is
+ * exactly the substitution the anchor exists to stop.
+ *
+ * Each case spreads a real `Discovery` from the harness rather than hand-rolling an
+ * `AgentCard`, so it differs from a genuinely valid discovery only in the field under test.
+ */
+describe("identityRefusal", () => {
+  const disc = (over: Partial<Discovery> = {}): Discovery => ({ ...realDiscovery, ...over });
+  const anchor = (matches: boolean | null, chainId = "296") => ({ chainId, agentId: "7", matches });
+
+  test("the harness's own discovery proceeds", () => {
+    expect(realDiscovery.cardSignatureValid).toBe(true);
+    expect(realDiscovery.keyBindingValid).toBe(true);
+    expect(identityRefusal(realDiscovery)).toBeNull();
+  });
+
+  test("an unverifiable card signature refuses", () => {
+    expect(identityRefusal(disc({ cardSignatureValid: false }))).toContain("card signature did not verify");
+  });
+
+  test("a card whose advertised hash is not the hash of the key it ships refuses", () => {
+    expect(identityRefusal(disc({ keyBindingValid: false }))).toContain(
+      "claims a key hash that is not the hash of the key it published",
+    );
+  });
+
+  test("any contradicted anchor refuses, even alongside a confirmed one", () => {
+    const reason = identityRefusal(disc({ onChain: [anchor(true), anchor(false, "5042002")] }));
+    expect(reason).toContain("does not match its on-chain ERC-8004 registration");
+    expect(reason).toContain("chain 5042002");
+  });
+
+  test("a card that lists no on-chain identity refuses", () => {
+    expect(identityRefusal(disc({ onChain: [] }))).toContain("lists no on-chain ERC-8004 identity");
+  });
+
+  test("a card whose every on-chain read came back null refuses", () => {
+    expect(identityRefusal(disc({ onChain: [anchor(null), anchor(null, "5042002")] }))).toContain(
+      "could not be read for any identity the card lists",
+    );
+  });
+
+  test("one confirmed anchor is enough: [true, null] proceeds", () => {
+    expect(identityRefusal(disc({ onChain: [anchor(true), anchor(null, "5042002")] }))).toBeNull();
+  });
 });

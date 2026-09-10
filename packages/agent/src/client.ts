@@ -12,6 +12,7 @@ import {
   open,
   requestHash,
   responseHash,
+  sha256Hex,
   verifyAttestation,
   verifyReceipt,
   type Attestation,
@@ -61,6 +62,25 @@ export type Discovery = {
   sigPk: Uint8Array;
   kemPk: Uint8Array;
   cardSignatureValid: boolean;
+  /**
+   * True when `card.pq.sig.pub_hash` is genuinely the SHA-256 of `card.pq.sig.public_key`
+   * — i.e. the hash the card advertises is a hash *of the key it ships*, not an arbitrary
+   * string it copied from somewhere else.
+   *
+   * A card that fails this is malformed and nothing may be paid against it: the field is
+   * what every human-readable surface (run records, the `discover` tool, the `watch`
+   * banner) prints as "the service's key hash", so a card free to put any value there
+   * could show a legitimate service's hash while shipping an attacker's key. Consumers
+   * refuse on `false` (`identityRefusal` in `./watch`); this is in-memory discovery state
+   * only and deliberately not part of the persisted `RunRecord` contract.
+   */
+  keyBindingValid: boolean;
+  /**
+   * Per ERC-8004 identity the card lists: whether the key hash registered on that chain
+   * equals the SHA-256 of the key the card actually published. `null` means the read
+   * itself did not answer (RPC failure, or a chain this package has no RPC for), which is
+   * an *unverified* anchor rather than a passing one.
+   */
   onChain: { chainId: string; agentId: string; matches: boolean | null }[];
 };
 
@@ -235,12 +255,28 @@ export class VaultRadarClient {
   }
 
   /**
-   * Fetches and validates `/.well-known/agent.json`: checks the card's ML-DSA-65
-   * self-signature, then cross-checks `card.pq.sig.pub_hash` against every ERC-8004
-   * identity the card lists via `readPqHash`. The signature is checked against the
-   * untouched response object (not the zod-validated copy) so it reflects exactly the
-   * bytes the service sent. Caches the result for subsequent `scan`/`table`/`quote`
-   * calls; call again to force a refresh.
+   * Fetches and validates `/.well-known/agent.json`, binding everything to one value:
+   * `publishedHash`, the SHA-256 of the signing key the card actually ships in
+   * `pq.sig.public_key`.
+   *
+   * - `cardSignatureValid`: the card's ML-DSA-65 self-signature verifies under that key,
+   *   and (via `checkSig`) the signature envelope's own `sig.pub_hash` is that key's hash.
+   * - `keyBindingValid`: the card's advertised `pq.sig.pub_hash` is that key's hash too.
+   * - `onChain[].matches`: the ERC-8004 registration read off each chain equals that key's
+   *   hash.
+   *
+   * The on-chain comparison is deliberately never made against `card.pq.sig.pub_hash`.
+   * That field is chosen by whoever answered for the URL, so comparing the chain to it
+   * compares the chain to the attacker's own claim: a substituted card shipping key K_a,
+   * correctly self-signed under K_a, could simply copy the legitimate service's hash into
+   * `pq.sig.pub_hash` and every anchor would read as matching while the agent pinned K_a.
+   * Comparing the chain to `sha256Hex(sigPk)` instead makes a match a statement about the
+   * key that will verify this service's receipts. The hash read from the chain is
+   * lower-cased first, since a registry value's hex casing is not part of its meaning.
+   *
+   * The signature is checked against the untouched response object (not the zod-validated
+   * copy) so it reflects exactly the bytes the service sent. Caches the result for
+   * subsequent `scan`/`table`/`quote` calls; call again to force a refresh.
    */
   async discover(): Promise<Discovery> {
     const base = this.opts.serviceUrl.replace(/\/$/, "");
@@ -255,13 +291,15 @@ export class VaultRadarClient {
     const sigPk = fromB64(card.pq.sig.public_key);
     const kemPk = fromB64(card.pq.kem.public_key);
     const cardSignatureValid = checkSig(raw as { sig?: Sig }, sigPk);
+    const publishedHash = sha256Hex(sigPk);
+    const keyBindingValid = card.pq.sig.pub_hash.trim().toLowerCase() === publishedHash;
     const onChain = await Promise.all(
       card.erc8004.map(async e => {
         const hash = await this.readPqHash(e.chainId, e.agentId);
-        return { chainId: e.chainId, agentId: e.agentId, matches: hash == null ? null : hash === card.pq.sig.pub_hash };
+        return { chainId: e.chainId, agentId: e.agentId, matches: hash == null ? null : hash.trim().toLowerCase() === publishedHash };
       }),
     );
-    const discovery: Discovery = { card, sigPk, kemPk, cardSignatureValid, onChain };
+    const discovery: Discovery = { card, sigPk, kemPk, cardSignatureValid, keyBindingValid, onChain };
     this.disc = discovery;
     return discovery;
   }

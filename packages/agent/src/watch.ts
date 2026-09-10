@@ -232,17 +232,40 @@ function railSummary(p: Policy, quotes: Quotes, balances: Amounts, health: RailH
 }
 
 /**
- * Refuses to spend against a service whose identity doesn't check out: an agent card
- * that doesn't verify under its own declared key, or a key hash that disagrees with the
- * ERC-8004 registration it points at. Returns the reason to refuse, or null to proceed.
- * A `matches: null` entry (no RPC configured for that chain) is *not* a refusal — it is
- * an unverified claim, reported as such by the caller.
+ * Refuses to spend against a service whose identity doesn't check out. Returns the reason
+ * to refuse, or null to proceed.
+ *
+ * Proceeding requires a *positive* anchor: at least one ERC-8004 registration that was
+ * actually read and that actually matched the key the card published, and none that
+ * contradicted it. Everything weaker is a refusal, because the on-chain pin is the only
+ * thing in the protocol that a card served by whoever answers for the URL cannot choose
+ * for itself (spec §3, threat 5). In particular:
+ *
+ * - An empty `onChain` is refused. A card that simply lists no identity is not a card with
+ *   nothing to check — it is the substitution the anchor exists to stop, with the anchor
+ *   deleted.
+ * - An all-`null` `onChain` is refused. `null` means the read did not answer; this package
+ *   ships built-in RPC URLs for both chains it registers on (`./erc8004`), so a `null` is
+ *   an RPC failure or an unknown chain, never "the operator chose not to configure this".
+ *   An unverified key is not a verified one.
+ *
+ * One confirmed anchor is enough (a service need not be registered on every chain it can
+ * be paid on); a single contradicted anchor refuses regardless of how many others passed.
  */
 export function identityRefusal(disc: Discovery): string | null {
   if (!disc.cardSignatureValid) return "the service's agent card signature did not verify — refusing to pay";
+  if (!disc.keyBindingValid) {
+    return "the service's agent card claims a key hash that is not the hash of the key it published — refusing to pay";
+  }
   const mismatch = disc.onChain.find(e => e.matches === false);
   if (mismatch) {
     return `the service's key hash does not match its on-chain ERC-8004 registration (chain ${mismatch.chainId}, agent ${mismatch.agentId}) — refusing to pay`;
+  }
+  if (disc.onChain.length === 0) {
+    return "the service's agent card lists no on-chain ERC-8004 identity, so nothing anchors its key — refusing to pay";
+  }
+  if (!disc.onChain.some(e => e.matches === true)) {
+    return "the on-chain ERC-8004 registration could not be read for any identity the card lists, so the key is unverified — refusing to pay";
   }
   return null;
 }
@@ -541,7 +564,7 @@ export async function runWatch(args: WatchArgs, deps: WatchDeps): Promise<WatchO
   out(`VaultRadar ${args.serviceUrl}`);
   out(`  identity      card signature ${disc.cardSignatureValid ? "ok" : "INVALID"}, pub hash ${run.discovery.pubHash}`);
   for (const e of disc.onChain) {
-    const state = e.matches == null ? "unverified (no RPC for this chain)" : e.matches ? "matches" : "MISMATCH";
+    const state = e.matches == null ? "unverified (the registration could not be read)" : e.matches ? "matches" : "MISMATCH";
     out(`  erc-8004      chain ${e.chainId} agent ${e.agentId}: ${state}`);
   }
 
