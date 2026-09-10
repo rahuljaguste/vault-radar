@@ -1,0 +1,293 @@
+import { z } from "zod";
+import {
+  ARC_BUCKET_PRICE,
+  TABLE_PRICE_USD,
+  arcBucket,
+  buildSealedRequest,
+  checkSig,
+  fromB64,
+  hederaScanPriceUsd,
+  isSealed,
+  open,
+  verifyAttestation,
+  verifyReceipt,
+  type Attestation,
+  type Receipt,
+  type RiskReport,
+  type Rail,
+  type Sealed,
+  type Sig,
+  type UnifiedVault,
+} from "@vaultradar/core";
+import { arcAddress, payArc, type ArcPayResult } from "./rails/arc";
+import { payingFetchHedera, txIdFromResponse } from "./rails/hedera";
+import { readPqHashOnChain } from "./erc8004";
+
+/**
+ * Defensive shape-check on the untrusted `/.well-known/agent.json` response, applied
+ * before any field is read. `.passthrough()` at every level so unmodeled fields (e.g.
+ * `version`, `description`, `hcs`, `docs`, per-endpoint `network`/`asset`) survive
+ * intact — this schema only pins down the fields this package actually reads.
+ */
+const AgentCardSchema = z
+  .object({
+    name: z.string(),
+    pq: z.object({
+      sig: z.object({ alg: z.string(), public_key: z.string(), pub_hash: z.string() }).passthrough(),
+      kem: z.object({ alg: z.string(), public_key: z.string(), kid: z.string() }).passthrough(),
+    }),
+    erc8004: z.array(z.object({ chainId: z.string(), agentId: z.string() }).passthrough()).default([]),
+    endpoints: z
+      .object({
+        hedera: z.object({ scan: z.string(), scanHbar: z.string(), table: z.string() }).passthrough(),
+        arc: z
+          .object({ scan: z.object({ s: z.string(), m: z.string(), l: z.string() }), table: z.string() })
+          .passthrough(),
+      })
+      .passthrough(),
+    prices: z.record(z.unknown()),
+    limits: z.record(z.unknown()),
+    sig: z.object({ alg: z.string(), pub_hash: z.string(), value: z.string() }),
+  })
+  .passthrough();
+
+export type AgentCard = z.infer<typeof AgentCardSchema>;
+
+export type Discovery = {
+  card: AgentCard;
+  sigPk: Uint8Array;
+  kemPk: Uint8Array;
+  cardSignatureValid: boolean;
+  onChain: { chainId: string; agentId: string; matches: boolean | null }[];
+};
+
+export type PaidResult = {
+  rail: Rail;
+  tier: "scan" | "table";
+  vaults: UnifiedVault[];
+  reports: RiskReport[];
+  attestations: Attestation[];
+  receipt: Receipt;
+  receiptValid: boolean;
+  attestationsValid: boolean;
+  txId: string | null;
+  priceUsd: string | null;
+  sealed: boolean;
+};
+
+export type PayingFetch = (url: string, init: RequestInit) => Promise<Response>;
+
+export type VaultRadarClientOpts = {
+  serviceUrl: string;
+  hedera?: { accountId: string; privateKey: string };
+  arc?: { privateKey: `0x${string}` };
+  fetchImpl?: typeof fetch;
+  /** Defaults to an on-chain ERC-8004 `getMetadata` read (see `./erc8004`). */
+  readPqHash?: (chainId: string, agentId: string) => Promise<string | null>;
+  /**
+   * Overrides the Hedera paying fetch entirely. Tests inject plain `fetch` here to
+   * round-trip sealing/receipt/attestation verification against a service mounted
+   * without payment middleware, without constructing a real Hedera signer.
+   */
+  payingFetch?: PayingFetch;
+  /**
+   * Overrides Arc payment entirely. `payArc` (via `arc.privateKey`) is used by default
+   * when `arc` is configured. Tests inject a fake here to exercise `paid()`'s Arc
+   * branch (bucket URL selection, payer address, opening a sealed reply) without a
+   * real `GatewayClient` or network call.
+   */
+  arcPay?: (url: string, body: unknown, headers: Record<string, string>) => Promise<ArcPayResult<ServiceResponse>>;
+};
+
+type ScanResponseBody = { vaults: UnifiedVault[]; reports: RiskReport[]; attestations: Attestation[] };
+type SealedEnvelopeResponse = { sealed: Sealed; receipt: Receipt };
+type ClearResponse = ScanResponseBody & { receipt: Receipt };
+type ServiceResponse = SealedEnvelopeResponse | ClearResponse;
+
+const isSealedResponse = (r: ServiceResponse): r is SealedEnvelopeResponse =>
+  typeof r === "object" && r !== null && "sealed" in r && isSealed((r as { sealed: unknown }).sealed);
+
+/**
+ * Paying client for a VaultRadar service instance: verifies the service's identity
+ * (signed agent card, cross-checked against an ERC-8004 on-chain key-hash pin), quotes
+ * and pays for scan/table requests on either the Hedera or Arc x402 rail, and verifies
+ * every receipt and attestation the service returns before handing results back.
+ */
+export class VaultRadarClient {
+  private disc: Discovery | null = null;
+  private readonly fetchImpl: typeof fetch;
+  private readonly readPqHash: (chainId: string, agentId: string) => Promise<string | null>;
+  private readonly payingFetch: PayingFetch | null;
+  private readonly arcPay: ((url: string, body: unknown, headers: Record<string, string>) => Promise<ArcPayResult<ServiceResponse>>) | null;
+
+  constructor(private readonly opts: VaultRadarClientOpts) {
+    this.fetchImpl = opts.fetchImpl ?? fetch;
+    this.readPqHash = opts.readPqHash ?? readPqHashOnChain;
+    // `payingFetch` wins when supplied (tests rely on this to avoid ever constructing a
+    // real Hedera signer); otherwise build the real one lazily-but-eagerly here, once,
+    // only when a Hedera account was actually configured.
+    this.payingFetch = opts.payingFetch ?? (opts.hedera ? payingFetchHedera(opts.hedera.accountId, opts.hedera.privateKey) : null);
+    // Same pattern for Arc: `arcPay` wins when supplied (tests inject a fake to avoid a
+    // real GatewayClient); otherwise default to `payArc` bound to `arc.privateKey`.
+    // Captured to a local so the closure keeps the narrowed (non-optional) type.
+    const arc = opts.arc;
+    this.arcPay = opts.arcPay ?? (arc ? (url, body, headers) => payArc<ServiceResponse>(arc.privateKey, url, body, headers) : null);
+  }
+
+  /**
+   * Fetches and validates `/.well-known/agent.json`: checks the card's ML-DSA-65
+   * self-signature, then cross-checks `card.pq.sig.pub_hash` against every ERC-8004
+   * identity the card lists via `readPqHash`. The signature is checked against the
+   * untouched response object (not the zod-validated copy) so it reflects exactly the
+   * bytes the service sent. Caches the result for subsequent `scan`/`table`/`quote`
+   * calls; call again to force a refresh.
+   */
+  async discover(): Promise<Discovery> {
+    const base = this.opts.serviceUrl.replace(/\/$/, "");
+    const res = await this.fetchImpl(`${base}/.well-known/agent.json`);
+    if (!res.ok) throw new Error(`discover failed: service returned ${res.status}`);
+    const raw: unknown = await res.json();
+    const parsed = AgentCardSchema.safeParse(raw);
+    if (!parsed.success) {
+      throw new Error(`discover failed: malformed agent card (${parsed.error.issues[0]?.message ?? "invalid shape"})`);
+    }
+    const card = parsed.data;
+    const sigPk = fromB64(card.pq.sig.public_key);
+    const kemPk = fromB64(card.pq.kem.public_key);
+    const cardSignatureValid = checkSig(raw as { sig?: Sig }, sigPk);
+    const onChain = await Promise.all(
+      card.erc8004.map(async e => {
+        const hash = await this.readPqHash(e.chainId, e.agentId);
+        return { chainId: e.chainId, agentId: e.agentId, matches: hash == null ? null : hash === card.pq.sig.pub_hash };
+      }),
+    );
+    const discovery: Discovery = { card, sigPk, kemPk, cardSignatureValid, onChain };
+    this.disc = discovery;
+    return discovery;
+  }
+
+  private async ensureDiscovery(): Promise<Discovery> {
+    return this.disc ?? this.discover();
+  }
+
+  /** Price quotes for a scan of `count` vaults, on whichever rails are configured. */
+  async quote(count: number): Promise<{ hedera: string | null; arc: string | null }> {
+    return {
+      hedera: this.opts.hedera ? hederaScanPriceUsd(count) : null,
+      arc: this.opts.arc ? ARC_BUCKET_PRICE[arcBucket(count)] : null,
+    };
+  }
+
+  private payerFor(rail: Rail): string {
+    if (rail === "hedera") {
+      if (!this.opts.hedera) throw new Error("hedera rail not configured: pass `hedera` to the VaultRadarClient constructor");
+      return this.opts.hedera.accountId;
+    }
+    if (!this.opts.arc) throw new Error("arc rail not configured: pass `arc` to the VaultRadarClient constructor");
+    return arcAddress(this.opts.arc.privateKey);
+  }
+
+  private priceFor(rail: Rail, tier: "scan" | "table", count: number): string {
+    if (rail === "hedera") return tier === "scan" ? hederaScanPriceUsd(count) : TABLE_PRICE_USD;
+    return tier === "scan" ? ARC_BUCKET_PRICE[arcBucket(count)] : TABLE_PRICE_USD;
+  }
+
+  /**
+   * Shared paid-request path for both `scan` and `table`, on either rail: seals the
+   * request (unless `doSeal` is false), pays and posts it, opens/verifies the sealed
+   * reply (or reads the clear one), and verifies the receipt and every attestation
+   * against the service's discovered signing key.
+   */
+  private async paid(
+    rail: Rail,
+    tier: "scan" | "table",
+    url: string,
+    request: object,
+    count: number,
+    doSeal: boolean,
+  ): Promise<PaidResult> {
+    const d = await this.ensureDiscovery();
+    const env = doSeal ? buildSealedRequest(request, this.payerFor(rail), d.kemPk) : null;
+    const body: unknown = env ? env.sealed : request;
+    const headers: Record<string, string> = {
+      "content-type": "application/json",
+      ...(tier === "scan" ? { "x-vr-count": String(count) } : {}),
+    };
+
+    let raw: ServiceResponse;
+    let txId: string | null;
+    if (rail === "hedera") {
+      const res = await (this.payingFetch ?? this.fetchImpl)(url, { method: "POST", headers, body: JSON.stringify(body) });
+      txId = txIdFromResponse(res);
+      const parsedJson: unknown = await res.json();
+      if (res.status !== 200) throw new Error(`service ${res.status}: ${JSON.stringify(parsedJson)}`);
+      raw = parsedJson as ServiceResponse;
+    } else {
+      if (!this.arcPay) throw new Error("arc rail not configured: pass `arc` (or `arcPay`) to the VaultRadarClient constructor");
+      let arcResult: ArcPayResult<ServiceResponse>;
+      try {
+        arcResult = await this.arcPay(url, body, headers);
+      } catch (e) {
+        // GatewayClient.pay() throws on any non-2xx response instead of returning a
+        // PayResult with a non-200 `status` (pre-payment: "Request failed with status
+        // ${status}"; post-payment: "Payment failed: ${error.error || statusText}"), so
+        // there is no live path where checking `.status` after a successful `await`
+        // would ever see a failure — the throw is the only failure signal, which is why
+        // there's no `status !== 200` check below. Note Circle's client only reads a
+        // JSON `{ error }` field from the service's response, not VaultRadar's
+        // `{ reason }` convention (handlers/scan.ts), so a service 4xx may surface here
+        // as a bare status/statusText rather than the structured reason.
+        throw new Error(`arc payment failed: ${e instanceof Error ? e.message : String(e)}`);
+      }
+      txId = arcResult.transaction;
+      raw = arcResult.data;
+    }
+
+    // The service must mirror the request's sealed-ness exactly. Treating a mismatch
+    // as an error (rather than, say, silently trusting whatever shape came back) means
+    // `sealed` on the result always reflects what was actually observed on the wire,
+    // never just what the client asked for.
+    if (env && !isSealedResponse(raw)) throw new Error("service returned a clear response to a sealed request");
+    if (!env && isSealedResponse(raw)) throw new Error("service returned a sealed response to a clear request");
+
+    const opened: ScanResponseBody = env ? open<ScanResponseBody>((raw as SealedEnvelopeResponse).sealed, env.replySecret) : (raw as ClearResponse);
+    const receipt = raw.receipt;
+    const attestations = opened.attestations ?? [];
+    // An attestation count that doesn't match the vault count (or an attestation for a
+    // vault that isn't in the response) is not a "verified" result even if every
+    // attestation present happens to carry a valid signature.
+    const vaultIds = new Set(opened.vaults.map(v => v.id));
+    const attestationsValid =
+      attestations.length === opened.vaults.length &&
+      attestations.every(a => vaultIds.has(a.vaultId) && verifyAttestation(a, d.sigPk));
+
+    return {
+      rail,
+      tier,
+      vaults: opened.vaults,
+      reports: opened.reports,
+      attestations,
+      receipt,
+      receiptValid: verifyReceipt(receipt, d.sigPk),
+      attestationsValid,
+      txId,
+      priceUsd: this.priceFor(rail, tier, count),
+      sealed: !!env,
+    };
+  }
+
+  /** Buys a risk scan of `vaults` (each `"<chainId>:<address>"`) on `rail`. Sealed by
+   *  default; pass `{ seal: false }` for the `cheap` privacy tier. */
+  async scan(vaults: string[], rail: Rail, opts: { seal?: boolean } = {}): Promise<PaidResult> {
+    const d = await this.ensureDiscovery();
+    const url = rail === "hedera" ? d.card.endpoints.hedera.scan : d.card.endpoints.arc.scan[arcBucket(vaults.length)];
+    return this.paid(rail, "scan", url, { vaults }, vaults.length, opts.seal ?? true);
+  }
+
+  /** Buys the full risk table for one protocol on one chain, on `rail`. Always sealed. */
+  async table(protocol: string, chainId: string, rail: Rail): Promise<PaidResult> {
+    const d = await this.ensureDiscovery();
+    const url = rail === "hedera" ? d.card.endpoints.hedera.table : d.card.endpoints.arc.table;
+    return this.paid(rail, "table", url, { protocol, chainId }, 0, true);
+  }
+}

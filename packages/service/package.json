@@ -1,5 +1,6 @@
 {
   "name": "@vaultradar/service", "version": "0.1.0", "type": "module", "private": true,
+  "exports": { ".": "./src/index.ts" },
   "scripts": { "start": "bun run src/main.ts", "dev": "bun --watch src/main.ts" },
   "dependencies": {
     "@vaultradar/core": "workspace:*", "express": "^4.21.0", "cors": "^2.8.5",
