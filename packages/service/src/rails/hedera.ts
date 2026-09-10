@@ -1,4 +1,4 @@
-import type { Express, Request, Response } from "express";
+import type { Express, NextFunction, Request, Response } from "express";
 import { paymentMiddleware, x402ResourceServer } from "@x402/express";
 import { HTTPFacilitatorClient, type HTTPRequestContext } from "@x402/core/server";
 import { decodePaymentSignatureHeader } from "@x402/core/http";
@@ -95,6 +95,30 @@ export function decodeHederaPayment(req: Request): Decoded {
 export const hederaPayerFromRequest = (req: Request): string | null => decodeHederaPayment(req).payer;
 export const hederaTxIdFromRequest = (req: Request): string | null => decodeHederaPayment(req).txId;
 
+/**
+ * Rejects bad scan/scan-hbar input as a plain 400 before payment processing ever
+ * starts, so an invalid request never triggers a facilitator call (no verify/settle
+ * attempt) and never reaches the price functions' own throw path — which
+ * @x402/express 2.25.0 turns into a 500, not a 4xx, since processHTTPRequest has no
+ * try/catch around resolving a route's dynamic `price` function (see task-16-report.md,
+ * "Correction to the brief"). Mounted only on the two count-priced routes; /table's
+ * price is a flat string, not a function, so it never needed this input in the first
+ * place. validateEnvelope/countFromCtx below still throw too, as a defensive fallback
+ * the price functions should now never actually hit through this mounted rail.
+ */
+function validateScanRequest(req: Request, res: Response, next: NextFunction): void {
+  if (!clampCount(req.header("x-vr-count"))) {
+    res.status(400).json({ reason: "bad_count" });
+    return;
+  }
+  const body = req.body;
+  if (body && typeof body === "object" && ("ct" in body || "kem" in body) && !isSealed(body)) {
+    res.status(400).json({ reason: "malformed_envelope" });
+    return;
+  }
+  next();
+}
+
 export function mountHederaRail(
   app: Express,
   deps: Omit<HandlerDeps, "rail" | "tier" | "getPayer" | "getTxId"> & {
@@ -148,6 +172,8 @@ export function mountHederaRail(
     validateEnvelope(ctx);
     return { asset: "0.0.0", amount: String(countFromCtx(ctx) * 1_000_000) };
   };
+
+  app.use(["/hedera/v1/scan", "/hedera/v1/scan-hbar"], validateScanRequest);
 
   const common = { scheme: "exact", network: "hedera:testnet", payTo: c.hedera.payToAccountId, maxTimeoutSeconds: 120 } as const;
   app.use(paymentMiddleware({

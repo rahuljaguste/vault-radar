@@ -71,22 +71,30 @@ test("a malformed payment-signature header decodes to nulls instead of throwing"
 
 // --- (b)/(c) mounted rail: pricing, validation, and the 402 payment-required body --
 
-/** A minimal x402 facilitator: /supported succeeds, /verify and /settle report failure. */
+/**
+ * A minimal x402 facilitator: /supported succeeds, /verify and /settle report failure.
+ * Tracks call counts so tests can assert a rejected request never reached the
+ * facilitator at all (see the two 400-path tests below).
+ */
 function fakeFacilitator(feePayer = "0.0.7162784") {
+  const calls = { supported: 0, verify: 0, settle: 0 };
   const app = express();
   app.use(express.json());
   app.get("/supported", (_req, res) => {
+    calls.supported++;
     res.json({ kinds: [{ x402Version: 2, scheme: "exact", network: "hedera:testnet", extra: { feePayer } }] });
   });
   app.post("/verify", (_req, res) => {
+    calls.verify++;
     res.json({ isValid: false, invalidReason: "test_stub" });
   });
   app.post("/settle", (_req, res) => {
+    calls.settle++;
     res.json({ success: false, transaction: "", network: "hedera:testnet", errorReason: "test_stub" });
   });
   const srv = app.listen(0);
   const port = (srv.address() as any).port;
-  return { url: `http://127.0.0.1:${port}`, close: () => srv.close() };
+  return { url: `http://127.0.0.1:${port}`, calls, close: () => srv.close() };
 }
 
 async function mountRail(facilitatorUrl: string) {
@@ -180,50 +188,55 @@ test("the table route prices flat at TABLE_PRICE_USD regardless of X-VR-Count", 
   }
 });
 
-// x402's own processHTTPRequest has no try/catch around resolving a route's dynamic
-// `price` function (confirmed by reading @x402/express 2.25.0's compiled
-// dist/cjs/index.js: the thrown error is only caught by the outer Express middleware
-// wrapper, which calls its generic `sendInternalError` — a 500, not a 4xx). The task
-// brief for this rail assumed a thrown price-validation error would surface as a 4xx;
-// it does not in this SDK version. Documented here with the real, observed status so
-// this assumption doesn't silently bit-rot, and reported as a deviation from the brief.
-// Both tests below trigger @x402/express's own sendInternalError helper (confirmed in
-// dist/cjs/index.js: `function sendInternalError(res, error) { console.error(error);
-// res.status(500).json(...) }`), which unconditionally logs the caught error — that
-// console.error call belongs to the library, not to this rail, so it's swapped out for
-// the duration of these two tests to keep `bun test` output clean. The messages it
-// would log are the literal strings this module throws ("X-VR-Count must be 1..100",
-// "malformed sealed envelope") — never a request body, header, or secret.
-test("a missing X-VR-Count throws out of the price function, which @x402/express surfaces as a 500 (not a 4xx)", async () => {
+// A missing/invalid X-VR-Count and a malformed sealed envelope are now rejected by
+// validateScanRequest — mounted before paymentMiddleware — as a plain 400, before
+// payment processing (and therefore any facilitator call) ever starts. Previously
+// these fell through to the price function's own throw, which @x402/express 2.25.0
+// turns into a 500 (processHTTPRequest has no try/catch around resolving a route's
+// dynamic `price` function); that finding is preserved in task-16-report.md.
+test("a missing X-VR-Count returns 400 bad_count without ever calling the facilitator", async () => {
   const fac = fakeFacilitator();
   const rail = await mountRail(fac.url);
-  const originalError = console.error;
-  console.error = () => {};
   try {
     const res = await fetch(`${rail.base}/hedera/v1/scan`, {
       method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ vaults: [] }),
     });
-    expect(res.status).toBe(500);
-    expect(await res.json()).toEqual({ error: "Internal Server Error" });
+    expect(res.status).toBe(400);
+    expect(await res.json()).toEqual({ reason: "bad_count" });
+    expect(fac.calls.verify).toBe(0);
   } finally {
-    console.error = originalError;
     rail.close();
     fac.close();
   }
 });
 
-test("a body that claims to be a sealed envelope but fails isSealed is rejected by the price function too", async () => {
+test("an out-of-range X-VR-Count returns 400 bad_count without ever calling the facilitator", async () => {
   const fac = fakeFacilitator();
   const rail = await mountRail(fac.url);
-  const originalError = console.error;
-  console.error = () => {};
+  try {
+    const res = await fetch(`${rail.base}/hedera/v1/scan-hbar`, {
+      method: "POST", headers: { "content-type": "application/json", "x-vr-count": "0" }, body: JSON.stringify({ vaults: [] }),
+    });
+    expect(res.status).toBe(400);
+    expect(await res.json()).toEqual({ reason: "bad_count" });
+    expect(fac.calls.verify).toBe(0);
+  } finally {
+    rail.close();
+    fac.close();
+  }
+});
+
+test("a body that claims to be a sealed envelope but fails isSealed returns 400 malformed_envelope without ever calling the facilitator", async () => {
+  const fac = fakeFacilitator();
+  const rail = await mountRail(fac.url);
   try {
     const res = await fetch(`${rail.base}/hedera/v1/scan`, {
       method: "POST", headers: { "content-type": "application/json", "x-vr-count": "1" }, body: JSON.stringify({ ct: "not-actually-sealed" }),
     });
-    expect(res.status).toBe(500);
+    expect(res.status).toBe(400);
+    expect(await res.json()).toEqual({ reason: "malformed_envelope" });
+    expect(fac.calls.verify).toBe(0);
   } finally {
-    console.error = originalError;
     rail.close();
     fac.close();
   }
