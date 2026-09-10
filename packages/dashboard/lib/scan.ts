@@ -35,7 +35,7 @@ import {
 import { receiptHash } from "@vaultradar/core";
 import { RateLimiter, clientKey, scanLimiter } from "./ratelimit";
 import { repoRoot, runsDir as defaultRunsDir } from "./runs";
-import { getServiceUrl } from "./service";
+import { SERVICE_FETCH_TIMEOUT_MS, getServiceUrl } from "./service";
 import { SpendLedger, scanSpendLedger, usdToMicro } from "./spend";
 import type { RunRecord } from "./types";
 import { parseVaultList } from "./vaults";
@@ -77,6 +77,11 @@ export type ScanDeps = {
   ledger: SpendLedger;
   /** Seconds since the epoch, for the age check. */
   now: () => number;
+  /**
+   * How long discovery may take before the purchase is abandoned. Tests shorten it; no
+   * caller in the app passes it. See `withTimeout`'s use at step 7 for why it exists.
+   */
+  discoveryTimeoutMs: number;
   env: Record<string, string | undefined>;
 };
 
@@ -91,8 +96,36 @@ function defaultDeps(): ScanDeps {
     limiter: scanLimiter(),
     ledger: scanSpendLedger(),
     now: () => Math.floor(Date.now() / 1000),
+    // The same bound `lib/service.ts` puts on every page's read of this service, for the
+    // same reason: `fetch` has no default timeout of its own.
+    discoveryTimeoutMs: SERVICE_FETCH_TIMEOUT_MS,
     env: process.env,
   };
+}
+
+/**
+ * Rejects with `TIMED_OUT` if `work` has not settled within `ms`.
+ *
+ * Bounding discovery is not cosmetic: the spend reservation is taken at step 5, *before*
+ * discovery's network round trip, so a service that accepts the connection and then never
+ * answers used to hold that reservation — and the caller's rate-limit slot — for as long
+ * as it cared to, with no upper bound, since `fetch` imposes none. One unresponsive
+ * upstream could therefore consume the day's whole allowance without ever being paid.
+ *
+ * A race rather than an `AbortSignal`, because the client that owns the socket is built by
+ * `deps.makeClient` and `discover()` takes no signal: this route cannot reach the fetch to
+ * cancel it. The consequence is an abandoned request may keep a socket open until the
+ * upstream or the platform closes it; what matters here is that the reservation is
+ * released and the caller gets an answer, neither of which waits for that.
+ */
+function withTimeout<T>(work: Promise<T>, ms: number): Promise<T> {
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  return Promise.race([
+    work,
+    new Promise<never>((_, reject) => {
+      timer = setTimeout(() => reject(new Error("TIMED_OUT")), ms);
+    }),
+  ]).finally(() => clearTimeout(timer)) as Promise<T>;
 }
 
 /**
@@ -279,8 +312,11 @@ export async function handleScan(req: Request, overrides: Partial<ScanDeps> = {}
     const startedAt = new Date().toISOString();
     let discovery: Awaited<ReturnType<VaultRadarClient["discover"]>>;
     try {
-      discovery = await client.discover();
+      discovery = await withTimeout(client.discover(), deps.discoveryTimeoutMs);
     } catch (e) {
+      if (e instanceof Error && e.message === "TIMED_OUT") {
+        return json({ error: `the service did not answer discovery within ${deps.discoveryTimeoutMs}ms; refusing to pay` }, 502);
+      }
       return json({ error: `could not reach or verify the service: ${redact(e, secrets)}` }, 502);
     }
     const refusal = identityRefusal(discovery);

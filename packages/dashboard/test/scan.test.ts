@@ -162,6 +162,9 @@ function deps(over: Partial<Deps> = {}, onChainHash: string | null = keys.sig.pu
     // would start refusing each other once the hourly allowance ran out.
     ledger: new SpendLedger({}),
     now: () => now,
+    // Short, so the one test that drives the timeout path does not wait the production
+    // ten seconds; every other test here answers discovery well inside it.
+    discoveryTimeoutMs: 2_000,
     env: { AGENT_HEDERA_ACCOUNT_ID: "0.0.42", AGENT_HEDERA_KEY: UNUSED_KEY, SERVICE_URL: base },
     ...over,
   };
@@ -548,6 +551,40 @@ test("502 and no payment when the service's card lists no ERC-8004 identity", as
   expect((await res.json()).error).toContain("lists no on-chain ERC-8004 identity");
   expect(runFiles()).toHaveLength(0);
   expect(ledger.snapshot()).toMatchObject({ spentMicroUsd: 0, scansLastHour: 0 });
+});
+
+test("502 when discovery never answers, and the held reservation is released", async () => {
+  // The reservation is taken before discovery's round trip, so a service that accepts the
+  // connection and then says nothing used to hold it (and the caller's rate-limit slot)
+  // with no upper bound — `fetch` has none of its own.
+  const ledger = new SpendLedger({ DASHBOARD_SPEND_CAP_USD: "0.0015", DASHBOARD_MAX_SCANS_PER_HOUR: "100" });
+  const started = Date.now();
+  const res = await handleScan(
+    post([OK_VAULT]),
+    deps({
+      ledger,
+      discoveryTimeoutMs: 250,
+      makeClient: (serviceUrl, hedera) =>
+        new VaultRadarClient({
+          serviceUrl,
+          hedera,
+          readPqHash: async () => keys.sig.pubHash,
+          // Never resolves, never rejects: the case a race is the only defence against.
+          fetchImpl: (() => new Promise<Response>(() => {})) as unknown as typeof fetch,
+          payingFetch: async () => {
+            throw new Error("must not pay a service that never answered discovery");
+          },
+        }),
+    }),
+  );
+  expect(res.status).toBe(502);
+  expect((await res.json()).error).toContain("did not answer discovery");
+  expect(Date.now() - started).toBeLessThan(5_000);
+  expect(runFiles()).toHaveLength(0);
+  expect(ledger.snapshot()).toMatchObject({ spentMicroUsd: 0, scansLastHour: 0 });
+
+  // And the full allowance is available again to the next caller.
+  expect((await handleScan(post([OK_VAULT]), deps({ ledger }))).status).toBe(200);
 });
 
 test("502 when the service cannot be reached at all", async () => {
