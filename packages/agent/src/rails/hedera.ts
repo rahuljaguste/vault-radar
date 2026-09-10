@@ -3,15 +3,26 @@ import { ExactHederaScheme } from "@x402/hedera/exact/client";
 import { createClientHederaSigner, PrivateKey } from "@x402/hedera";
 
 /**
+ * CAIP-2 identifier for Hedera testnet. `@x402/hedera` validates its `network` option
+ * against exactly `"hedera:mainnet"` / `"hedera:testnet"` and throws
+ * `Unsupported Hedera network: <value>` for anything else — including the bare
+ * `"testnet"` this used to pass, which made every real (non-test) Hedera payment fail
+ * at signer construction. It is also the key the scheme registers under, so the two
+ * cannot drift apart.
+ */
+export const HEDERA_TESTNET_CAIP2 = "hedera:testnet";
+
+/**
  * Wraps `fetch` so a 402 from VaultRadar's Hedera routes is paid automatically: the
  * x402 client signs and attaches a Hedera `exact` payment (an HTS USDC transfer naming
- * the Blocky402 facilitator as fee payer) and retries once. Not exercised by the test
- * suite (it talks to Hedera testnet), so `VaultRadarClient` accepts a `payingFetch`
- * override that tests use to bypass this entirely.
+ * the Blocky402 facilitator as fee payer) and retries once. The payment itself is not
+ * exercised by the test suite (it talks to Hedera testnet), so `VaultRadarClient`
+ * accepts a `payingFetch` override that tests use to bypass it; signer construction
+ * *is* covered, since that is where the network-id mistake above lived.
  */
 export function payingFetchHedera(accountId: string, privateKey: string) {
-  const signer = createClientHederaSigner(accountId, PrivateKey.fromStringECDSA(privateKey), { network: "testnet" } as any);
-  const client = new x402Client().register("hedera:testnet", new ExactHederaScheme(signer));
+  const signer = createClientHederaSigner(accountId, PrivateKey.fromStringECDSA(privateKey), { network: HEDERA_TESTNET_CAIP2 });
+  const client = new x402Client().register(HEDERA_TESTNET_CAIP2, new ExactHederaScheme(signer));
   // Deliberately untyped as `typeof fetch`: bun's ambient `fetch` type additionally
   // requires a static `preconnect` method that the wrapped function doesn't have.
   // `wrapFetchWithPayment`'s own declared return type is exactly the callable shape
