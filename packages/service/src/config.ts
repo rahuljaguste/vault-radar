@@ -5,7 +5,7 @@ export type Config = {
   kemSeed: string;
   graphApiKey: string;
   databaseUrl: string | null;
-  rpc: { "1": string; "8453": string };
+  rpc: Record<string, string>;
   hedera: {
     network: "testnet";
     payToAccountId: string;
@@ -31,6 +31,18 @@ export function loadConfig(env: Env = process.env): Config {
   if (env.ERC8004_HEDERA_AGENT_ID) erc8004.push({ chainId: "296", agentId: env.ERC8004_HEDERA_AGENT_ID });
   if (env.ERC8004_ARC_AGENT_ID) erc8004.push({ chainId: "5042002", agentId: env.ERC8004_ARC_AGENT_ID });
 
+  // ETH_RPC_URL/BASE_RPC_URL remain the defaults for chains "1"/"8453"; any other chain
+  // in the standardized-deployments registry (42161, 10, 137, …) only gets a head via
+  // RPC instead of the forced-stale fallback when its own RPC_URL_<chainId> is set.
+  const rpc: Record<string, string> = {
+    "1": env.ETH_RPC_URL ?? "https://ethereum-rpc.publicnode.com",
+    "8453": env.BASE_RPC_URL ?? "https://mainnet.base.org",
+  };
+  for (const [key, value] of Object.entries(env)) {
+    const m = /^RPC_URL_(\d+)$/.exec(key);
+    if (m && value) rpc[m[1]] = value;
+  }
+
   return {
     port: Number(env.PORT ?? 8787),
     publicUrl: env.PUBLIC_URL ?? "http://localhost:8787",
@@ -38,10 +50,7 @@ export function loadConfig(env: Env = process.env): Config {
     kemSeed,
     graphApiKey: env.GRAPH_STUDIO_API_KEY ?? "",
     databaseUrl: env.DATABASE_URL ?? null,
-    rpc: {
-      "1": env.ETH_RPC_URL ?? "https://ethereum-rpc.publicnode.com",
-      "8453": env.BASE_RPC_URL ?? "https://mainnet.base.org",
-    },
+    rpc,
     hedera: {
       network: "testnet",
       payToAccountId: env.HEDERA_PAYTO_ACCOUNT_ID ?? "",
