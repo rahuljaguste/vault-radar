@@ -1,0 +1,25 @@
+{
+  "name": "@vaultradar/agent",
+  "version": "0.1.0",
+  "type": "module",
+  "private": true,
+  "main": "src/index.ts",
+  "exports": { ".": "./src/index.ts" },
+  "scripts": {
+    "watch": "bun run src/cli.ts watch",
+    "chat": "bun run src/cli.ts chat"
+  },
+  "dependencies": {
+    "@vaultradar/core": "workspace:*",
+    "@x402/fetch": "2.25.0",
+    "@x402/core": "2.25.0",
+    "@x402/hedera": "2.25.0",
+    "@circle-fin/x402-batching": "3.4.0",
+    "@anthropic-ai/claude-agent-sdk": "^0.3.0",
+    "viem": "^2.21.0",
+    "zod": "^3.23.0"
+  },
+  "devDependencies": {
+    "@vaultradar/service": "workspace:*"
+  }
+}
