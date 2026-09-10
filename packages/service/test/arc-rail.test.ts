@@ -1,10 +1,11 @@
 import { expect, test } from "bun:test";
 import express from "express";
 import { GatewayClient } from "@circle-fin/x402-batching/client";
-import { deriveKemKeys, deriveSigningKeys, MemoryNonceStore, type SourceRef, type UnifiedVault } from "@vaultradar/core";
+import { buildSealedRequest, deriveKemKeys, deriveSigningKeys, MemoryNonceStore, open, type SourceRef, type UnifiedVault } from "@vaultradar/core";
 import { arcPayerFromRequest, arcTxIdFromRequest } from "../src/rails/arc";
 import { buildApp, type BuildAppDeps } from "../src/app";
 import { loadConfig } from "../src/config";
+import { Metrics } from "../src/metrics";
 
 const SELLER_ADDRESS = "0x" + "1".repeat(40);
 // Any syntactically valid address works here: `signAuthorization` (client-side) only
@@ -65,7 +66,7 @@ function fakeFacilitator(opts: { verify?: VerifyMode; settle?: SettleMode } = {}
 
 type ScanFn = (ids: string[]) => Promise<{ vaults: UnifiedVault[]; sources: SourceRef[] }>;
 
-async function mountRail(facilitatorUrl: string, opts: { onSettled?: (receipt: unknown, txId: string) => void; scan?: ScanFn } = {}) {
+async function mountRail(facilitatorUrl: string, opts: { onSettled?: (receipt: unknown, txId: string) => void; scan?: ScanFn; metrics?: Metrics } = {}) {
   const config = loadConfig({
     PORT: "0", PUBLIC_URL: "http://svc.test", PQ_SIG_SEED: "77".repeat(32), PQ_KEM_SEED: "88".repeat(64),
     GRAPH_STUDIO_API_KEY: "k", ARC_SELLER_ADDRESS: SELLER_ADDRESS, ARC_FACILITATOR_URL: facilitatorUrl,
@@ -81,12 +82,12 @@ async function mountRail(facilitatorUrl: string, opts: { onSettled?: (receipt: u
   // doesn't declare — typed as a variable rather than an inline literal so this doesn't
   // trip an excess-property check on a field the production type genuinely doesn't have.
   const deps: BuildAppDeps & { onSettled?: (receipt: unknown, txId: string) => void } = {
-    config, keys, data, hcs: null, nonces: new MemoryNonceStore(), rails: { arc: true }, onSettled: opts.onSettled,
+    config, keys, data, hcs: null, nonces: new MemoryNonceStore(), rails: { arc: true }, onSettled: opts.onSettled, metrics: opts.metrics,
   };
   const app = await buildApp(deps);
   const srv = app.listen(0);
   const port = (srv.address() as any).port;
-  return { base: `http://127.0.0.1:${port}`, close: () => srv.close() };
+  return { base: `http://127.0.0.1:${port}`, keys, close: () => srv.close() };
 }
 
 /** Manually decodes a base64-JSON header, rather than `@x402/core/http`'s
@@ -188,6 +189,129 @@ test("the table route has no bucket check and reaches the facilitator for a vali
   }
 });
 
+// --- sealed-envelope pre-payment checks (Finding 1, fix round 1) -------------------
+//
+// checkSealedRequestPrePayment runs from a middleware mounted ahead of
+// gateway.require — see rails/arc.ts's preValidateSealed — so any of these violations
+// must 422 without ever reaching the (fake) facilitator, exactly like the
+// bad_count/bucket_mismatch tests above.
+
+test("a sealed request with a stale ts is rejected 422 ts_window before any facilitator call", async () => {
+  const fac = fakeFacilitator();
+  const rail = await mountRail(fac.url);
+  try {
+    const staleNow = Math.floor(Date.now() / 1000) - 1000; // TS_WINDOW_S is 120
+    const { sealed } = buildSealedRequest({ vaults: ["1:0xabababababababababababababababababababab"] }, "0xanypayer", rail.keys.kem.publicKey, staleNow);
+    const res = await fetch(`${rail.base}/arc/v1/scan/s`, {
+      method: "POST", headers: { "content-type": "application/json", "x-vr-count": "1" }, body: JSON.stringify(sealed),
+    });
+    expect(res.status).toBe(422);
+    expect(await res.json()).toEqual({ reason: "ts_window", error: "ts_window" });
+    expect(fac.calls.supported).toBe(0);
+    expect(fac.calls.verify).toBe(0);
+    expect(fac.calls.settle).toBe(0);
+  } finally {
+    rail.close();
+    fac.close();
+  }
+});
+
+test("a sealed envelope whose own vault count disagrees with X-VR-Count is rejected 422 count_mismatch before any facilitator call", async () => {
+  const fac = fakeFacilitator();
+  const rail = await mountRail(fac.url);
+  try {
+    // One vault sealed inside the envelope, but the header (still a valid "s"-bucket
+    // value on its own) claims three — validateBucket alone can't catch this since it
+    // only ever looks at the header.
+    const { sealed } = buildSealedRequest({ vaults: ["1:0xabababababababababababababababababababab"] }, "0xanypayer", rail.keys.kem.publicKey);
+    const res = await fetch(`${rail.base}/arc/v1/scan/s`, {
+      method: "POST", headers: { "content-type": "application/json", "x-vr-count": "3" }, body: JSON.stringify(sealed),
+    });
+    expect(res.status).toBe(422);
+    expect(await res.json()).toEqual({ reason: "count_mismatch", error: "count_mismatch" });
+    expect(fac.calls.supported).toBe(0);
+    expect(fac.calls.verify).toBe(0);
+    expect(fac.calls.settle).toBe(0);
+  } finally {
+    rail.close();
+    fac.close();
+  }
+});
+
+test("a corrupted sealed envelope is rejected 422 envelope_open_failed before any facilitator call", async () => {
+  const fac = fakeFacilitator();
+  const rail = await mountRail(fac.url);
+  try {
+    const { sealed } = buildSealedRequest({ vaults: ["1:0xabababababababababababababababababababab"] }, "0xanypayer", rail.keys.kem.publicKey);
+    const tampered = { ...sealed, nonce: "A".repeat(sealed.nonce.length) }; // same length, guaranteed-different: GCM tag no longer verifies
+    const res = await fetch(`${rail.base}/arc/v1/scan/s`, {
+      method: "POST", headers: { "content-type": "application/json", "x-vr-count": "1" }, body: JSON.stringify(tampered),
+    });
+    expect(res.status).toBe(422);
+    expect(await res.json()).toEqual({ reason: "envelope_open_failed", error: "envelope_open_failed" });
+    expect(fac.calls.supported).toBe(0);
+  } finally {
+    rail.close();
+    fac.close();
+  }
+});
+
+test("a sealed request's nonce, once committed by a successful paid round trip, is rejected as a replay on resubmission — with no further facilitator calls", async () => {
+  const fac = fakeFacilitator({
+    verify: { isValid: true, payer: "0xtestpayer" },
+    settle: { success: true, transaction: "0xfirsttx", payer: "0xtestpayer" },
+  });
+  const rail = await mountRail(fac.url);
+  try {
+    const { sealed } = buildSealedRequest({ vaults: ["1:0xabababababababababababababababababababab"] }, "0xtestpayer", rail.keys.kem.publicKey);
+
+    const gw = new GatewayClient({ chain: "arcTestnet", privateKey: TEST_PRIVATE_KEY });
+    const first = await gw.pay<{ receipt: unknown }>(`${rail.base}/arc/v1/scan/s`, {
+      method: "POST", body: sealed, headers: { "x-vr-count": "1" },
+    });
+    expect(first.status).toBe(200);
+    expect(fac.calls.verify).toBe(1);
+    expect(fac.calls.settle).toBe(1);
+
+    // Resubmit the identical sealed envelope. Rejected by the pre-payment middleware —
+    // no payment-signature header needed for this call to prove the point, since
+    // preValidateSealed runs (and, here, rejects) before gateway.require is ever reached.
+    const replay = await fetch(`${rail.base}/arc/v1/scan/s`, {
+      method: "POST", headers: { "content-type": "application/json", "x-vr-count": "1" }, body: JSON.stringify(sealed),
+    });
+    expect(replay.status).toBe(422);
+    expect(await replay.json()).toEqual({ reason: "nonce_replay", error: "nonce_replay" });
+    expect(fac.calls.verify).toBe(1); // unchanged
+    expect(fac.calls.settle).toBe(1); // unchanged
+  } finally {
+    rail.close();
+    fac.close();
+  }
+});
+
+test("a valid sealed request still completes the full paid round trip and replies sealed", async () => {
+  const fac = fakeFacilitator({
+    verify: { isValid: true, payer: "0xtestpayer" },
+    settle: { success: true, transaction: "0xsealedtx", payer: "0xtestpayer" },
+  });
+  const rail = await mountRail(fac.url);
+  try {
+    const { sealed, replySecret } = buildSealedRequest({ vaults: ["1:0xabababababababababababababababababababab"] }, "0xtestpayer", rail.keys.kem.publicKey);
+    const gw = new GatewayClient({ chain: "arcTestnet", privateKey: TEST_PRIVATE_KEY });
+    const result = await gw.pay<{ sealed: unknown; receipt: unknown }>(`${rail.base}/arc/v1/scan/s`, {
+      method: "POST", body: sealed, headers: { "x-vr-count": "1" },
+    });
+    expect(result.status).toBe(200);
+    expect(result.data.receipt).toBeDefined();
+    expect((result.data.receipt as any).sealed).toBe(true);
+    const opened = open<{ vaults: unknown[] }>(result.data.sealed as any, replySecret);
+    expect(Array.isArray(opened.vaults)).toBe(true);
+  } finally {
+    rail.close();
+    fac.close();
+  }
+});
+
 // --- the paid path: a real (offline) Gateway client round trip ---------------------
 //
 // `GatewayClient.pay()` and the `BatchEvmScheme` it delegates to sign the EIP-3009
@@ -223,6 +347,41 @@ test("a verified and settled Arc payment reaches the handler, returns 200 with a
     expect(settledCalls.length).toBe(1);
     expect(settledCalls[0][1]).toBe("0xdeadbeef");
     expect(settledCalls[0][0]).toEqual(result.data.receipt);
+  } finally {
+    rail.close();
+    fac.close();
+  }
+});
+
+// Finding 2, fix round 1: recordSettlement previously ran directly in the route
+// wrapper, ahead of `await handler(...)`, with no isolation of its own — a throw there
+// would have propagated through asyncHandler to the app's error handler, turning an
+// already-settled (already-paid) request into a 500. It's now wrapped in its own
+// dedicated try/catch specifically so this can't happen regardless of what
+// recordSettlement's implementation does.
+test("a metrics.recordSettlement that throws does not turn an already-paid request into a 500", async () => {
+  const fac = fakeFacilitator({
+    verify: { isValid: true, payer: undefined },
+    settle: { success: true, transaction: "0xthrown", payer: undefined },
+  });
+  class ThrowingMetrics extends Metrics {
+    recordSettlement(): never {
+      throw new Error("boom");
+    }
+  }
+  const settledCalls: [unknown, string][] = [];
+  const rail = await mountRail(fac.url, { onSettled: (r, t) => settledCalls.push([r, t]), metrics: new ThrowingMetrics() });
+  try {
+    const gw = new GatewayClient({ chain: "arcTestnet", privateKey: TEST_PRIVATE_KEY });
+    const result = await gw.pay<{ receipt: unknown }>(`${rail.base}/arc/v1/scan/s`, {
+      method: "POST",
+      body: { vaults: ["1:0xabababababababababababababababababababab"] },
+      headers: { "x-vr-count": "1" },
+    });
+    expect(result.status).toBe(200);
+    expect(result.data.receipt).toBeDefined();
+    expect(settledCalls.length).toBe(1);
+    expect(settledCalls[0][1]).toBe("0xthrown");
   } finally {
     rail.close();
     fac.close();

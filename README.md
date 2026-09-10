@@ -48,11 +48,11 @@ Steps 1, 2, 6 and 8 are identical. Steps 3 to 7 differ:
 - **Step 3.** Circle's Gateway middleware answers 402 on one of the bucketed routes, `/arc/v1/scan/s|m|l` for counts 1 to 5, 6 to 20, and 21 to 100. Circle's middleware is static per route, so the bucket carries the price rather than a price function.
 - **Step 4.** The agent signs an EIP-3009 transfer authorization instead of a Hedera transaction.
 - **Step 5.** The Gateway facilitator verifies the authorization.
-- **Step 7.** Settlement is batched by Gateway, so the receipt records the authorization's transaction reference and the batch settles after the response.
+- **Step 7.** Settlement is batched by Gateway. Unlike the Hedera rail, Circle's middleware verifies *and settles* before the request handler ever runs — the receipt records the authorization's transaction reference, but the money has already moved by the time the handler produces that receipt, not after.
+
+Because settlement happens before the handler, every check that can reject a request outright — the `X-VR-Count`/bucket match, and (for a sealed request) the timestamp window, nonce replay, and vault-count-vs-header agreement — runs ahead of payment, in a pre-payment middleware. The one check that cannot run that early is whether a sealed request's claimed payer matches the payer Circle's Gateway actually settled with: that payer is only known once the payment has already gone through. **A `payer_mismatch` on the Arc rail is therefore detected after settlement and is not refunded** — a real limitation of Circle Gateway's settle-before-handler design, not a gap in this service's own validation.
 
 A settled request: `<<FILL: Arcscan transaction URL for a settled Arc payment>>`
-
-The Arc rail is designed and specified but not yet mounted. See the scope notes.
 
 ## What the standards made easier
 

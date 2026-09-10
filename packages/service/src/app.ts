@@ -56,23 +56,22 @@ export async function buildApp(deps: BuildAppDeps): Promise<express.Express> {
 
   const metrics = deps.metrics ?? new Metrics();
 
+  // Shared by both rails below (each mounts at most once, so this never double-fires
+  // for the same receipt — see BuildAppDeps.onSettled's own comment for the full
+  // reasoning); hoisted into one closure rather than declared identically twice.
+  const onSettled = (receipt: Receipt, txId: string) => {
+    deps.hcs?.enqueue(receipt);
+    deps.onSettled?.(receipt, txId);
+  };
+
   mountWellKnown(app, deps);
 
   if (deps.rails?.hedera) {
     const { mountHederaRail } = await import("./rails/hedera");
-    const onSettled = (receipt: Receipt, txId: string) => {
-      deps.hcs?.enqueue(receipt);
-      deps.onSettled?.(receipt, txId);
-    };
-    const hederaDeps = { ...deps, metrics, onSettled };
-    mountHederaRail(app, hederaDeps);
+    mountHederaRail(app, { ...deps, metrics, onSettled });
   }
   if (deps.rails?.arc) {
     const { mountArcRail } = await import("./rails/arc");
-    const onSettled = (receipt: Receipt, txId: string) => {
-      deps.hcs?.enqueue(receipt);
-      deps.onSettled?.(receipt, txId);
-    };
     mountArcRail(app, { ...deps, metrics, onSettled });
   }
 

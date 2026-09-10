@@ -1,6 +1,18 @@
 import type { Express, NextFunction, Request, RequestHandler, Response } from "express";
 import { createGatewayMiddleware } from "@circle-fin/x402-batching/server";
-import { ARC_BUCKET_PRICE, TABLE_PRICE_USD, arcBucket, clampCount, type Receipt } from "@vaultradar/core";
+import {
+  ARC_BUCKET_PRICE,
+  TABLE_PRICE_USD,
+  arcBucket,
+  checkSealedRequestPrePayment,
+  clampCount,
+  isSealed,
+  openSealedRequest,
+  type Receipt,
+  type ScanRequest,
+  type SealedRequest,
+  type TableRequest,
+} from "@vaultradar/core";
 import { makeScanHandler, type HandlerDeps } from "../handlers/scan";
 import { asyncHandler } from "../util/async";
 import { errBody } from "../util/http";
@@ -58,6 +70,53 @@ function validateBucket(bucket: "s" | "m" | "l") {
   };
 }
 
+/**
+ * When the request body is a sealed envelope, opens it with the service's own KEM key
+ * and runs `checkSealedRequestPrePayment` (ts window, nonce not yet seen, and — for scan
+ * requests — the envelope's own vault count against `X-VR-Count`) *before*
+ * `gateway.require` ever runs — for exactly the reason `validateBucket` above traces in
+ * detail: Circle's settlement already happened by the time a handler-level check could
+ * reject the request, so anything checkable without knowing the payer has to be checked
+ * here instead. A clear (unsealed) body skips this middleware entirely (`next()`
+ * immediately) and falls through to the handler's own bad_vaults/bad_table_request
+ * checks, same as always — those remain sufficient for a clear body since nothing about
+ * a clear request depends on payment state.
+ *
+ * The payer check is deliberately *not* done here: `req.payment.payer` doesn't exist
+ * until `gateway.require` has already verified (and settled) the payment on this rail,
+ * so there is no way to know it this early. The opened plaintext is stashed on
+ * `res.locals.opened` so `handlers/scan.ts` — once the payment has gone through — runs
+ * only `checkSealedRequestPayer` and `commitNonce` against it, rather than re-opening the
+ * envelope or re-running a check that already passed. A `payer_mismatch` caught by the
+ * handler at that point is therefore caught *after* settlement, and this rail has no way
+ * to refund it — a real, documented limitation of Circle Gateway's settle-before-handler
+ * design, not a gap this middleware can close. (Surfaced in README.md's Arc section.)
+ */
+function preValidateSealed(tier: "scan" | "table", deps: Pick<HandlerDeps, "keys" | "nonces">) {
+  return (req: Request, res: Response, next: NextFunction): void => {
+    if (!isSealed(req.body)) {
+      next();
+      return;
+    }
+    let opened: SealedRequest<ScanRequest | TableRequest>;
+    try {
+      opened = openSealedRequest<ScanRequest | TableRequest>(req.body, deps.keys.kem.secretKey, deps.keys.kem.kid);
+    } catch {
+      res.status(422).json(errBody("envelope_open_failed"));
+      return;
+    }
+    const now = Math.floor(Date.now() / 1000);
+    const count = tier === "scan" ? clampCount(req.header("x-vr-count")) ?? undefined : undefined;
+    const pre = checkSealedRequestPrePayment(opened, { now, count, seen: deps.nonces });
+    if (!pre.ok) {
+      res.status(422).json(errBody(pre.reason));
+      return;
+    }
+    res.locals.opened = opened;
+    next();
+  };
+}
+
 export function mountArcRail(
   app: Express,
   deps: Omit<HandlerDeps, "rail" | "tier" | "getPayer" | "getTxId"> & {
@@ -100,6 +159,7 @@ export function mountArcRail(
     app.post(
       path,
       ...pre,
+      preValidateSealed(tier, deps),
       gateway.require(price),
       asyncHandler(async (req: Request, res: Response) => {
         // `req.payment` is always populated here: reaching this wrapper at all means
@@ -110,8 +170,23 @@ export function mountArcRail(
         // the handler goes on to do with it — unlike `onSettled` below, which is
         // specifically about committing *this handler's receipt* to HCS and so needs
         // one to exist.
+        //
+        // Wrapped in its own try/catch, ahead of the handler call: this rail's payer
+        // already paid by this point (Circle settles before `next()`, as traced above),
+        // so a metrics-recording failure here must never turn into a 500 for a request
+        // that already succeeded on-chain — `asyncHandler` would otherwise forward any
+        // throw straight to the app's error handler, which has no way to know the
+        // payment already went through. `Metrics.recordSettlement` no longer throws on
+        // malformed input (it validates and no-ops instead), but this isolation doesn't
+        // depend on that staying true.
         const payment = (req as PReq).payment;
-        if (payment) deps.metrics?.recordSettlement("arc", payment.amount);
+        if (payment) {
+          try {
+            deps.metrics?.recordSettlement("arc", payment.amount);
+          } catch {
+            /* metrics must never turn an already-paid request into a 500 */
+          }
+        }
         await handler(req, res);
         if (res.locals.receipt) deps.onSettled?.(res.locals.receipt as Receipt, arcTxIdFromRequest(req));
       }),

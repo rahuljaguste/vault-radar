@@ -58,6 +58,21 @@ type Cached<T> = { value: T; expiresAt: number; checkedAt: number };
 const HEALTH_TTL_S = 30;
 const IDENTITY_TTL_S = 10 * 60;
 
+// Matches rails/hedera.ts's `hbarPrice`'s `asset: "0.0.0"` literal — the Hedera native
+// asset id, distinct from the USDC token id `config.hedera.usdcToken` (e.g.
+// "0.0.429274") every other Hedera route prices in.
+const HBAR_ASSET = "0.0.0";
+
+// Both rails' settlement amounts are plain non-negative integer strings: Hedera's is the
+// settled requirement's atomic amount (tinybars or USDC-atomic, asset-dependent); Arc's
+// is `req.payment.amount`, which Circle's Gateway middleware computes via its own
+// `parsePrice` as `Math.round(dollars * 1e6).toString()` — confirmed against
+// @circle-fin/x402-batching 3.4.0's compiled dist/server/index.js — i.e. also an atomic
+// integer string, never a decimal dollar string, despite `revenueUsd` being how this
+// class *reports* Arc revenue. A decimal-format validator on the Arc side would reject
+// every real input Arc ever actually sends.
+const ATOMIC_AMOUNT_RE = /^\d+$/;
+
 /**
  * In-process counters and cached freshness/health/identity snapshotting for the admin
  * metrics endpoint (spec §13.1, served by `admin.ts`'s `mountAdmin`). Every counter here
@@ -82,6 +97,15 @@ export class Metrics {
     // the way repeatedly adding floating-point dollar amounts would.
     arc: { count: 0, revenueUsdMicros: 0 },
   };
+  /** Calls to `recordSettlement` with an amount that failed validation (see
+   * `ATOMIC_AMOUNT_RE`) — a no-op every time, never a throw, so a malformed amount can
+   * never suppress the HCS commitment or an already-settled response (both rails call
+   * this from inside their own dedicated try/catch specifically to make that true even
+   * if this method's implementation changes later — see rails/hedera.ts's
+   * `onAfterSettle` and rails/arc.ts's route wrapper). Not part of the admin snapshot's
+   * JSON shape (spec §13.1 has no field for it); exposed only so a test can confirm bad
+   * input is actually rejected rather than silently miscounted. */
+  recordingErrors = 0;
 
   private deployments = new Map<string, { ref: DeploymentRef; outcome: DeploymentOutcome; queriedAt: number }>();
   private heads = new Map<string, { head: ChainHead; ok: boolean; checkedAt: number }>();
@@ -105,15 +129,30 @@ export class Metrics {
 
   /**
    * `amount` is the rail's own atomic unit, straight from where each rail observes
-   * settlement: Hedera passes the settled `PaymentRequirements.amount` (tinybars for the
-   * HBAR-priced route, USDC-atomic for the default one — kept as a raw running sum since
-   * the two are never added *together*, only accumulated per rail); Arc always passes
-   * `req.payment.amount` (USDC atomic, 6 decimals).
+   * settlement: Hedera passes the settled requirement's amount (tinybars on the
+   * HBAR-priced `/hedera/v1/scan-hbar` route, USDC-atomic on every other Hedera route);
+   * Arc always passes `req.payment.amount` (USDC atomic, 6 decimals — see
+   * `ATOMIC_AMOUNT_RE`'s comment for why this is validated as an integer on both rails,
+   * not as a decimal dollar string on Arc's side). Malformed input is a no-op, counted
+   * in `recordingErrors`, never a thrown error — see `recordingErrors`'s own comment for
+   * why that matters to both call sites.
+   *
+   * `asset` (Hedera only) decides whether `amount` is folded into `revenueAtomic`: the
+   * HBAR route's tinybars and the default route's USDC-atomic units are different
+   * currencies, and summing them into one counter would silently misrepresent revenue as
+   * if it were all USDC (which is what this service reports, and the admin dashboard
+   * displays, `revenueAtomic` as). An HBAR-priced settlement (`asset === "0.0.0"`) still
+   * increments `settlements.hedera.count` — a settlement genuinely happened — but its
+   * amount is excluded from `revenueAtomic`. Arc is always USDC; `asset` is unused there.
    */
-  recordSettlement(rail: SettlementRail, amount: string): void {
+  recordSettlement(rail: SettlementRail, amount: string, asset?: string): void {
+    if (!ATOMIC_AMOUNT_RE.test(amount)) {
+      this.recordingErrors++;
+      return;
+    }
     if (rail === "hedera") {
       this.settlements.hedera.count++;
-      this.settlements.hedera.revenueAtomic += BigInt(amount);
+      if (asset !== HBAR_ASSET) this.settlements.hedera.revenueAtomic += BigInt(amount);
     } else {
       this.settlements.arc.count++;
       this.settlements.arc.revenueUsdMicros += Number(amount);

@@ -3,6 +3,8 @@ import {
   buildAttestation,
   buildReceipt,
   checkSealedRequest,
+  checkSealedRequestPayer,
+  commitNonce,
   computeRisk,
   isSealed,
   openSealedRequest,
@@ -73,16 +75,39 @@ export function makeScanHandler(d: HandlerDeps) {
 
     if (sealedIn) {
       let opened: SealedRequest<ScanRequest | TableRequest>;
-      try {
-        opened = openSealedRequest<ScanRequest | TableRequest>(req.body, d.keys.kem.secretKey, d.keys.kem.kid);
-      } catch {
-        return res.status(422).json(errBody("envelope_open_failed"));
+      // res.locals.opened is set by rails/arc.ts's pre-payment middleware, which already
+      // opened this envelope and ran checkSealedRequestPrePayment (ts window, nonce not
+      // yet seen, count) *before* payment ever started — Circle settles before this
+      // handler runs, so that check has to happen ahead of gateway.require, not here.
+      // Re-opening (a real KEM decrypt) or re-running the pre-payment check would be
+      // redundant; only the payer check and the nonce commit remain for this handler to
+      // do. The Hedera rail never sets this — its own settle-after-response ordering has
+      // no such problem, so it takes the unsplit `checkSealedRequest` path below,
+      // unchanged from before this split existed.
+      const preOpened = res.locals.opened as SealedRequest<ScanRequest | TableRequest> | undefined;
+      if (preOpened) {
+        opened = preOpened;
+        const payer = d.getPayer(req);
+        if (!payer) return res.status(422).json(errBody("payer_unknown"));
+        const payerCheck = checkSealedRequestPayer(opened, payer);
+        // A payer_mismatch caught here, on Arc, is caught *after* settlement already
+        // happened (see rails/arc.ts's pre-payment middleware comment) — this request's
+        // payer already paid and is not refunded. Not something this handler can fix;
+        // documented as a known limitation of the Circle Gateway flow (README.md).
+        if (!payerCheck.ok) return res.status(422).json(errBody(payerCheck.reason));
+        commitNonce(opened, d.nonces, now);
+      } else {
+        try {
+          opened = openSealedRequest<ScanRequest | TableRequest>(req.body, d.keys.kem.secretKey, d.keys.kem.kid);
+        } catch {
+          return res.status(422).json(errBody("envelope_open_failed"));
+        }
+        const payer = d.getPayer(req);
+        if (!payer) return res.status(422).json(errBody("payer_unknown"));
+        const count = d.tier === "scan" ? clampCount(req.header("x-vr-count")) ?? undefined : undefined;
+        const chk = checkSealedRequest(opened, { now, payer, count, seen: d.nonces });
+        if (!chk.ok) return res.status(422).json(errBody(chk.reason));
       }
-      const payer = d.getPayer(req);
-      if (!payer) return res.status(422).json(errBody("payer_unknown"));
-      const count = d.tier === "scan" ? clampCount(req.header("x-vr-count")) ?? undefined : undefined;
-      const chk = checkSealedRequest(opened, { now, payer, count, seen: d.nonces });
-      if (!chk.ok) return res.status(422).json(errBody(chk.reason));
       request = opened.request;
       replyPk = fromB64(opened.reply_pk);
     } else {

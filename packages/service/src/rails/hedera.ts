@@ -176,13 +176,22 @@ export function mountHederaRail(
   });
 
   server.onAfterSettle(async ctx => {
-    // Recorded unconditionally, ahead of the correlation try/catch below: by the time
-    // this hook fires, @x402/core has already confirmed the facilitator settled this
-    // payment for the "hedera:testnet" scheme this `server` is scoped to — that's true
-    // regardless of whether this rail's own txKey-based correlation (below) manages to
-    // find a matching receipt, so a settlement counts here even in the (never observed,
-    // but not provably impossible) case where the correlation step itself throws.
-    deps.metrics?.recordSettlement("hedera", ctx.requirements.amount);
+    // Recorded unconditionally, ahead of the correlation logic below, in its own
+    // dedicated try/catch: by the time this hook fires, @x402/core has already confirmed
+    // the facilitator settled this payment for the "hedera:testnet" scheme this `server`
+    // is scoped to — that's true regardless of whether this rail's own txKey-based
+    // correlation (below) manages to find a matching receipt, so a settlement counts
+    // here even if the correlation step itself throws. `Metrics.recordSettlement` no
+    // longer throws on malformed input (it validates and no-ops instead), but this is
+    // wrapped anyway: a metrics-recording failure of any kind must never be able to skip
+    // the onSettled call below it, which is what actually fires the HCS commitment for a
+    // request that already settled — a bare statement here, with no isolation of its
+    // own, would let exactly that happen if this method's implementation ever changes.
+    try {
+      deps.metrics?.recordSettlement("hedera", ctx.requirements.amount, ctx.requirements.asset);
+    } catch {
+      /* metrics must never suppress the HCS commitment below */
+    }
     try {
       const b64 = extractTransactionFromPayload(ctx.paymentPayload.payload as unknown as ExactHederaPayloadV2);
       const receipt = getFresh(receiptByTxKey, b64);

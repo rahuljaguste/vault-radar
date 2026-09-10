@@ -7,6 +7,7 @@ import { deriveKemKeys, deriveSigningKeys, MemoryNonceStore, type SourceRef, typ
 import { decodeHederaPayment, hederaPayerFromRequest, hederaTxIdFromRequest, _mapSizesForTests } from "../src/rails/hedera";
 import { buildApp, type BuildAppDeps } from "../src/app";
 import { loadConfig } from "../src/config";
+import { Metrics } from "../src/metrics";
 
 const TOKEN_ID = "0.0.429274";
 const PAYER_ACCOUNT = "0.0.1234";
@@ -124,7 +125,7 @@ type ScanFn = (ids: string[]) => Promise<{ vaults: UnifiedVault[]; sources: Sour
 
 async function mountRail(
   facilitatorUrl: string,
-  opts: { onSettled?: (receipt: unknown, txId: string) => void; scan?: ScanFn } = {},
+  opts: { onSettled?: (receipt: unknown, txId: string) => void; scan?: ScanFn; metrics?: Metrics } = {},
 ) {
   const config = loadConfig({
     PORT: "0", PUBLIC_URL: "http://svc.test", PQ_SIG_SEED: "77".repeat(32), PQ_KEM_SEED: "88".repeat(64),
@@ -142,7 +143,7 @@ async function mountRail(
   // as a variable rather than an inline literal so this doesn't trip an excess-property
   // check on a field the production type genuinely doesn't have.
   const deps: BuildAppDeps & { onSettled?: (receipt: unknown, txId: string) => void } = {
-    config, keys, data, hcs: null, nonces: new MemoryNonceStore(), rails: { hedera: true }, onSettled: opts.onSettled,
+    config, keys, data, hcs: null, nonces: new MemoryNonceStore(), rails: { hedera: true }, onSettled: opts.onSettled, metrics: opts.metrics,
   };
   const app = await buildApp(deps);
   const srv = app.listen(0);
@@ -310,6 +311,40 @@ test("a verified and settled payment reaches the handler, returns 200 with a rec
     expect(settledCalls[0][1]).toBe(SETTLED_TX);
     expect(settledCalls[0][0]).toEqual(j.receipt);
 
+    expect(_mapSizesForTests()).toEqual({ payer: 0, receipt: 0 });
+  } finally {
+    rail.close();
+    fac.close();
+  }
+});
+
+// Finding 2, fix round 1: recordSettlement previously ran ahead of (not inside) any
+// try/catch in onAfterSettle, so a throw from it would have skipped the receipt
+// correlation and onSettled below — silently dropping the HCS commitment for an
+// already-settled payment. It's now wrapped in its own dedicated try/catch specifically
+// so this can't happen regardless of what recordSettlement's implementation does.
+test("a metrics.recordSettlement that throws does not suppress onSettled or the map cleanup", async () => {
+  const fac = fakeFacilitator({
+    verify: { isValid: true, payer: VERIFIED_PAYER },
+    settle: { success: true, transaction: SETTLED_TX, payer: VERIFIED_PAYER },
+  });
+  class ThrowingMetrics extends Metrics {
+    recordSettlement(): never {
+      throw new Error("boom");
+    }
+  }
+  const settledCalls: [unknown, string][] = [];
+  const rail = await mountRail(fac.url, { onSettled: (receipt, txId) => settledCalls.push([receipt, txId]), metrics: new ThrowingMetrics() });
+  try {
+    const header = buildPaymentSignatureHeader();
+    const res = await fetch(`${rail.base}/hedera/v1/scan`, {
+      method: "POST",
+      headers: { "content-type": "application/json", "x-vr-count": "1", "payment-signature": header },
+      body: SCAN_BODY,
+    });
+    expect(res.status).toBe(200);
+    expect(settledCalls.length).toBe(1);
+    expect(settledCalls[0][1]).toBe(SETTLED_TX);
     expect(_mapSizesForTests()).toEqual({ payer: 0, receipt: 0 });
   } finally {
     rail.close();

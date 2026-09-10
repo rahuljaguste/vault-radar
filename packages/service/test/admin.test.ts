@@ -130,6 +130,43 @@ test("a 200 response matches spec §13.1's shape exactly, field for field", asyn
   }
 });
 
+/**
+ * `isAdminMetrics` from `packages/dashboard/lib/admin.ts`, reproduced here rather than
+ * imported. It is a module-private (unexported) function in that file, and
+ * `packages/service` declares no dependency on `@vaultradar/dashboard` at all — there is
+ * no package-name import path to it. A relative-path import would fare no better:
+ * `packages/dashboard`'s tsconfig sets `jsx: "react-jsx"`, `lib: ["dom", ...]`, and a
+ * `"next"` TypeScript plugin, none of which belong in `packages/service`'s own
+ * typecheck, and pulling in that file would also pull in its sibling `./service` module
+ * (dashboard's own service-URL resolution, itself Next-env-flavored). Copied instead of
+ * exported-and-imported, matching the fallback the fix-round review itself authorized.
+ * Kept byte-for-byte identical to the source (packages/dashboard/lib/admin.ts lines
+ * ~96-114 as of this fix) so this test actually catches drift between the two.
+ */
+function isRecord(v: unknown): v is Record<string, unknown> {
+  return typeof v === "object" && v !== null && !Array.isArray(v);
+}
+function isAdminMetrics(v: unknown): boolean {
+  if (!isRecord(v)) return false;
+  if (!isRecord(v.rails) || !isRecord((v.rails as Record<string, unknown>).hedera) || !isRecord((v.rails as Record<string, unknown>).arc)) return false;
+  if (!isRecord(v.hcs) || !isRecord(v.settlements) || !isRecord(v.requests)) return false;
+  if (!isRecord(v.keys) || !isRecord(v.heads)) return false;
+  if (!Array.isArray(v.deployments) || !Array.isArray(v.identity)) return false;
+  return true;
+}
+
+test("the metrics snapshot satisfies the dashboard's isAdminMetrics guard", async () => {
+  const metrics = new Metrics({ fetchImpl: async () => new Response("{}", { status: 200 }) });
+  const app = await mountApp({ ADMIN_TOKEN: "s3cr3t", HEDERA_HCS_TOPIC_ID: "0.0.9" }, { rails: { hedera: true, arc: true }, metrics });
+  try {
+    const res = await fetch(`${app.base}/v1/admin/metrics`, { headers: { authorization: "Bearer s3cr3t" } });
+    const body = await res.json();
+    expect(isAdminMetrics(body)).toBe(true);
+  } finally {
+    app.close();
+  }
+});
+
 // --- rail health probe: injectable fetch, never throws ----------------------------
 
 test("a failing facilitator probe reports healthy:false through the mounted route, without erroring the request", async () => {

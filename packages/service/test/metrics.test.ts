@@ -39,6 +39,59 @@ test("recordSettlement accumulates count and revenue independently per rail", ()
   expect(m.settlements.arc.revenueUsdMicros).toBe(3000);
 });
 
+// Finding 2, fix round 1: recordSettlement used to call BigInt(amount)/Number(amount)
+// unguarded, so a malformed amount would throw. Both rails now call this from inside
+// their own dedicated try/catch (see rails/hedera.ts and rails/arc.ts) specifically so
+// a throw here can never suppress onSettled or an already-settled response — but the
+// method itself is also fixed to never throw at all: bad input is now a no-op.
+test("recordSettlement no-ops (does not throw, does not count) on a malformed amount, on either rail", () => {
+  const m = new Metrics();
+  expect(() => m.recordSettlement("hedera", "not-a-number")).not.toThrow();
+  expect(() => m.recordSettlement("hedera", "12.5")).not.toThrow(); // decimal: hedera amounts are always atomic integers
+  expect(() => m.recordSettlement("hedera", "-5")).not.toThrow(); // negative: never a valid atomic amount
+  expect(() => m.recordSettlement("arc", "0.003")).not.toThrow(); // a dollar-decimal string, NOT what req.payment.amount actually sends (see ATOMIC_AMOUNT_RE's comment in metrics.ts) — still must not throw
+  expect(() => m.recordSettlement("arc", "")).not.toThrow();
+
+  expect(m.settlements.hedera.count).toBe(0);
+  expect(m.settlements.hedera.revenueAtomic).toBe(0n);
+  expect(m.settlements.arc.count).toBe(0);
+  expect(m.settlements.arc.revenueUsdMicros).toBe(0);
+  expect(m.recordingErrors).toBe(5);
+});
+
+test("recordSettlement accepts a valid atomic integer amount after a prior malformed call", () => {
+  const m = new Metrics();
+  m.recordSettlement("arc", "not-a-number");
+  m.recordSettlement("arc", "3000");
+  expect(m.recordingErrors).toBe(1);
+  expect(m.settlements.arc.count).toBe(1);
+  expect(m.settlements.arc.revenueUsdMicros).toBe(3000);
+});
+
+// Finding 3, fix round 1: the HBAR-priced /hedera/v1/scan-hbar route settles in
+// tinybars, not USDC-atomic units — summing those into the same revenueAtomic counter
+// as every other Hedera route (all USDC) would silently misrepresent revenue.
+test("an HBAR-priced settlement (asset 0.0.0) increments hedera.count but leaves revenueAtomic unchanged", () => {
+  const m = new Metrics();
+  m.recordSettlement("hedera", "5000000", "0.0.0"); // 0.05 HBAR in tinybars
+  expect(m.settlements.hedera.count).toBe(1);
+  expect(m.settlements.hedera.revenueAtomic).toBe(0n);
+
+  // A subsequent USDC-asset settlement still accumulates normally, on top of the
+  // HBAR settlement's count.
+  m.recordSettlement("hedera", "1500", config.hedera.usdcToken);
+  expect(m.settlements.hedera.count).toBe(2);
+  expect(m.settlements.hedera.revenueAtomic).toBe(1500n);
+});
+
+test("a Hedera settlement with no asset argument (or the USDC asset) still accumulates revenueAtomic, unchanged from before the HBAR exclusion", () => {
+  const m = new Metrics();
+  m.recordSettlement("hedera", "1500"); // no asset passed at all
+  m.recordSettlement("hedera", "1500", config.hedera.usdcToken);
+  expect(m.settlements.hedera.count).toBe(2);
+  expect(m.settlements.hedera.revenueAtomic).toBe(3000n);
+});
+
 test("snapshot() produces every field, with string numerics throughout", async () => {
   const m = new Metrics({ now: () => 1000, fetchImpl: async () => new Response("{}", { status: 200 }) });
   m.recordSettlement("arc", "3000");
