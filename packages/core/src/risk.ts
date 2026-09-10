@@ -6,7 +6,8 @@ export type FlagName =
   | "share_price_drawdown_7d"
   | "tvl_outflow_24h"
   | "deposit_limit_reached"
-  | "stale_data";
+  | "stale_data"
+  | "bad_share_price";
 
 export type Flag = { name: FlagName; value: string; threshold: string; window: string };
 export type Verdict = "ok" | "watch" | "alert" | "unavailable";
@@ -73,7 +74,20 @@ export function computeRisk(v: UnifiedVault, nowTs: number): RiskReport {
     flags.push({ name: "stale_data", value: v.freshness, threshold: "fresh", window: "now" });
     return { vaultId: v.id, flags, score: 0, verdict: "unavailable", evidence };
   }
+  // Every drawdown window compares against this one number, and a NaN makes each of those
+  // comparisons false — so an unparseable share price used to score 0 and read `ok`, which
+  // is a verdict inferred from data the model could not read. Spec §5.3: "No verdict is ever
+  // inferred from partial data." Treated exactly like a stale source: `unavailable`, score 0,
+  // and a flag naming the value that could not be parsed.
+  //
+  // The blank case is checked separately because `Number("")` is 0, not NaN: an absent share
+  // price would otherwise read as a share price of zero, which is a different (and equally
+  // unfounded) claim rather than a missing one.
   const cur = num(v.sharePrice)!;
+  if (v.sharePrice.trim() === "" || !Number.isFinite(cur)) {
+    flags.push({ name: "bad_share_price", value: String(v.sharePrice), threshold: "finite", window: "now" });
+    return { vaultId: v.id, flags, score: 0, verdict: "unavailable", evidence };
+  }
   let score = 0;
   for (const w of WINDOWS) {
     const pts = v.history.filter(h => { const age = nowTs - Number(h.timestamp); return age >= w.min && age <= w.max; });

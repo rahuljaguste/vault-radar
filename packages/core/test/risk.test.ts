@@ -47,6 +47,20 @@ test("deposit limit flag echoes exact atomic strings beyond Number.MAX_SAFE_INTE
   expect(flag?.threshold).toBe(bigLim);
 });
 
+test("an unreadable share price is unavailable, not ok", () => {
+  // Every drawdown comparison against a NaN is false, so this used to score 0 and read `ok`
+  // — a verdict inferred from a number the model could not parse.
+  for (const bad of ["", "n/a", "null", "abc"]) {
+    const r = computeRisk(mk({ sharePrice: bad }), now);
+    expect(r.verdict).toBe("unavailable");
+    expect(r.score).toBe(0);
+    const flag = r.flags.find(f => f.name === "bad_share_price");
+    expect(flag).toEqual({ name: "bad_share_price", value: bad, threshold: "finite", window: "now" });
+  }
+  // A stale source still wins, since it is checked first and says the same thing.
+  expect(computeRisk(mk({ sharePrice: "abc", freshness: "stale" }), now).flags.map(f => f.name)).toEqual(["stale_data"]);
+});
+
 /* ---------------------------------------------- the 24 h outflow, per series */
 
 const point = (over: Partial<HistoryPoint> & { series: HistoryPoint["series"]; timestamp: string }): HistoryPoint => ({
