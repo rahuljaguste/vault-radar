@@ -9,6 +9,8 @@ import {
   hederaScanPriceUsd,
   isSealed,
   open,
+  requestHash,
+  responseHash,
   verifyAttestation,
   verifyReceipt,
   type Attestation,
@@ -250,16 +252,30 @@ export class VaultRadarClient {
     if (env && !isSealedResponse(raw)) throw new Error("service returned a clear response to a sealed request");
     if (!env && isSealedResponse(raw)) throw new Error("service returned a sealed response to a clear request");
 
+    const sealedOnWire = isSealedResponse(raw);
     const opened: ScanResponseBody = env ? open<ScanResponseBody>((raw as SealedEnvelopeResponse).sealed, env.replySecret) : (raw as ClearResponse);
     const receipt = raw.receipt;
     const attestations = opened.attestations ?? [];
-    // An attestation count that doesn't match the vault count (or an attestation for a
-    // vault that isn't in the response) is not a "verified" result even if every
-    // attestation present happens to carry a valid signature.
+    // An attestation count that doesn't match the vault count, an attestation for a
+    // vault that isn't in the response, or two attestations naming the same vault are
+    // all unverified results even if every attestation present carries a valid
+    // signature. Requiring distinct vault ids alongside the count and membership
+    // checks makes the attestation set a bijection with the returned vaults, so every
+    // vault is provably attested exactly once.
     const vaultIds = new Set(opened.vaults.map(v => v.id));
+    const attestedIds = new Set(attestations.map(a => a.vaultId));
     const attestationsValid =
       attestations.length === opened.vaults.length &&
+      attestedIds.size === attestations.length &&
       attestations.every(a => vaultIds.has(a.vaultId) && verifyAttestation(a, d.sigPk));
+
+    // A correctly signed receipt still isn't a receipt for *this* purchase unless it
+    // commits to the request that was sent and the body that came back — otherwise a
+    // service could replay any previously signed receipt against any response.
+    const receiptValid =
+      verifyReceipt(receipt, d.sigPk) &&
+      receipt.request_hash === requestHash(request) &&
+      receipt.response_hash === responseHash({ vaults: opened.vaults, reports: opened.reports, attestations });
 
     return {
       rail,
@@ -268,11 +284,15 @@ export class VaultRadarClient {
       reports: opened.reports,
       attestations,
       receipt,
-      receiptValid: verifyReceipt(receipt, d.sigPk),
+      receiptValid,
       attestationsValid,
       txId,
       priceUsd: this.priceFor(rail, tier, count),
-      sealed: !!env,
+      // Read off the response that actually arrived, not off what the client asked
+      // for. The two throw-guards above already reject a mismatch, so this can only
+      // agree with `!!env` — stating it this way keeps the reported value tied to an
+      // observation rather than to intent, even if those guards are ever relaxed.
+      sealed: sealedOnWire,
     };
   }
 

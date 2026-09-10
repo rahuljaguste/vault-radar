@@ -6,7 +6,7 @@ import type { Config } from "./config";
 import type { ServiceKeys } from "./keys";
 import { buildAgentCard } from "./keys";
 import type { DataProvider } from "./data/provider";
-import type { HcsQueue } from "./hcs";
+import type { HcsSink } from "./hcs";
 import { asyncHandler } from "./util/async";
 
 // packages/service/src/wellknown.ts -> repo root is three levels up.
@@ -19,7 +19,7 @@ export type WellKnownDeps = {
   config: Config;
   keys: ServiceKeys;
   data: DataProvider;
-  hcs: HcsQueue | null;
+  hcs: HcsSink | null;
   /** Overrides where /skill.md reads from. Defaults to the repo's own SKILL.md; tests
    * point this at a path that doesn't exist to exercise the 404 branch. */
   skillPath?: string;

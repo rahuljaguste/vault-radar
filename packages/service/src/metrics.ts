@@ -1,5 +1,5 @@
 import type { Config } from "./config";
-import type { HcsQueue } from "./hcs";
+import type { HcsSink } from "./hcs";
 import type { ServiceKeys } from "./keys";
 import type { readPqHash as ReadPqHashFn } from "./erc8004";
 
@@ -39,7 +39,7 @@ export type AdminMetrics = {
 
 export type SnapshotDeps = {
   config: Config;
-  hcs: HcsQueue | null;
+  hcs: HcsSink | null;
   keys: ServiceKeys;
   /** Injected so tests can supply a fake without touching real chain RPC — production
    * wiring (app.ts) defaults this to the real `readPqHash` from `./erc8004`. */

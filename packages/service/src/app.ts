@@ -3,7 +3,7 @@ import type { NonceStore, Receipt } from "@vaultradar/core";
 import type { Config } from "./config";
 import type { ServiceKeys } from "./keys";
 import type { DataProvider } from "./data/provider";
-import type { HcsQueue } from "./hcs";
+import type { HcsSink } from "./hcs";
 import { mountWellKnown } from "./wellknown";
 import { Metrics } from "./metrics";
 import { mountAdmin } from "./admin";
@@ -13,7 +13,7 @@ export type BuildAppDeps = {
   config: Config;
   keys: ServiceKeys;
   data: DataProvider;
-  hcs: HcsQueue | null;
+  hcs: HcsSink | null;
   nonces: NonceStore;
   rails?: { hedera?: boolean; arc?: boolean };
   /**

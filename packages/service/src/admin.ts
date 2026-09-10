@@ -2,7 +2,7 @@ import type { Express, Request, Response } from "express";
 import cors from "cors";
 import type { Config } from "./config";
 import type { Metrics } from "./metrics";
-import type { HcsQueue } from "./hcs";
+import type { HcsSink } from "./hcs";
 import type { ServiceKeys } from "./keys";
 import type { DataProvider } from "./data/provider";
 import type { readPqHash as ReadPqHashFn } from "./erc8004";
@@ -12,7 +12,7 @@ import { asyncHandler } from "./util/async";
 export type AdminDeps = {
   config: Config;
   metrics: Metrics;
-  hcs: HcsQueue | null;
+  hcs: HcsSink | null;
   keys: ServiceKeys;
   data: DataProvider;
   /** Injected so tests can supply a fake without touching real chain RPC; production

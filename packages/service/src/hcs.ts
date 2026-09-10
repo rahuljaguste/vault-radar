@@ -13,6 +13,25 @@ export type LookupResult = {
 type Submit = (message: string) => Promise<{ sequence: string; consensusTimestamp: string; transactionId?: string }>;
 type FetchLike = (url: string) => Promise<Response>;
 
+/**
+ * The two methods `buildApp` (settlement hook) and `mountWellKnown` (`/v1/receipts/:hash`)
+ * actually use from the commitment queue.
+ *
+ * Declared as an interface rather than having those call sites name the concrete
+ * `HcsQueue` class, because `HcsQueue` carries private fields: a caller cannot supply a
+ * stand-in for it structurally at all, only an instance. Depending on the surface instead
+ * of the implementation lets a test harness pass a fake — and makes the real contract,
+ * including `LookupResult`'s string `sequence`, checkable at the boundary.
+ */
+export interface HcsSink {
+  enqueue(r: Receipt): void;
+  lookup(h: string): Promise<LookupResult>;
+  /** Counters for the admin metrics endpoint (spec §13.1); see `HcsQueue.stats()`. Part
+   * of the interface (not just the concrete class) so `admin.ts`/`metrics.ts` can type
+   * against `HcsSink` — the same reasoning as `enqueue`/`lookup` above. */
+  stats(): { pending: number; submitted: number; failed: number; lastSequence: string | null };
+}
+
 const defaultFetch: FetchLike = url => fetch(url);
 
 /**
@@ -24,7 +43,7 @@ const defaultFetch: FetchLike = url => fetch(url);
  * dropping it, since a receipt commitment is meant to be durable; only a successful
  * submit advances the queue.
  */
-export class HcsQueue {
+export class HcsQueue implements HcsSink {
   private done = new Map<string, LookupResult>();
   private q: Receipt[] = [];
   private running = false;
