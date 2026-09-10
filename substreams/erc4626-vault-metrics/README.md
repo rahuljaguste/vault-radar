@@ -155,18 +155,23 @@ Requires [`substreams-sink-sql`](https://github.com/streamingfast/substreams-sin
 [thegraph.market](https://thegraph.market) (Substreams → API key). Point `DATABASE_URL` at your
 Neon connection string (or any Postgres instance).
 
-**One-time setup** (creates `vault_metrics`/`vault_latest`/`vault_meta` plus the sink's own cursor
-table from `schema.sql` — run once per target database, not per chain):
+**One-time setup** (creates `vault_metrics`/`vault_latest`/`vault_meta` from `schema.sql` plus the
+sink's own cursor table). The data tables are `CREATE TABLE IF NOT EXISTS`, so running this once
+per chain is safe and is what creates each chain's own cursor table:
 
 ```bash
-substreams-sink-sql setup "$DATABASE_URL" ./erc4626-vault-metrics-v0.1.0.spkg
+substreams-sink-sql setup "$DATABASE_URL" ./erc4626-vault-metrics-v0.1.0.spkg \
+  --cursors-table cursors_1
+substreams-sink-sql setup "$DATABASE_URL" ./erc4626-vault-metrics-base-v0.1.0.spkg \
+  --cursors-table cursors_8453
 ```
 
 **Run the mainnet sink:**
 
 ```bash
 substreams-sink-sql run "$DATABASE_URL" ./erc4626-vault-metrics-v0.1.0.spkg \
-  -e mainnet.eth.streamingfast.io:443 --params db_out=1 --final-blocks-only
+  -e mainnet.eth.streamingfast.io:443 --params db_out=1 \
+  --cursors-table cursors_1 --final-blocks-only
 ```
 
 **Run the Base sink** (same database, different package/endpoint/param — both chains' rows
@@ -174,7 +179,8 @@ coexist because every table's primary key includes `chain_id`):
 
 ```bash
 substreams-sink-sql run "$DATABASE_URL" ./erc4626-vault-metrics-base-v0.1.0.spkg \
-  -e base-mainnet.streamingfast.io:443 --params db_out=8453 --final-blocks-only
+  -e base-mainnet.streamingfast.io:443 --params db_out=8453 \
+  --cursors-table cursors_8453 --final-blocks-only
 ```
 
 Run both as long-lived background processes on the same host (Task 20 wires them into the Fly
@@ -186,10 +192,22 @@ machine as background processes; for a demo, running both from a laptop works id
 psql "$DATABASE_URL" -c "SELECT chain_id, count(*) FROM vault_latest GROUP BY 1"
 ```
 
-**Cursor table**: `substreams-sink-sql setup` creates a `cursors` table (columns: `id` text primary
-key — the output module's hash, one row per sink/module pinned to this database — `cursor` text,
-`block_num` bigint, `block_id` text). If a query elsewhere in this project reads sink progress
-directly from Postgres, point it at `cursors`, not a differently-named table.
+**Cursor table**: the sink stores its progress in a table named by `--cursors-table`, defaulting to
+`cursors` (columns: `id` text primary key — the output module's hash, one row per sink/module
+pinned to this database — `cursor` text, `block_num` bigint, `block_id` text). Do not take the
+default here. `packages/core/src/substreams/reader.ts` reads sink progress from `cursors_<chainId>`,
+one table per chain, so that a lookup for one chain can never match another chain's row. Pass
+`--cursors-table cursors_1` and `--cursors-table cursors_8453` to both `setup` and `run`, as above.
+
+**Newer CLI**: `substreams` 1.22.0 ships the same sink built in, as `substreams sink postgres`, so a
+second binary is optional. It takes the connection string as `--dsn` rather than a positional
+argument and accepts the same `--cursors-table`:
+
+```bash
+substreams sink postgres ./erc4626-vault-metrics-v0.1.0.spkg \
+  --dsn "$DATABASE_URL" -e mainnet.eth.streamingfast.io:443 \
+  --params db_out=1 --cursors-table cursors_1 --final-blocks-only
+```
 
 **Hosted alternative**: on [thegraph.market](https://thegraph.market), Hosted Sinks → New → point
 at the published package below → Postgres → paste the Neon connection string → deploy. This runs
@@ -202,4 +220,4 @@ substreams registry login
 substreams registry publish ./erc4626-vault-metrics-v0.1.0.spkg
 ```
 
-Published package: `<TODO: substreams.dev URL after publish>`
+Published package: `<<FILL: substreams.dev package URL for erc4626-vault-metrics>>`
