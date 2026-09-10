@@ -6,6 +6,7 @@ import {
   deriveSigningKeys,
   MemoryNonceStore,
   open,
+  openSealedRequest,
   verifyReceipt,
   verifyAttestation,
   requestHash,
@@ -104,6 +105,42 @@ test("sealed scan returns sealed body and a receipt with every required field", 
     expect(body.vaults[0].id).toBe("1:0xabababababababababababababababababababab");
     expect(body.reports[0].verdict).toBe("ok");
     expect(verifyAttestation(body.attestations[0], keys.sig.publicKey)).toBe(true);
+  } finally {
+    srv.close();
+  }
+});
+
+test("the Arc path (pre-opened envelope) refuses a request whose nonce a concurrent twin already committed", async () => {
+  // The Arc rail checks the nonce pre-payment but commits it only here in the handler
+  // (a payer-mismatched or never-paid request must not burn its nonce), so two
+  // concurrent submissions of one envelope can both pass that earlier check and both
+  // settle. This mounts the handler exactly as that rail does — plaintext pre-stashed
+  // on res.locals.opened — with the twin's commit already in the store, and asserts
+  // the loser is refused rather than answered a second time.
+  const { sealed } = buildSealedRequest({ vaults: ["1:0xabababababababababababababababababababab"] }, "0.0.1234", keys.kem.publicKey, now);
+  const opened = openSealedRequest<{ vaults: string[] }>(sealed, keys.kem.secretKey, keys.kem.kid);
+  const nonces = new MemoryNonceStore();
+  nonces.add(opened.req_nonce, now + 600); // the winning twin committed between pre-check and here
+  const scanCalls: string[][] = [];
+  const app = express();
+  app.use(express.json());
+  app.post(
+    "/scan",
+    (req, res, next) => { res.locals.opened = opened; next(); },
+    makeScanHandler({
+      keys, config, nonces, rail: "arc", tier: "scan", price: routePrice("arc", "scan"),
+      getPayer: () => "0.0.1234", getTxId: () => "0xgateway-batch",
+      data: makeData({ scan: async (ids: string[]) => { scanCalls.push(ids); return { vaults: [], sources: [] }; } }),
+    }),
+  );
+  const srv = app.listen(0);
+  try {
+    const res = await fetch(`http://127.0.0.1:${(srv.address() as any).port}/scan`, {
+      method: "POST", headers: { "content-type": "application/json", "x-vr-count": "1" }, body: JSON.stringify(sealed),
+    });
+    expect(res.status).toBe(422);
+    expect(await res.json()).toEqual({ reason: "nonce_replay", error: "nonce_replay" });
+    expect(scanCalls).toEqual([]); // refused before any upstream work
   } finally {
     srv.close();
   }

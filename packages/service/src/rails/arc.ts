@@ -9,6 +9,7 @@ import {
   isSealed,
   knownProtocol,
   openSealedRequest,
+  validScanVaults,
   type Receipt,
   type ScanRequest,
   type SealedRequest,
@@ -119,32 +120,39 @@ function preValidateSealed(tier: "scan" | "table", deps: Pick<HandlerDeps, "keys
 }
 
 /**
- * The clear-body sibling of `preValidateSealed`: for the scan tier, rejects a request
- * whose own `vaults` list disagrees with the `X-VR-Count` the route is about to be priced
- * against (422 `count_mismatch`), before `gateway.require` ever runs.
+ * The scan tier's whole pre-payment body rule: the vault list must be a valid scan
+ * request (`bad_vaults`), and — for a clear body, whose list is the payer's own claim —
+ * its length must equal the `X-VR-Count` the route is priced against
+ * (`count_mismatch`). Sealed bodies are read off the plaintext `preValidateSealed`
+ * already opened onto `res.locals.opened`, never decrypted twice.
  *
- * `validateBucket` above only ever reads the header, so it cannot see this: `X-VR-Count:
- * 1` on `/arc/v1/scan/s` with a hundred vaults in a clear body passes the bucket check,
- * pays the one-vault `s` price, and then asks the DataProvider for a hundred vaults.
- * `handlers/scan.ts` enforces the same rule rail-independently, but on this rail a
- * handler-level refusal comes after Circle has already settled (see `validateBucket`'s
- * comment for the trace), so the money would be gone — which is why the check is mounted
- * here as well rather than only there.
+ * Both rejections must happen ahead of `gateway.require(price)`: Circle settles before
+ * any handler runs (see `validateBucket`'s trace), and the handler's own `bad_vaults`
+ * and `count_mismatch` checks — which this mirrors exactly, via the same shared
+ * `validScanVaults` predicate — would land only after the money moved. Before this
+ * existed, a non-array `vaults` (clear or sealed) slipped past the count check's
+ * `Array.isArray` guard and bought a paid 422; a valid-but-mismatched clear list did
+ * the same for the underpriced-work reason `validateBucket`'s sibling comment on the
+ * handler side documents.
  *
- * A sealed body is left to `preValidateSealed` (which checks the same thing against the
- * envelope's plaintext); a `table` request has no count. `Array.isArray` guards the read
- * exactly as `checkSealedRequestPrePayment` does, so a clear body with a non-array
- * `vaults` keeps reaching the handler's own `bad_vaults` check rather than being
- * relabelled a count mismatch.
+ * A `table` request has no count and no vault list; this middleware passes it through
+ * untouched.
  */
-function preValidateClearCount(tier: "scan" | "table") {
+function preValidateScanBody(tier: "scan" | "table") {
   return (req: Request, res: Response, next: NextFunction): void => {
-    if (tier !== "scan" || isSealed(req.body)) {
+    if (tier !== "scan") {
       next();
       return;
     }
-    const vaults = (req.body as { vaults?: unknown })?.vaults;
-    if (Array.isArray(vaults) && vaults.length !== clampCount(req.header("x-vr-count"))) {
+    const opened = res.locals.opened as SealedRequest<ScanRequest> | undefined;
+    const vaults = (opened ? opened.request : req.body as { vaults?: unknown })?.vaults;
+    if (!validScanVaults(vaults)) {
+      res.status(422).json(errBody("bad_vaults"));
+      return;
+    }
+    // Sealed requests already had their count checked against the same header inside
+    // `checkSealedRequestPrePayment`; only a clear body still needs it here.
+    if (!opened && vaults.length !== clampCount(req.header("x-vr-count"))) {
       res.status(422).json(errBody("count_mismatch"));
       return;
     }
@@ -153,19 +161,17 @@ function preValidateClearCount(tier: "scan" | "table") {
 }
 
 /**
- * Refuses a table request for a protocol this service does not index (422
- * `unknown_protocol`) before `gateway.require` runs.
+ * The table tier's pre-payment rule: a body whose `protocol`/`chainId` are not both
+ * strings is `bad_table_request`, and a well-formed pair nobody indexes is
+ * `unknown_protocol` — both ahead of `gateway.require`, since Circle settles before the
+ * handler's own equivalent checks could run (see `validateBucket`'s trace for why that
+ * ordering is load-bearing).
  *
- * `DataProvider.table` answers an unknown protocol with `{ vaults: [], sources: [] }`, which
- * is honest but arrives after Circle has settled — so the payer bought an empty table and
- * there is no reversal path (see `validateBucket`'s trace). `handlers/scan.ts` enforces the
- * same rule rail-independently, which is sufficient on Hedera where settlement follows the
- * 2xx; here it would be too late.
- *
- * Mounted after `preValidateSealed`, so a sealed request is read off the plaintext that
- * middleware already opened and stashed on `res.locals.opened` rather than being decrypted
- * twice. A body that is neither sealed-and-opened nor an object with both fields as strings
- * is left alone, so it still reaches the handler's own `bad_table_request`.
+ * Reads a sealed request off the plaintext `preValidateSealed` already opened onto
+ * `res.locals.opened` rather than decrypting twice. Before this rejected non-string
+ * fields they were passed through to the handler's `bad_table_request` — a paid 422 on
+ * a rail with no refund path; now the only table bodies that still reach payment are
+ * ones this rail can actually answer.
  */
 function preValidateTable(tier: "scan" | "table") {
   return (req: Request, res: Response, next: NextFunction): void => {
@@ -173,10 +179,10 @@ function preValidateTable(tier: "scan" | "table") {
       next();
       return;
     }
-    const opened = res.locals.opened as SealedRequest<ScanRequest | TableRequest> | undefined;
+    const opened = res.locals.opened as SealedRequest<TableRequest> | undefined;
     const body = (opened ? opened.request : req.body) as { protocol?: unknown; chainId?: unknown } | null;
     if (typeof body?.protocol !== "string" || typeof body.chainId !== "string") {
-      next();
+      res.status(422).json(errBody("bad_table_request"));
       return;
     }
     if (!knownProtocol(body.protocol, body.chainId)) {
@@ -230,7 +236,7 @@ export function mountArcRail(
       path,
       ...pre,
       preValidateSealed(tier, deps),
-      preValidateClearCount(tier),
+      preValidateScanBody(tier),
       preValidateTable(tier),
       gateway.require(price),
       asyncHandler(async (req: Request, res: Response) => {

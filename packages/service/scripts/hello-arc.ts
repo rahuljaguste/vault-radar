@@ -1,8 +1,8 @@
 // hello-arc.ts — pays for one sealed scan against a running VaultRadar service over the
-// Arc x402 rail, end to end: fetches the signed agent card, optionally deposits USDC
-// into Circle Gateway, builds a sealed scan request, lets `GatewayClient.pay` answer the
-// 402 with a signed EIP-3009 authorization, then verifies the returned receipt and opens
-// the sealed reply.
+// Arc x402 rail, end to end: fetches the signed agent card and verifies its
+// self-signature, optionally deposits USDC into Circle Gateway, builds a sealed scan
+// request, lets `GatewayClient.pay` answer the 402 with a signed EIP-3009 authorization,
+// then verifies the returned receipt and opens the sealed reply.
 //
 // Prerequisites:
 //   - An Arc testnet EVM account (AGENT_ARC_KEY) holding testnet USDC (faucet.circle.com
@@ -26,7 +26,7 @@
 // transaction hash resolvable on https://testnet.arcscan.app, `receipt ok: true`. Paste
 // the arcscan URL into docs/verification-log.md.
 import { GatewayClient } from "@circle-fin/x402-batching/client";
-import { buildSealedRequest, fromB64, open, verifyReceipt } from "@vaultradar/core";
+import { buildSealedRequest, checkSig, fromB64, open, verifyReceipt } from "@vaultradar/core";
 
 const base = process.env.SERVICE_URL ?? "http://localhost:8787";
 const privateKey = process.env.AGENT_ARC_KEY;
@@ -36,6 +36,17 @@ if (!privateKey) {
 }
 
 const card = await (await fetch(`${base}/.well-known/agent.json`)).json();
+
+// The card proves nothing on its own: anyone answering for this URL can publish a card
+// with their own key. It has to verify under the very key it ships — the same
+// self-signature check the agent client runs (`VaultRadarClient.discover`) before it
+// pays anything. Without it, "receipt ok: true" below would only show that the receipt
+// and the card came from the same place, not that either is VaultRadar.
+const sigPk = fromB64(card.pq.sig.public_key);
+if (!checkSig(card, sigPk)) {
+  console.error("agent card signature did not verify — refusing to pay this service");
+  process.exit(1);
+}
 
 const gw = new GatewayClient({ chain: "arcTestnet", privateKey: privateKey as `0x${string}` });
 
@@ -58,5 +69,5 @@ const res = await gw.pay<{ receipt: unknown; sealed: unknown }>(card.endpoints.a
 
 console.log("paid", res.formattedAmount, "tx", res.transaction, "status", res.status);
 console.log("payer", gw.account.address);
-console.log("receipt ok:", verifyReceipt(res.data.receipt as any, fromB64(card.pq.sig.public_key)));
+console.log("receipt ok:", verifyReceipt(res.data.receipt as any, sigPk));
 console.log("opened:", JSON.stringify(open(res.data.sealed as any, replySecret)).slice(0, 300));

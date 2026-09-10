@@ -14,6 +14,7 @@ import {
   fromB64,
   clampCount,
   knownProtocol,
+  validScanVaults,
   type NonceStore,
   type ScanRequest,
   type TableRequest,
@@ -65,7 +66,6 @@ export type HandlerDeps = {
 };
 
 const HANDLER_CAP_MS = 60_000;
-const VAULT_ID_RE = /^\d+:0x[0-9a-f]{40}$/i;
 
 /**
  * Shared handler for every {scan, table} × {hedera, arc} route (spec §5.4/§5.5).
@@ -105,7 +105,14 @@ export function makeScanHandler(d: HandlerDeps) {
         // payer already paid and is not refunded. Not something this handler can fix;
         // documented as a known limitation of the Circle Gateway flow (README.md).
         if (!payerCheck.ok) return res.status(422).json(errBody(payerCheck.reason));
-        commitNonce(opened, d.nonces, now);
+        // The pre-payment middleware checked this nonce against the store *before*
+        // settlement, but could not commit it there (a request that fails this payer
+        // check, or never reaches payment at all, must not burn its nonce). Two
+        // concurrent submissions of the same envelope can therefore both pass that
+        // earlier check and both settle; only the first commit wins, and the loser is
+        // refused here — after Circle took its money (same unrefundable position as a
+        // payer_mismatch above, and for the same reason), but never answered twice.
+        if (!commitNonce(opened, d.nonces, now)) return res.status(422).json(errBody("nonce_replay"));
       } else {
         try {
           opened = openSealedRequest<ScanRequest | TableRequest>(req.body, d.keys.kem.secretKey, d.keys.kem.kid);
@@ -126,7 +133,10 @@ export function makeScanHandler(d: HandlerDeps) {
 
     if (d.tier === "scan") {
       const vaults = (request as ScanRequest).vaults;
-      if (!Array.isArray(vaults) || !vaults.length || vaults.length > 100 || !vaults.every(v => VAULT_ID_RE.test(v))) {
+      // validScanVaults is the shared bad_vaults rule (core envelope.ts): the Arc rail
+      // runs the same predicate ahead of Circle's synchronous settlement, and this call
+      // is the rail-independent backstop every mount gets.
+      if (!validScanVaults(vaults)) {
         return res.status(422).json(errBody("bad_vaults"));
       }
       // The price of a scan is `X-VR-Count`, and the work is `request.vaults`, so the two
@@ -138,7 +148,7 @@ export function makeScanHandler(d: HandlerDeps) {
       // DataProvider call, so the refusal costs nothing upstream — and, on Hedera, ahead
       // of settlement so it costs the payer nothing either. Arc settles before any
       // handler runs, so that rail enforces the same rule in a pre-payment middleware
-      // (rails/arc.ts's preValidateClearCount); this remains the rail-independent
+      // (rails/arc.ts's preValidateScanBody); this remains the rail-independent
       // backstop, and the only line of defence for a handler mounted without a rail.
       if (!sealedIn && clampCount(req.header("x-vr-count")) !== vaults.length) {
         return res.status(422).json(errBody("count_mismatch"));

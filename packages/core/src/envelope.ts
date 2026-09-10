@@ -1,9 +1,26 @@
 import { ml_kem768_x25519 } from "@noble/post-quantum/hybrid.js";
 import { fromB64, randomBytes, toB64, toHex } from "./util/bytes";
 import { Sealed, open, seal } from "./pq/seal";
+import { MAX_SCAN } from "./pricing";
 
 export type ScanRequest = { vaults: string[] };
 export type TableRequest = { protocol: string; chainId: string };
+
+/** A vault id as every route accepts it: `<decimal chainId>:<20-byte hex address>`. */
+export const VAULT_ID_RE = /^\d+:0x[0-9a-f]{40}$/i;
+
+/**
+ * The full `bad_vaults` rule in one place: an array of 1..MAX_SCAN well-formed vault
+ * ids. Lives here — rather than only inside the service's scan handler — because the
+ * Arc rail must apply exactly this rule *before* Circle settles (a handler-level
+ * refusal there comes after the money moved), and a second copy of the rule in the
+ * rail could drift from the handler's. The handler keeps calling it too, as the
+ * rail-independent backstop for any handler mounted without a rail's pre-payment
+ * middleware.
+ */
+export function validScanVaults(x: unknown): x is string[] {
+  return Array.isArray(x) && x.length >= 1 && x.length <= MAX_SCAN && x.every(v => typeof v === "string" && VAULT_ID_RE.test(v));
+}
 export type SealedRequest<R> = { request: R; reply_pk: string; payer: string; ts: string; req_nonce: string };
 export interface NonceStore { has(n: string): boolean; add(n: string, expiresAt: number): void; sweep(now: number): void }
 export class MemoryNonceStore implements NonceStore {
@@ -73,10 +90,21 @@ export function checkSealedRequestPayer(p: SealedRequest<unknown>, payer: string
  * `checkSealedRequestPayer`, or (on Arc) never reaches payment at all. A caller commits
  * only once every check it cares about has actually passed, mirroring exactly when the
  * combined `checkSealedRequest` below commits.
+ *
+ * Returns whether this call was the one that committed the nonce. `false` means the
+ * nonce was already seen — the caller lost a race. That race exists on the Arc rail,
+ * whose pre-payment check and this commit straddle Circle's synchronous settlement: two
+ * concurrent submissions of the same envelope can both pass the uncommitted check, both
+ * settle, and both reach the handler, where only the first commit wins. The loser must
+ * be refused (`nonce_replay`) rather than answered a second time — hence the return
+ * value, which the composed `checkSealedRequest` below ignores only because its own
+ * preceding pre-payment check already rejects a seen nonce before it ever commits.
  */
-export function commitNonce(p: SealedRequest<unknown>, seen: NonceStore, now: number): void {
+export function commitNonce(p: SealedRequest<unknown>, seen: NonceStore, now: number): boolean {
   seen.sweep(now);
+  if (seen.has(p.req_nonce)) return false;
   seen.add(p.req_nonce, now + NONCE_TTL_S);
+  return true;
 }
 
 /**
