@@ -3,6 +3,7 @@ import {
   DEPLOYMENTS,
   fetchStandardized,
   readErc4626Vaults,
+  readSinkRows,
   vaultFreshness,
   SINK_REF,
   type UnifiedVault,
@@ -276,7 +277,15 @@ export class LiveDataProvider implements DataProvider {
       }
     }
     if (this.sql && out.length < VAULT_LIST_LIMIT) {
-      const { rows } = await this.sql(`SELECT vault FROM vault_latest WHERE chain_id=$1 ORDER BY total_assets DESC NULLS LAST LIMIT $2`, [chainId, VAULT_LIST_LIMIT - out.length]);
+      // Guarded like every other sink read: before `substreams-sink-sql setup` has run,
+      // `vault_latest` does not exist and this query would otherwise throw out of the
+      // route as a 500 instead of listing the cached Messari ids it already has.
+      const rows = await readSinkRows(
+        this.sql,
+        `SELECT vault FROM vault_latest WHERE chain_id=$1 ORDER BY total_assets DESC NULLS LAST LIMIT $2`,
+        [chainId, VAULT_LIST_LIMIT - out.length],
+        `substreams vault list read for chain ${chainId}`,
+      );
       for (const r of rows) {
         const id = `${chainId}:${String(r.vault).toLowerCase()}`;
         if (seen.has(id)) continue;

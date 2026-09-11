@@ -19,6 +19,10 @@ const dep = (subgraphId: string) => {
 // `/subgraphs/id/...` stopped matching the moment the gate ran.
 const gatewayUrl = (subgraphId: string) => coreGatewayUrl(dep(subgraphId));
 
+/** Postgres signals an undefined table with SQLSTATE 42P01; `pg` puts it on `error.code`. */
+const undefinedTable = (table: string) =>
+  Object.assign(new Error(`relation "${table}" does not exist`), { code: "42P01" });
+
 // The gate found aave-v3/base "down" — upstream stopped allocating to that deployment — and
 // `fetchStandardized` skips down deployments rather than querying a dead one. Correct in
 // production, but it makes this suite's fixture unreachable, since the whole file exercises
@@ -93,6 +97,34 @@ test("a working RPC head classifies a fresh subgraph vault as fresh; a failing R
   const failingProvider = new LiveDataProvider(config, { fetchImpl: failing.fetchImpl, sql: null });
   const staleResult = await failingProvider.scan([`8453:${FIXTURE_VAULT}`]);
   expect(staleResult.vaults[0].freshness).toBe("stale");
+});
+
+test("vaultList lists cached ids and survives a sink database that was never set up", async () => {
+  // `/v1/vaults?chainId=` reads the sink's `vault_latest` ids in addition to the cached
+  // Messari ones. Before `substreams-sink-sql setup` has run that table does not exist, and
+  // the unguarded query turned the whole route into a 500 — including for the cached Messari
+  // ids it could have answered with.
+  const headTs = FIXTURE_TS + 10;
+  const { fetchImpl } = fakeFetch({ [RPC_URL]: rpcRoute(headTs, 1000), [gatewayUrl(AAVE_BASE_SUBGRAPH)]: gatewayRoute(lendFx) });
+  const sql: SqlQuery = async (text: string) => {
+    if (text.includes("FROM vault_latest")) throw undefinedTable("vault_latest");
+    return { rows: [] };
+  };
+  const provider = new LiveDataProvider(config, { fetchImpl, sql });
+  await provider.scan([`8453:${FIXTURE_VAULT}`]); // warms the chain cache the list reads from
+
+  const warnings: string[] = [];
+  const realWarn = console.warn;
+  console.warn = (...args: unknown[]) => void warnings.push(args.join(" "));
+  try {
+    const list = await provider.vaultList("8453");
+    expect(list.map(e => e.id)).toContain(`8453:${FIXTURE_VAULT}`);
+    expect(list.every(e => e.protocol === "aave-v3")).toBe(true);
+    // Silent: a table that was never created is the expected pre-setup state, not a fault.
+    // If this test ever starts passing because the error was swallowed as something else,
+    // this assertion is what notices.
+    expect(warnings).toEqual([]);
+  } finally { console.warn = realWarn; }
 });
 
 test("a failing RPC forces the substreams-sink (erc4626) source stale too, never fresh", async () => {

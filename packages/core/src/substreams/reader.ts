@@ -69,7 +69,7 @@ export async function readSinkCursorBlock(q: SqlQuery, chainId: string): Promise
  * A missing table is expected and silent; anything else is logged once, with the same
  * URL-scrubbing the cursor read uses.
  */
-async function sinkRows(q: SqlQuery, text: string, params: unknown[], what: string): Promise<any[]> {
+export async function readSinkRows(q: SqlQuery, text: string, params: unknown[], what: string): Promise<any[]> {
   try {
     const { rows } = await q(text, params);
     return rows;
@@ -93,7 +93,7 @@ export async function readErc4626Vaults(q: SqlQuery, chainId: string, vaults: st
     src = { kind: "substreams", ref: "erc4626-vault-metrics", block: "0", timestamp: "0", ageSeconds: String(head.ts), freshness: "unavailable" };
   }
 
-  const rows = await sinkRows(
+  const rows = await readSinkRows(
     q,
     `SELECT l.*, m.asset_symbol, m.asset_decimals FROM vault_latest l LEFT JOIN vault_meta m ON m.chain_id=l.chain_id AND m.vault=l.vault WHERE l.chain_id=$1 ${vaults ? "AND l.vault = ANY($2)" : ""} ORDER BY l.total_assets DESC NULLS LAST LIMIT 100`,
     vaults ? [chainId, vaults.map(v => v.toLowerCase())] : [chainId],
@@ -102,7 +102,7 @@ export async function readErc4626Vaults(q: SqlQuery, chainId: string, vaults: st
 
   const out: UnifiedVault[] = [];
   for (const r of rows) {
-    const h = await sinkRows(
+    const h = await readSinkRows(
       q,
       `SELECT block, timestamp, share_price, net_flow_assets, total_assets FROM vault_metrics WHERE chain_id=$1 AND vault=$2 AND timestamp >= $3 ORDER BY block DESC LIMIT 500`,
       [chainId, r.vault, String(head.ts - 8 * 86400)],
