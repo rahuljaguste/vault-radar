@@ -1,5 +1,5 @@
-import { expect, test } from "bun:test";
-import type { SqlQuery } from "@vaultradar/core";
+import { afterAll, beforeAll, expect, test } from "bun:test";
+import { DEPLOYMENTS, gatewayUrl as coreGatewayUrl, type SqlQuery } from "@vaultradar/core";
 import lendFx from "../../core/test/fixtures/lending-markets.json";
 import { LiveDataProvider } from "../src/data/provider";
 import { loadConfig } from "../src/config";
@@ -9,7 +9,26 @@ import { loadConfig } from "../src/config";
 // chain 8453 (aave-v3/base/lending) and chain 42161 (yearn-v2/arbitrum/yield-aggregator)
 // — to avoid having to fake responses for chain 1's other nine deployments too.
 const AAVE_BASE_SUBGRAPH = "D7mapexM5ZsQckLJai2FawTKXJ7CqYGKM8PErnS3cJi9";
-const gatewayUrl = (subgraphId: string) => `https://gateway.thegraph.com/api/subgraphs/id/${subgraphId}`;
+const dep = (subgraphId: string) => {
+  const found = DEPLOYMENTS.find((d) => d.subgraphId === subgraphId);
+  if (!found) throw new Error(`no registry entry for ${subgraphId}`);
+  return found;
+};
+// Built from the registry entry rather than hardcoded: the provider asks for the pinned
+// deployment once the verification gate has pinned one, so a fixture URL that always said
+// `/subgraphs/id/...` stopped matching the moment the gate ran.
+const gatewayUrl = (subgraphId: string) => coreGatewayUrl(dep(subgraphId));
+
+// The gate found aave-v3/base "down" — upstream stopped allocating to that deployment — and
+// `fetchStandardized` skips down deployments rather than querying a dead one. Correct in
+// production, but it makes this suite's fixture unreachable, since the whole file exercises
+// aave-v3/base. The registry is a plain array of plain objects, so the suite flips that one
+// entry to "live" while it runs and restores the gate's finding afterwards. Nothing here
+// writes to deployments.json; the real status is untouched on disk.
+const aaveBase = dep(AAVE_BASE_SUBGRAPH);
+const realStatus = aaveBase.status;
+beforeAll(() => { aaveBase.status = "live"; });
+afterAll(() => { aaveBase.status = realStatus; });
 const RPC_URL = "http://fake-base-rpc.test";
 const FIXTURE_VAULT = String(lendFx.markets[0].id).toLowerCase(); // "0xdef0000000000000000000000000000000000d"
 const FIXTURE_TS = Number(lendFx._meta.block.timestamp); // 1760000000
@@ -190,13 +209,13 @@ test("catalog() reports zero vaultCount for an uncached deployment, and the real
 
   const before = await provider.catalog();
   const baseRow = before.protocols.find(p => p.protocol === "aave-v3" && p.chain === "base");
-  expect(baseRow).toEqual({ protocol: "aave-v3", chain: "base", status: "unverified", vaultCount: 0 });
+  expect(baseRow).toEqual({ protocol: "aave-v3", chain: "base", status: dep(AAVE_BASE_SUBGRAPH).status, vaultCount: 0 });
   expect(before.protocols).toHaveLength(15); // one row per registry deployment
   expect(before.erc4626Chains).toEqual([]);
 
   await provider.table("aave-v3", "8453"); // warms chain 8453's 60s cache
   const after = await provider.catalog();
-  expect(after.protocols.find(p => p.protocol === "aave-v3" && p.chain === "base")).toEqual({ protocol: "aave-v3", chain: "base", status: "unverified", vaultCount: 1 });
+  expect(after.protocols.find(p => p.protocol === "aave-v3" && p.chain === "base")).toEqual({ protocol: "aave-v3", chain: "base", status: dep(AAVE_BASE_SUBGRAPH).status, vaultCount: 1 });
   // A chain never touched stays uncached.
   expect(after.protocols.find(p => p.chain === "ethereum" && p.protocol === "aave-v3")?.vaultCount).toBe(0);
 
