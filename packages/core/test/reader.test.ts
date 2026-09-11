@@ -44,6 +44,43 @@ test('chain id "1"\'s cursor lookup never touches chain id "10"\'s cursor table'
 const undefinedTable = (table: string) =>
   Object.assign(new Error(`relation "${table}" does not exist`), { code: "42P01" });
 
+test("a database that exists but was never set up yields no vaults instead of throwing", async () => {
+  // The state between pointing DATABASE_URL at a fresh Postgres and running
+  // `substreams-sink-sql setup`. Every sink-backed chain query hit this, and the throw
+  // escaped the reader and turned the whole request into a 500.
+  const q = async (text: string) => {
+    if (text.includes("cursors_1")) return { rows: [{ block_num: "1000" }] };
+    if (text.includes("FROM vault_latest")) throw undefinedTable("vault_latest");
+    if (text.includes("FROM vault_metrics")) throw undefinedTable("vault_metrics");
+    return { rows: [] };
+  };
+  const warnings: string[] = [];
+  const realWarn = console.warn;
+  console.warn = (...args: unknown[]) => void warnings.push(args.join(" "));
+  try {
+    const out = await readErc4626Vaults(q, "1", ["0xabc"], { ts: now, block: 1005 });
+    expect(out).toEqual([]);
+    // A missing table is the expected "not set up yet" state, so it must not be logged as
+    // a fault — that is what separates it from a real database outage.
+    expect(warnings).toEqual([]);
+  } finally { console.warn = realWarn; }
+});
+
+test("a database outage also yields no vaults, but is logged", async () => {
+  const q = async (text: string) => {
+    if (text.includes("cursors_1")) return { rows: [{ block_num: "1000" }] };
+    if (text.includes("FROM vault_latest")) throw Object.assign(new Error("connection refused"), { code: "ECONNREFUSED" });
+    return { rows: [] };
+  };
+  const warnings: string[] = [];
+  const realWarn = console.warn;
+  console.warn = (...args: unknown[]) => void warnings.push(args.join(" "));
+  try {
+    expect(await readErc4626Vaults(q, "1", ["0xabc"], { ts: now, block: 1005 })).toEqual([]);
+    expect(warnings.join(" ")).toContain("connection refused");
+  } finally { console.warn = realWarn; }
+});
+
 test("a missing cursor table (chain not yet indexed) yields unavailable freshness and block 0, not a crash", async () => {
   const q = async (text: string) => {
     if (text.includes("cursors_1")) throw undefinedTable("cursors_1");

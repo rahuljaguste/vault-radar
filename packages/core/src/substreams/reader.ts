@@ -56,6 +56,31 @@ export async function readSinkCursorBlock(q: SqlQuery, chainId: string): Promise
   return rows[0] ? { block: String(rows[0].block_num) } : null;
 }
 
+/**
+ * Runs one sink read, downgrading a failure to "no rows" rather than letting it escape.
+ *
+ * The cursor read above has always done this. The two queries below did not, which meant a
+ * database that exists but has not been set up yet (`relation "vault_latest" does not
+ * exist` — the state between pointing `DATABASE_URL` at a fresh instance and running
+ * `substreams-sink-sql setup`) threw out of the reader and turned every request that
+ * touches a sink-backed chain into a 500, including paid ones. The sink is an optional
+ * second source: when it cannot answer, the right outcome is that it contributes nothing.
+ *
+ * A missing table is expected and silent; anything else is logged once, with the same
+ * URL-scrubbing the cursor read uses.
+ */
+async function sinkRows(q: SqlQuery, text: string, params: unknown[], what: string): Promise<any[]> {
+  try {
+    const { rows } = await q(text, params);
+    return rows;
+  } catch (e) {
+    if ((e as { code?: unknown })?.code !== PG_UNDEFINED_TABLE) {
+      console.warn(`${what} failed: ${withoutUrls(e instanceof Error ? e.message : String(e))}`);
+    }
+    return [];
+  }
+}
+
 export async function readErc4626Vaults(q: SqlQuery, chainId: string, vaults: string[] | null, head: { ts: number; block: number }): Promise<UnifiedVault[]> {
   const cur = await readSinkCursorBlock(q, chainId);
   let src: Source;
@@ -68,21 +93,25 @@ export async function readErc4626Vaults(q: SqlQuery, chainId: string, vaults: st
     src = { kind: "substreams", ref: "erc4626-vault-metrics", block: "0", timestamp: "0", ageSeconds: String(head.ts), freshness: "unavailable" };
   }
 
-  const { rows } = await q(
+  const rows = await sinkRows(
+    q,
     `SELECT l.*, m.asset_symbol, m.asset_decimals FROM vault_latest l LEFT JOIN vault_meta m ON m.chain_id=l.chain_id AND m.vault=l.vault WHERE l.chain_id=$1 ${vaults ? "AND l.vault = ANY($2)" : ""} ORDER BY l.total_assets DESC NULLS LAST LIMIT 100`,
     vaults ? [chainId, vaults.map(v => v.toLowerCase())] : [chainId],
+    `substreams vault read for chain ${chainId}`,
   );
 
   const out: UnifiedVault[] = [];
   for (const r of rows) {
-    const h = await q(
+    const h = await sinkRows(
+      q,
       `SELECT block, timestamp, share_price, net_flow_assets, total_assets FROM vault_metrics WHERE chain_id=$1 AND vault=$2 AND timestamp >= $3 ORDER BY block DESC LIMIT 500`,
       [chainId, r.vault, String(head.ts - 8 * 86400)],
+      `substreams history read for chain ${chainId}`,
     );
     // `series: "block"` — the sink writes one row per block it observed an event in, and
     // each row's `net_flow_assets` is that block's own movement, so these telescope cleanly
     // over any window with no second series mixed in.
-    const history: HistoryPoint[] = h.rows.map((x: any) => ({ block: String(x.block), timestamp: String(x.timestamp), sharePrice: String(x.share_price), tvlUsd: null, netFlowAssets: x.net_flow_assets == null ? null : String(x.net_flow_assets), series: "block" }));
+    const history: HistoryPoint[] = h.map((x: any) => ({ block: String(x.block), timestamp: String(x.timestamp), sharePrice: String(x.share_price), tvlUsd: null, netFlowAssets: x.net_flow_assets == null ? null : String(x.net_flow_assets), series: "block" }));
     out.push({
       id: `${chainId}:${String(r.vault).toLowerCase()}`, kind: "erc4626", protocol: "erc4626", chain: chainId === "1" ? "ethereum" : chainId === "8453" ? "base" : chainId, chainId,
       asset: r.asset_symbol ? { symbol: r.asset_symbol, decimals: Number(r.asset_decimals) } : null,
