@@ -7,7 +7,7 @@ Built for ETHOnline 2026. Partner tracks targeted below.
 | Track | What to look at |
 |---|---|
 | The Graph, Best Use of Composable or Standardized Graph Products | One template per schema family in `packages/core/src/standardized/templates.ts`, run across 15 pinned deployments in `packages/core/src/standardized/deployments.json`. The ERC-4626 module in `substreams/erc4626-vault-metrics/` imports Pinax `erc4626` and ships to two chains from one WASM binary. |
-| The Graph, Best AI Tooling or AI Use Case (From Scratch) | The agent in `packages/agent/src/client.ts` discovers, seals, pays, opens and verifies before it reasons. It refuses stale data on its own clock, not on the service's word. Package: `<<FILL: substreams.dev package URL for erc4626-vault-metrics>>` |
+| The Graph, Best AI Tooling or AI Use Case (From Scratch) | The agent in `packages/agent/src/client.ts` discovers, seals, pays, opens and verifies before it reasons. It refuses stale data on its own clock, not on the service's word. Package: [https://substreams.dev/packages/erc4626-vault-metrics/v0.1.0](https://substreams.dev/packages/erc4626-vault-metrics/v0.1.0) |
 | Hedera, AI & Agentic Payments on Hedera | The x402 rail in `packages/service/src/rails/hedera.ts` prices per vault and settles HTS USDC through Blocky402. A real settled request: [HashScan](https://hashscan.io/testnet/transaction/0.0.7162784-1789169558-289173297) — 0.0015 USDC for one sealed scan, receipt verified |
 | Arc, Best Agentic Economy Application with Circle Agent Stack | Bucketed Arc routes on the agent card, the Circle Gateway rail, and the dashboard at <https://vaultradar-dashboard-production.up.railway.app> showing the same receipts and decisions. A real settled payment: the Gateway batcher's reference `cbc2021d-d57e-4e05-b43f-56707a532f33` for a 0.003 USDC scan whose receipt verified. On chain: the [ERC-8004 registration](https://testnet.arcscan.app/tx/0x0ebaa26fbf5c6db6f99eee116deccdef0aa766b7fad4d24bcb819e087b82ffc2) and the [Gateway deposit that funded the payment](https://testnet.arcscan.app/tx/0xe253e739cd2ca42c11c841db8d6891470ee0d22bff5ba30acb75c453ce35ac64). |
 | Arc, Launch on Arc Testnet & Push to Mainnet | Arc testnet config lives in `packages/service/src/config.ts` under `arc`, network `eip155:5042002`. The mainnet path is a config swap, documented in the run section below. |
@@ -71,7 +71,7 @@ The verification gate has run: **11 of the 15 registrations are live**, 1 is sta
 
 **One module, two chains.** `substreams/erc4626-vault-metrics/` imports Pinax's public `erc4626` package as a dependency and never scans logs itself. `chain_id` is a Substreams runtime parameter, so the same compiled WASM runs on Ethereum mainnet and on Base. Only the manifest differs: `substreams.yaml` versus `substreams.base.yaml`. Both sinks write to one Postgres, because every table's primary key includes `chain_id`.
 
-Published package: `<<FILL: substreams.dev package URL for erc4626-vault-metrics>>`
+Published package: [https://substreams.dev/packages/erc4626-vault-metrics/v0.1.0](https://substreams.dev/packages/erc4626-vault-metrics/v0.1.0)
 
 **The one-prompt challenge, honestly.** The one-prompt Substreams generation was not run. Installing the Substreams Skills plugin was out of scope for this build, so the module was written by hand. The exact prompt is recorded in [docs/one-prompt.md](docs/one-prompt.md) along with a finding that matters to anyone who tries it: the `substreams-sink-sql` protodefs release fails `substreams protogen` under CLI 1.22.0, so the SQL half of that prompt hits a wall regardless of wording. Nothing in this repo claims the module came from one prompt.
 
@@ -208,10 +208,10 @@ Arc mainnet is a config change, not a code change. Point `ARC_FACILITATOR_URL` a
 
 | Track | Where it lives | Evidence |
 |---|---|---|
-| The Graph, Composable / Standardized | `packages/core/src/standardized/`, `substreams/erc4626-vault-metrics/` | Two templates over 15 deployments; one WASM module on two chains; `<<FILL: substreams.dev package URL for erc4626-vault-metrics>>` |
+| The Graph, Composable / Standardized | `packages/core/src/standardized/`, `substreams/erc4626-vault-metrics/` | Two templates over 15 deployments; one WASM module on two chains, published at [https://substreams.dev/packages/erc4626-vault-metrics/v0.1.0](https://substreams.dev/packages/erc4626-vault-metrics/v0.1.0) |
 | The Graph, AI Use Case (From Scratch) | `packages/agent/`, `packages/core/src/risk.ts` | Independent age check and `insufficient data` refusal; per-request x402 payment |
-| Hedera, AI & Agentic Payments | `packages/service/src/rails/hedera.ts`, `packages/service/src/keys.ts` | Metered pricing, HTS USDC via Blocky402, ERC-8004 identity with on-chain PQ key hash, UCP profile, HCS commitments; `<<FILL: HashScan transaction URL for a settled Hedera scan>>` |
-| Arc, Agentic Economy | Arc rail and `packages/dashboard/` | Bucketed Gateway nanopayments and a live payment in the dashboard; `<<FILL: Arcscan transaction URL for a settled Arc payment>>` |
+| Hedera, AI & Agentic Payments | `packages/service/src/rails/hedera.ts`, `packages/service/src/keys.ts` | Metered pricing, HTS USDC via Blocky402, ERC-8004 identity with on-chain PQ key hash, UCP profile, HCS commitments; [settled scan on HashScan](https://hashscan.io/testnet/transaction/0.0.7162784-1789169558-289173297) |
+| Arc, Agentic Economy | Arc rail and `packages/dashboard/` | Bucketed Gateway nanopayments, a settled 0.003 USDC scan through the batcher, and on-chain Arc evidence in the section above |
 | Arc, Launch and Push to Mainnet | `packages/service/src/config.ts` | Documented mainnet config path, above |
 
 Honest scope notes, so nothing here is read as more than it is:
