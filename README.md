@@ -8,7 +8,7 @@ Built for ETHOnline 2026. Partner tracks targeted below.
 |---|---|
 | The Graph, Best Use of Composable or Standardized Graph Products | One template per schema family in `packages/core/src/standardized/templates.ts`, run across 15 pinned deployments in `packages/core/src/standardized/deployments.json`. The ERC-4626 module in `substreams/erc4626-vault-metrics/` imports Pinax `erc4626` and ships to two chains from one WASM binary. |
 | The Graph, Best AI Tooling or AI Use Case (From Scratch) | The agent in `packages/agent/src/client.ts` discovers, seals, pays, opens and verifies before it reasons. It refuses stale data on its own clock, not on the service's word. Package: `<<FILL: substreams.dev package URL for erc4626-vault-metrics>>` |
-| Hedera, AI & Agentic Payments on Hedera | The x402 rail in `packages/service/src/rails/hedera.ts` prices per vault and settles HTS USDC through Blocky402. A real settled request: `<<FILL: HashScan transaction URL for a settled Hedera scan>>` |
+| Hedera, AI & Agentic Payments on Hedera | The x402 rail in `packages/service/src/rails/hedera.ts` prices per vault and settles HTS USDC through Blocky402. A real settled request: [HashScan](https://hashscan.io/testnet/transaction/0.0.7162784-1789169558-289173297) — 0.0015 USDC for one sealed scan, receipt verified |
 | Arc, Best Agentic Economy Application with Circle Agent Stack | Bucketed Arc routes on the agent card, the Circle Gateway rail, and the dashboard at <https://vaultradar-dashboard-production.up.railway.app> showing the same receipts and decisions. A real settled payment: the Gateway batcher's reference `cbc2021d-d57e-4e05-b43f-56707a532f33` for a 0.003 USDC scan whose receipt verified. On chain: the [ERC-8004 registration](https://testnet.arcscan.app/tx/0x0ebaa26fbf5c6db6f99eee116deccdef0aa766b7fad4d24bcb819e087b82ffc2) and the [Gateway deposit that funded the payment](https://testnet.arcscan.app/tx/0xe253e739cd2ca42c11c841db8d6891470ee0d22bff5ba30acb75c453ce35ac64). |
 | Arc, Launch on Arc Testnet & Push to Mainnet | Arc testnet config lives in `packages/service/src/config.ts` under `arc`, network `eip155:5042002`. The mainnet path is a config swap, documented in the run section below. |
 
@@ -39,7 +39,9 @@ The shape is: The Graph supplies data two ways, the service turns it into signed
 7. The middleware settles via Blocky402 `/settle` and sets `PAYMENT-RESPONSE` with the transaction id.
 8. The service enqueues an HCS commitment of the receipt hash. The agent opens the response, verifies the receipt and every attestation, applies its own age check, and decides.
 
-A settled request: `<<FILL: HashScan transaction URL for a settled Hedera scan>>`
+A settled request. The rail has been exercised end to end against the deployed service: one sealed scan of one vault cost 0.0015 USDC (0.001 + 0.0005 × 1), settled as 1500 atomic units of HTS USDC `0.0.429274` from the agent's account `0.0.10463726` to the service's `0.0.10463666`.
+
+[HashScan](https://hashscan.io/testnet/transaction/0.0.7162784-1789169558-289173297) renders it for a person; the same transaction is machine-verifiable at the [mirror node's JSON API](https://testnet.mirrornode.hedera.com/api/v1/transactions/0.0.7162784-1789169558-289173297), which reports `result: SUCCESS` and the two token transfers. HashScan is a client-rendered app, so its deep links answer 404 to curl — the mirror link is the one to check if you are scripting this.
 
 ### Arc rail
 
@@ -218,8 +220,8 @@ Honest scope notes, so nothing here is read as more than it is:
 - **HCS-14 UAID is not implemented.** The agent card has no `uaid` field. Identity is ERC-8004 plus the signed card, nothing more.
 - **Falcon signatures are not implemented.** Signatures are ML-DSA-65 only. Falcon was considered as a smaller-signature option and dropped.
 - **The upstream x402 payment to The Graph gateway was cut.** Standardized queries use a Studio API key. The service does not pay the gateway per query.
-- **What is deployed, and what is not.** The service, the dashboard and the Substreams sink run on Railway, the sink is indexing, and the service is registered on chain on **both** chains: HCS topic `0.0.10483981`, ERC-8004 agent id `112` on Hedera (chain 296) and `894342` on Arc (chain 5042002). The agent's own discovery resolves both anchors, and `/v1/receipts/:hash` returns the HCS sequence for a committed receipt. The Arc rail has taken a real payment (see its section above). The Hedera rail has not: the agent's Hedera account holds no testnet USDC, which is a faucet visit, and the service's `payTo` account is not associated with the token either.
-- **A paid request needs a funded payer account.** The identity rule still applies on top of that: a card with no ERC-8004 identity, or an identity whose registry read fails, is refused by both the agent and the dashboard before they pay.
+- **Both rails have settled real payments.** Hedera: 0.0015 USDC for one sealed scan, verified on chain. Arc: 0.003 USDC through Circle Gateway's batcher, receipt verified, sealed reply opened. The service is registered on both chains (HCS topic `0.0.10483981`; ERC-8004 agent ids `112` on Hedera and `894342` on Arc), the agent's own discovery resolves both anchors, `/v1/receipts/:hash` returns the HCS sequence for a committed receipt, and the Substreams sink is indexing into the same Postgres the service reads.
+- **What is still missing.** The video, and the published package URL on substreams.dev (`substreams registry publish`, which needs an interactive GitHub login). The identity rule applies to every purchase: a card with no ERC-8004 identity, or an identity whose registry read fails, is refused by both the agent and the dashboard before they pay.
 
 - **KEM key rotation and forward secrecy are out of scope.** So are on-chain PQ payment signatures and zero-knowledge proofs of the risk computation.
 
