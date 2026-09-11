@@ -61,6 +61,13 @@ test("with ADMIN_TOKEN configured: 401 with no/wrong bearer token, 200 with the 
     const malformedHeader = await fetch(`${app.base}/v1/admin/metrics`, { headers: { authorization: "s3cr3t" } }); // missing "Bearer " prefix
     expect(malformedHeader.status).toBe(401);
 
+    // The comparison is constant-time over equal-length strings, so a token that is right
+    // up to its last character, one too short, or one too long must all still be 401.
+    for (const near of ["s3cr3", "s3cr3tX", "s3cr3T"]) {
+      const res = await fetch(`${app.base}/v1/admin/metrics`, { headers: { authorization: `Bearer ${near}` } });
+      expect(res.status).toBe(401);
+    }
+
     const ok = await fetch(`${app.base}/v1/admin/metrics`, { headers: { authorization: "Bearer s3cr3t" } });
     expect(ok.status).toBe(200);
   } finally {

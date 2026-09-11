@@ -1,6 +1,6 @@
 import { expect, test } from "bun:test";
 import yieldFx from "./fixtures/yield-vaults.json";
-import { fetchStandardized } from "../src/standardized";
+import { fetchStandardized, knownProtocol } from "../src/standardized";
 import type { Deployment } from "../src/standardized/types";
 
 const dep = (over: Partial<Deployment>): Deployment => ({
@@ -56,4 +56,17 @@ test("deployments marked down are skipped entirely", async () => {
   const result = await fetchStandardized([down], "test-api-key", { "1": 1760000000 }, fetchImpl);
   expect(result.vaults).toEqual([]);
   expect(result.sources).toEqual([]);
+});
+
+// What the rails check before charging for a table, so a protocol nobody indexes is refused
+// rather than paid for and answered empty.
+test("knownProtocol matches the registry on protocol AND chain, plus erc4626 on any chain", () => {
+  expect(knownProtocol("aave-v3", "1")).toBe(true);
+  expect(knownProtocol("aave-v3", "8453")).toBe(true);
+  // Registered, but not on this chain.
+  expect(knownProtocol("aave-v3", "137")).toBe(false);
+  expect(knownProtocol("not-a-real-protocol", "1")).toBe(false);
+  // Served from the Substreams sink rather than the registry, so it has no entry there.
+  expect(knownProtocol("erc4626", "1")).toBe(true);
+  expect(knownProtocol("erc4626", "999999")).toBe(true);
 });

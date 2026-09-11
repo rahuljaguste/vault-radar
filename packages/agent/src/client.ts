@@ -6,11 +6,13 @@ import {
   buildSealedRequest,
   checkSig,
   fromB64,
+  hederaScanPriceAtomic,
   hederaScanPriceUsd,
   isSealed,
   open,
   requestHash,
   responseHash,
+  sha256Hex,
   verifyAttestation,
   verifyReceipt,
   type Attestation,
@@ -22,7 +24,7 @@ import {
   type UnifiedVault,
 } from "@vaultradar/core";
 import { arcAddress, payArc, type ArcPayResult } from "./rails/arc";
-import { payingFetchHedera, txIdFromResponse } from "./rails/hedera";
+import { maxAcceptableAtomic, payingFetchHedera, txIdFromResponse } from "./rails/hedera";
 import { readPqHashOnChain } from "./erc8004";
 
 /**
@@ -60,6 +62,25 @@ export type Discovery = {
   sigPk: Uint8Array;
   kemPk: Uint8Array;
   cardSignatureValid: boolean;
+  /**
+   * True when `card.pq.sig.pub_hash` is genuinely the SHA-256 of `card.pq.sig.public_key`
+   * — i.e. the hash the card advertises is a hash *of the key it ships*, not an arbitrary
+   * string it copied from somewhere else.
+   *
+   * A card that fails this is malformed and nothing may be paid against it: the field is
+   * what every human-readable surface (run records, the `discover` tool, the `watch`
+   * banner) prints as "the service's key hash", so a card free to put any value there
+   * could show a legitimate service's hash while shipping an attacker's key. Consumers
+   * refuse on `false` (`identityRefusal` in `./watch`); this is in-memory discovery state
+   * only and deliberately not part of the persisted `RunRecord` contract.
+   */
+  keyBindingValid: boolean;
+  /**
+   * Per ERC-8004 identity the card lists: whether the key hash registered on that chain
+   * equals the SHA-256 of the key the card actually published. `null` means the read
+   * itself did not answer (RPC failure, or a chain this package has no RPC for), which is
+   * an *unverified* anchor rather than a passing one.
+   */
   onChain: { chainId: string; agentId: string; matches: boolean | null }[];
 };
 
@@ -70,12 +91,92 @@ export type PaidResult = {
   reports: RiskReport[];
   attestations: Attestation[];
   receipt: Receipt;
+  /**
+   * True only when the receipt's signature verifies against the discovered signing key,
+   * its `request_hash`/`response_hash` cover what was actually exchanged, *and* the price
+   * it states matches what the agent quoted (see `checkSettledPrice`). Any one of the
+   * three failing makes the receipt not a receipt for this purchase.
+   */
   receiptValid: boolean;
   attestationsValid: boolean;
   txId: string | null;
+  /** What the *receipt* says was charged, not what the agent computed it should be. Null
+   * when the receipt's amount cannot be read as a number at all (which also fails
+   * `receiptValid`). */
   priceUsd: string | null;
   sealed: boolean;
 };
+
+/** USDC's six decimals: every price either side of this protocol handles is an exact
+ * integer number of micro-USD, so comparisons are made there rather than on floats. */
+const MICRO_PER_USD = 1_000_000;
+
+/** A USD decimal string as integer micro-USD, or null if it is not a finite number. */
+function usdToMicro(usd: string): bigint | null {
+  const n = Number(usd);
+  return Number.isFinite(n) ? BigInt(Math.round(n * MICRO_PER_USD)) : null;
+}
+
+/** Integer micro-USD back to the decimal string form the rest of the codebase uses
+ * (`hederaScanPriceUsd`'s formatting, so `1500n` reads `"0.0015"`). */
+function microToUsd(micro: bigint): string {
+  return (Number(micro) / MICRO_PER_USD).toString();
+}
+
+/**
+ * The price a receipt states, in integer micro-USD, or null when it cannot be read.
+ *
+ * The two rails write `receipt.price.amount` in different units, because each writes what
+ * its own rail settles in (`handlers/scan.ts`): Hedera records the atomic HTS USDC amount
+ * (six decimals, e.g. `"1500"`), Arc records the USD decimal string Circle's middleware
+ * was configured with (e.g. `"0.003"`). Reading them apart here, rather than guessing from
+ * the shape of the string, is the difference between comparing 1500 with 1500 and
+ * comparing 1500 with 0.
+ */
+function receiptPriceMicro(rail: Rail, amount: string): bigint | null {
+  if (typeof amount !== "string" || amount.trim() === "") return null;
+  if (rail === "hedera") {
+    return /^\d+$/.test(amount.trim()) ? BigInt(amount.trim()) : null;
+  }
+  return usdToMicro(amount);
+}
+
+/**
+ * Does the amount actually charged match what the agent quoted?
+ *
+ * `priceUsd` used to be the agent's *own* arithmetic, restated — so a service that
+ * charged any amount at all still had its price reported as the catalogue price, and a
+ * run record cited a number nobody had verified. This reads the figure off the signed
+ * receipt instead and checks it against the quote, with the same one-percent band the
+ * pre-payment policy (`rails/hedera.ts`'s `quoteCeilingPolicy`) applies to the 402's
+ * demand, so the two cannot disagree about what is acceptable.
+ *
+ * The band is closed on both sides: under the quote fails too. The agent and the service
+ * compute prices from the same `@vaultradar/core` constants, so a receipt that understates
+ * the price is not a cheaper purchase, it is a receipt that does not describe this one —
+ * and `priceUsd` is cited in run records and decisions, where an unverified number is
+ * worse than a refusal.
+ */
+function checkSettledPrice(
+  rail: Rail,
+  receipt: Receipt,
+  quoteAtomic: string,
+  settledAtomic: bigint | null,
+): { priceUsd: string | null; agrees: boolean } {
+  const quote = BigInt(quoteAtomic);
+  const max = maxAcceptableAtomic(quoteAtomic);
+  const inBand = (v: bigint) => v >= quote && v <= max;
+
+  const stated = receiptPriceMicro(rail, receipt.price?.amount);
+  if (stated === null) return { priceUsd: null, agrees: false };
+  // Report the receipt's own wording where it already is a USD string, so nothing is
+  // reformatted on the way through; derive it from the atomic amount on Hedera.
+  const priceUsd = rail === "hedera" ? microToUsd(stated) : receipt.price.amount;
+  // `settledAtomic` is what the rail itself reported moving (Circle's `PayResult.amount`);
+  // only the Arc branch has it. Both must agree with the quote when both are known.
+  const agrees = inBand(stated) && (settledAtomic === null || inBand(settledAtomic));
+  return { priceUsd, agrees };
+}
 
 export type PayingFetch = (url: string, init: RequestInit) => Promise<Response>;
 
@@ -98,7 +199,7 @@ export type VaultRadarClientOpts = {
    * branch (bucket URL selection, payer address, opening a sealed reply) without a
    * real `GatewayClient` or network call.
    */
-  arcPay?: (url: string, body: unknown, headers: Record<string, string>) => Promise<ArcPayResult<ServiceResponse>>;
+  arcPay?: (url: string, body: unknown, headers: Record<string, string>, quoteAtomic: string) => Promise<ArcPayResult<ServiceResponse>>;
 };
 
 type ScanResponseBody = { vaults: UnifiedVault[]; reports: RiskReport[]; attestations: Attestation[] };
@@ -120,7 +221,21 @@ export class VaultRadarClient {
   private readonly fetchImpl: typeof fetch;
   private readonly readPqHash: (chainId: string, agentId: string) => Promise<string | null>;
   private readonly payingFetch: PayingFetch | null;
-  private readonly arcPay: ((url: string, body: unknown, headers: Record<string, string>) => Promise<ArcPayResult<ServiceResponse>>) | null;
+  private readonly arcPay:
+    | ((url: string, body: unknown, headers: Record<string, string>, quoteAtomic: string) => Promise<ArcPayResult<ServiceResponse>>)
+    | null;
+  /**
+   * Expected atomic amount for the paid request currently in flight, read by the x402
+   * payment policy when a 402 arrives (`rails/hedera.ts`'s `quoteCeilingPolicy`). It has
+   * to be a field rather than an argument because `@x402/core`'s policy signature is
+   * `(version, requirements)` — it gets no handle on the request — and the client, with
+   * its signer, is built once. Set immediately before the paying fetch and cleared after,
+   * so one client serves a sequence of differently priced requests; a caller that runs
+   * two `paid()` calls *concurrently* on the same client would have them overwrite each
+   * other's quote, which is why nothing in this package does (the watch loop and the
+   * dashboard route are both strictly sequential).
+   */
+  private quoteAtomic: string | null = null;
 
   constructor(private readonly opts: VaultRadarClientOpts) {
     this.fetchImpl = opts.fetchImpl ?? fetch;
@@ -128,21 +243,40 @@ export class VaultRadarClient {
     // `payingFetch` wins when supplied (tests rely on this to avoid ever constructing a
     // real Hedera signer); otherwise build the real one lazily-but-eagerly here, once,
     // only when a Hedera account was actually configured.
-    this.payingFetch = opts.payingFetch ?? (opts.hedera ? payingFetchHedera(opts.hedera.accountId, opts.hedera.privateKey) : null);
+    this.payingFetch =
+      opts.payingFetch ?? (opts.hedera ? payingFetchHedera(opts.hedera.accountId, opts.hedera.privateKey, () => this.quoteAtomic) : null);
     // Same pattern for Arc: `arcPay` wins when supplied (tests inject a fake to avoid a
     // real GatewayClient); otherwise default to `payArc` bound to `arc.privateKey`.
     // Captured to a local so the closure keeps the narrowed (non-optional) type.
     const arc = opts.arc;
-    this.arcPay = opts.arcPay ?? (arc ? (url, body, headers) => payArc<ServiceResponse>(arc.privateKey, url, body, headers) : null);
+    this.arcPay =
+      opts.arcPay ??
+      (arc ? (url, body, headers, quoteAtomic) => payArc<ServiceResponse>(arc.privateKey, url, body, headers, quoteAtomic) : null);
   }
 
   /**
-   * Fetches and validates `/.well-known/agent.json`: checks the card's ML-DSA-65
-   * self-signature, then cross-checks `card.pq.sig.pub_hash` against every ERC-8004
-   * identity the card lists via `readPqHash`. The signature is checked against the
-   * untouched response object (not the zod-validated copy) so it reflects exactly the
-   * bytes the service sent. Caches the result for subsequent `scan`/`table`/`quote`
-   * calls; call again to force a refresh.
+   * Fetches and validates `/.well-known/agent.json`, binding everything to one value:
+   * `publishedHash`, the SHA-256 of the signing key the card actually ships in
+   * `pq.sig.public_key`.
+   *
+   * - `cardSignatureValid`: the card's ML-DSA-65 self-signature verifies under that key,
+   *   and (via `checkSig`) the signature envelope's own `sig.pub_hash` is that key's hash.
+   * - `keyBindingValid`: the card's advertised `pq.sig.pub_hash` is that key's hash too.
+   * - `onChain[].matches`: the ERC-8004 registration read off each chain equals that key's
+   *   hash.
+   *
+   * The on-chain comparison is deliberately never made against `card.pq.sig.pub_hash`.
+   * That field is chosen by whoever answered for the URL, so comparing the chain to it
+   * compares the chain to the attacker's own claim: a substituted card shipping key K_a,
+   * correctly self-signed under K_a, could simply copy the legitimate service's hash into
+   * `pq.sig.pub_hash` and every anchor would read as matching while the agent pinned K_a.
+   * Comparing the chain to `sha256Hex(sigPk)` instead makes a match a statement about the
+   * key that will verify this service's receipts. The hash read from the chain is
+   * lower-cased first, since a registry value's hex casing is not part of its meaning.
+   *
+   * The signature is checked against the untouched response object (not the zod-validated
+   * copy) so it reflects exactly the bytes the service sent. Caches the result for
+   * subsequent `scan`/`table`/`quote` calls; call again to force a refresh.
    */
   async discover(): Promise<Discovery> {
     const base = this.opts.serviceUrl.replace(/\/$/, "");
@@ -157,13 +291,15 @@ export class VaultRadarClient {
     const sigPk = fromB64(card.pq.sig.public_key);
     const kemPk = fromB64(card.pq.kem.public_key);
     const cardSignatureValid = checkSig(raw as { sig?: Sig }, sigPk);
+    const publishedHash = sha256Hex(sigPk);
+    const keyBindingValid = card.pq.sig.pub_hash.trim().toLowerCase() === publishedHash;
     const onChain = await Promise.all(
       card.erc8004.map(async e => {
         const hash = await this.readPqHash(e.chainId, e.agentId);
-        return { chainId: e.chainId, agentId: e.agentId, matches: hash == null ? null : hash === card.pq.sig.pub_hash };
+        return { chainId: e.chainId, agentId: e.agentId, matches: hash == null ? null : hash.trim().toLowerCase() === publishedHash };
       }),
     );
-    const discovery: Discovery = { card, sigPk, kemPk, cardSignatureValid, onChain };
+    const discovery: Discovery = { card, sigPk, kemPk, cardSignatureValid, keyBindingValid, onChain };
     this.disc = discovery;
     return discovery;
   }
@@ -172,7 +308,16 @@ export class VaultRadarClient {
     return this.disc ?? this.discover();
   }
 
-  /** Price quotes for a scan of `count` vaults, on whichever rails are configured. */
+  /**
+   * Price quotes for a scan of `count` vaults, on whichever rails are configured.
+   *
+   * Local arithmetic over the same `@vaultradar/core` constants the service prices with —
+   * no request is made. Spec §5.6 originally described this as an unpaid 402 probe per
+   * rail; see that section's 2026-09-10 amendment. What the service actually demands is
+   * bound to this quote at payment time instead, by the per-rail ceilings
+   * (`quoteCeilingPolicy` on Hedera, `arcQuoteCeilingHook` on Arc) before anything is
+   * signed, and by `checkSettledPrice` against the receipt afterwards.
+   */
   async quote(count: number): Promise<{ hedera: string | null; arc: string | null }> {
     return {
       hedera: this.opts.hedera ? hederaScanPriceUsd(count) : null,
@@ -192,6 +337,17 @@ export class VaultRadarClient {
   private priceFor(rail: Rail, tier: "scan" | "table", count: number): string {
     if (rail === "hedera") return tier === "scan" ? hederaScanPriceUsd(count) : TABLE_PRICE_USD;
     return tier === "scan" ? ARC_BUCKET_PRICE[arcBucket(count)] : TABLE_PRICE_USD;
+  }
+
+  /**
+   * What this request should cost, as an integer atomic amount (micro-USD / six-decimal
+   * USDC) — the unit both a 402's `amount` and a Hedera receipt's `price.amount` are in.
+   * Derived from the same `@vaultradar/core` price functions the service prices with, so a
+   * disagreement is a disagreement about the request, not about arithmetic.
+   */
+  private quoteAtomicFor(rail: Rail, tier: "scan" | "table", count: number): string {
+    if (rail === "hedera" && tier === "scan") return hederaScanPriceAtomic(count);
+    return String(Math.round(Number(this.priceFor(rail, tier, count)) * MICRO_PER_USD));
   }
 
   /**
@@ -216,10 +372,25 @@ export class VaultRadarClient {
       ...(tier === "scan" ? { "x-vr-count": String(count) } : {}),
     };
 
+    // The ceiling the payment policy enforces when the 402 comes back, and the figure the
+    // receipt's own price is checked against afterwards. One value, so the agent cannot
+    // refuse to pay an amount pre-payment that it would have accepted post-payment.
+    const quoteAtomic = this.quoteAtomicFor(rail, tier, count);
+
     let raw: ServiceResponse;
     let txId: string | null;
+    /** What the rail itself reported moving, when it reports one (Arc only). */
+    let settledAtomic: bigint | null = null;
     if (rail === "hedera") {
-      const res = await (this.payingFetch ?? this.fetchImpl)(url, { method: "POST", headers, body: JSON.stringify(body) });
+      this.quoteAtomic = quoteAtomic;
+      let res: Response;
+      try {
+        res = await (this.payingFetch ?? this.fetchImpl)(url, { method: "POST", headers, body: JSON.stringify(body) });
+      } finally {
+        // Cleared even when the payment was refused, so a later request on this client
+        // can never be priced against a stale quote.
+        this.quoteAtomic = null;
+      }
       txId = txIdFromResponse(res);
       const parsedJson: unknown = await res.json();
       if (res.status !== 200) throw new Error(`service ${res.status}: ${JSON.stringify(parsedJson)}`);
@@ -228,7 +399,10 @@ export class VaultRadarClient {
       if (!this.arcPay) throw new Error("arc rail not configured: pass `arc` (or `arcPay`) to the VaultRadarClient constructor");
       let arcResult: ArcPayResult<ServiceResponse>;
       try {
-        arcResult = await this.arcPay(url, body, headers);
+        // The quote reaches Circle's pre-signing hook, which refuses an over-quote 402
+        // before an authorization is built (`rails/arc.ts`). Needed here and not only in the
+        // receipt check below, because this rail settles before the handler runs.
+        arcResult = await this.arcPay(url, body, headers, quoteAtomic);
       } catch (e) {
         // GatewayClient.pay() throws on any non-2xx response instead of returning a
         // PayResult with a non-200 `status` (pre-payment: "Request failed with status
@@ -243,6 +417,12 @@ export class VaultRadarClient {
       }
       txId = arcResult.transaction;
       raw = arcResult.data;
+      // `PayResult.amount` is the USDC atomic amount Circle's client actually authorized —
+      // the nearest thing this rail has to an independent statement of what was paid, so
+      // it is checked against the quote alongside the receipt's own figure. Guarded
+      // because it arrives from a third-party SDK: a non-bigint here must not throw past
+      // a payment that already happened.
+      settledAtomic = typeof arcResult.amount === "bigint" ? arcResult.amount : null;
     }
 
     // The service must mirror the request's sealed-ness exactly. Treating a mismatch
@@ -271,11 +451,14 @@ export class VaultRadarClient {
 
     // A correctly signed receipt still isn't a receipt for *this* purchase unless it
     // commits to the request that was sent and the body that came back — otherwise a
-    // service could replay any previously signed receipt against any response.
+    // service could replay any previously signed receipt against any response — and
+    // unless the price it states is the price that was quoted.
+    const price = checkSettledPrice(rail, receipt, quoteAtomic, settledAtomic);
     const receiptValid =
       verifyReceipt(receipt, d.sigPk) &&
       receipt.request_hash === requestHash(request) &&
-      receipt.response_hash === responseHash({ vaults: opened.vaults, reports: opened.reports, attestations });
+      receipt.response_hash === responseHash({ vaults: opened.vaults, reports: opened.reports, attestations }) &&
+      price.agrees;
 
     return {
       rail,
@@ -287,7 +470,9 @@ export class VaultRadarClient {
       receiptValid,
       attestationsValid,
       txId,
-      priceUsd: this.priceFor(rail, tier, count),
+      // The receipt's figure, not the agent's own arithmetic restated: this is the number
+      // that ends up cited in run records, so it has to be the one the service signed.
+      priceUsd: price.priceUsd,
       // Read off the response that actually arrived, not off what the client asked
       // for. The two throw-guards above already reject a mismatch, so this can only
       // agree with `!!env` — stating it this way keeps the reported value tied to an

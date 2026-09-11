@@ -88,11 +88,17 @@ function usable(p: Policy, rail: Rail, quotes: Quotes, balances: Amounts, health
 }
 
 /**
- * Picks the rail to buy on. `"cheapest"` takes the lowest usable quote, breaking an
- * exact tie towards hedera (the cheaper rail at every bucket size, so the tie only
- * arises for the flat-priced table tier). A named preference is honoured when usable
- * and otherwise falls back to the other rail, reporting `preferred_rail_unusable` so
- * the run record shows the substitution rather than hiding it.
+ * Picks the rail to buy on. `"cheapest"` takes the lowest usable quote, breaking an exact
+ * tie towards hedera. Neither rail is uniformly cheaper: Hedera's metered price undercuts
+ * Arc's bucket at the low end of each bucket and Arc's undercuts it at the high end (at
+ * current prices Arc wins at 5, 20 and 100 vaults; Hedera at 1, 6 and 21). So ties are not
+ * confined to the flat-priced table tier — they also happen wherever the metered price
+ * lands exactly on a bucket price, which is 4, 18 and 98 vaults today. The tie-break is
+ * what decides those.
+ *
+ * A named preference is honoured when usable and otherwise falls back to the other rail,
+ * reporting `preferred_rail_unusable` so the run record shows the substitution rather than
+ * hiding it.
  */
 export function chooseRail(p: Policy, quotes: Quotes, balances: Amounts, health: Health): RailChoice {
   const prices = new Map<Rail, number>();

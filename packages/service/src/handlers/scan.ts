@@ -13,10 +13,8 @@ import {
   seal,
   fromB64,
   clampCount,
-  hederaScanPriceAtomic,
-  TABLE_PRICE_USD,
-  arcBucket,
-  ARC_BUCKET_PRICE,
+  knownProtocol,
+  validScanVaults,
   type NonceStore,
   type ScanRequest,
   type TableRequest,
@@ -37,6 +35,19 @@ export type HandlerDeps = {
   nonces: NonceStore;
   rail: "hedera" | "arc";
   tier: "scan" | "table";
+  /**
+   * What this route charges for `count` vaults, in the units and asset the route is
+   * actually priced in — copied verbatim into the signed receipt's `price`.
+   *
+   * Supplied by the mount rather than derived here from `{rail, tier}`, because a rail can
+   * mount the same tier at more than one price: `/hedera/v1/scan-hbar` is the same scan
+   * handler priced in tinybars of HBAR, and deriving the receipt from the rail alone
+   * labelled its payments as micro-USDC of the configured USDC token. A payer who spent
+   * 2,000,000 tinybars got a signed, HCS-committed receipt reading
+   * `amount: "2000", asset: "0.0.429274"` — an auditor reading it concludes USDC was paid,
+   * and the signature means they have every reason to believe it.
+   */
+  price: (count: number) => { amount: string; asset: string };
   /** Reads the verified payer off the request once the payment middleware has run. */
   getPayer: (req: Request) => string | null;
   /**
@@ -55,7 +66,6 @@ export type HandlerDeps = {
 };
 
 const HANDLER_CAP_MS = 60_000;
-const VAULT_ID_RE = /^\d+:0x[0-9a-f]{40}$/i;
 
 /**
  * Shared handler for every {scan, table} × {hedera, arc} route (spec §5.4/§5.5).
@@ -95,7 +105,14 @@ export function makeScanHandler(d: HandlerDeps) {
         // payer already paid and is not refunded. Not something this handler can fix;
         // documented as a known limitation of the Circle Gateway flow (README.md).
         if (!payerCheck.ok) return res.status(422).json(errBody(payerCheck.reason));
-        commitNonce(opened, d.nonces, now);
+        // The pre-payment middleware checked this nonce against the store *before*
+        // settlement, but could not commit it there (a request that fails this payer
+        // check, or never reaches payment at all, must not burn its nonce). Two
+        // concurrent submissions of the same envelope can therefore both pass that
+        // earlier check and both settle; only the first commit wins, and the loser is
+        // refused here — after Circle took its money (same unrefundable position as a
+        // payer_mismatch above, and for the same reason), but never answered twice.
+        if (!commitNonce(opened, d.nonces, now)) return res.status(422).json(errBody("nonce_replay"));
       } else {
         try {
           opened = openSealedRequest<ScanRequest | TableRequest>(req.body, d.keys.kem.secretKey, d.keys.kem.kid);
@@ -116,13 +133,37 @@ export function makeScanHandler(d: HandlerDeps) {
 
     if (d.tier === "scan") {
       const vaults = (request as ScanRequest).vaults;
-      if (!Array.isArray(vaults) || !vaults.length || vaults.length > 100 || !vaults.every(v => VAULT_ID_RE.test(v))) {
+      // validScanVaults is the shared bad_vaults rule (core envelope.ts): the Arc rail
+      // runs the same predicate ahead of Circle's synchronous settlement, and this call
+      // is the rail-independent backstop every mount gets.
+      if (!validScanVaults(vaults)) {
         return res.status(422).json(errBody("bad_vaults"));
+      }
+      // The price of a scan is `X-VR-Count`, and the work is `request.vaults`, so the two
+      // must be the same number or the request is underpriced. The sealed branch above
+      // already enforces this (checkSealedRequestPrePayment's count check, or
+      // checkSealedRequest's); a clear body reached the data call without it, so
+      // `X-VR-Count: 1` with a hundred vaults in the body bought a hundred vaults'
+      // worth of upstream work for the one-vault price. Checked here, before the
+      // DataProvider call, so the refusal costs nothing upstream — and, on Hedera, ahead
+      // of settlement so it costs the payer nothing either. Arc settles before any
+      // handler runs, so that rail enforces the same rule in a pre-payment middleware
+      // (rails/arc.ts's preValidateScanBody); this remains the rail-independent
+      // backstop, and the only line of defence for a handler mounted without a rail.
+      if (!sealedIn && clampCount(req.header("x-vr-count")) !== vaults.length) {
+        return res.status(422).json(errBody("count_mismatch"));
       }
     } else {
       const table = request as TableRequest;
       if (typeof table.protocol !== "string" || typeof table.chainId !== "string") {
         return res.status(422).json(errBody("bad_table_request"));
+      }
+      // A protocol nobody indexes would otherwise be answered with an empty table — after
+      // the payment. On this rail settlement follows the 2xx, so a 422 here costs the payer
+      // nothing; the Arc rail, which settles first, runs the same check before payment
+      // (`rails/arc.ts`'s `preValidateTable`).
+      if (!knownProtocol(table.protocol, table.chainId)) {
+        return res.status(422).json(errBody("unknown_protocol"));
       }
     }
 
@@ -173,9 +214,7 @@ export function makeScanHandler(d: HandlerDeps) {
     const body = { vaults: result.vaults, reports, attestations };
 
     const count = d.tier === "scan" ? (request as ScanRequest).vaults.length : 0;
-    const amount = d.rail === "hedera"
-      ? d.tier === "scan" ? hederaScanPriceAtomic(count) : String(Math.round(Number(TABLE_PRICE_USD) * 1e6))
-      : d.tier === "scan" ? ARC_BUCKET_PRICE[arcBucket(count)] : TABLE_PRICE_USD;
+    const price = d.price(count);
 
     // getTxId is read here, before buildReceipt runs, since the receipt's payment.txId
     // must be the identifier the payer already committed to at the time this handler
@@ -188,7 +227,7 @@ export function makeScanHandler(d: HandlerDeps) {
         response_hash: responseHash(body),
         sealed: sealedIn,
         sources: result.sources,
-        price: { amount, asset: d.rail === "hedera" ? d.config.hedera.usdcToken : "USDC", rail: d.rail },
+        price: { amount: price.amount, asset: price.asset, rail: d.rail },
         payment: { rail: d.rail, txId },
         tier: d.tier,
         hcs: { topicId: d.config.hedera.hcsTopicId ?? "" },

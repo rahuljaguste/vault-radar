@@ -88,6 +88,14 @@ service does not implement, and a service that cannot be reached at all.
 Every counter on that page lives in the service process and **resets when the
 service restarts**. The page states this above the numbers.
 
+**Deploying this publicly: `/admin` has no access control of its own.** The admin
+token authenticates this *server* to the service; it is never asked of the
+visitor, per spec §13.1, so anyone who can reach the dashboard can read the
+operator's counters. A public deployment should either put the page behind its own
+access control (the platform's auth, a proxy, an allowlist) or switch it off by
+leaving `ADMIN_TOKEN` unset, which leaves the page rendering an explanation
+instead of numbers.
+
 ## API routes
 
 | Route | Returns |
@@ -107,11 +115,16 @@ Read from the process environment at request time. The repo root's
 | `SERVICE_URL` | server components, `lib/service.ts`, `lib/admin.ts` | `http://localhost:8787` | The VaultRadar service this dashboard reads. |
 | `NEXT_PUBLIC_SERVICE_URL` | `/verify` in the browser | none | Inlined at build time, which is why `/verify` needs its own variable. |
 | `RUNS_DIR` | `lib/runs.ts`, `POST /api/scan` | `<repo root>/runs` | Where run files are read from and written to. Reader and writer share one resolver, so they cannot disagree. |
-| `DEMO` | `lib/runs.ts` | unset | `DEMO=1` ignores `RUNS_DIR` entirely and serves `public/demo-run.json`, which is what a hosted deployment with no local runs uses. |
+| `DEMO` | `lib/runs.ts` | unset | Advisory. `public/demo-run.json` is served whenever `RUNS_DIR` holds no runs, in either mode; real runs always win, so setting `DEMO=1` can no longer hide a purchase this deployment actually made. |
 | `ADMIN_TOKEN` | `/admin` (server only) | none | Must equal the service's `ADMIN_TOKEN`. Unset means `/admin` explains that rather than failing. |
 | `AGENT_HEDERA_ACCOUNT_ID` | `POST /api/scan` (server only) | none | The paying Hedera account. Absent disables paid scans. |
 | `AGENT_HEDERA_KEY` | `POST /api/scan` (server only) | none | That account's ECDSA private key. Never logged, never returned, never bundled for the browser. Every error that leaves the handler is redacted against it first. |
 | `POLICY_PATH` | `POST /api/scan` (server only) | `packages/agent/policy.example.json` | The operator's budget, privacy tier and `max_age_seconds`, read by the agent's own `loadPolicy`. Resolved against the repo root. An unreadable or invalid policy is a 503 naming the offending field, never a silent default. |
+| `DASHBOARD_SPEND_CAP_USD` | `lib/spend.ts` | `1.00` | Rolling 24-hour total across every caller. Reserved before each payment, so a burst of concurrent requests cannot all pass the same check. An unusable value falls back to the default, never to no limit. |
+| `DASHBOARD_MAX_SCANS_PER_HOUR` | `lib/spend.ts` | `20` | Global hourly scan allowance, reserved the same way. This is the limit that bites when each purchase is individually cheap. |
+| `SCAN_ACCESS_TOKEN` | `POST /api/scan` (server only) | unset | When set, the route requires `Authorization: Bearer <token>` and answers 401 otherwise. Unset leaves the route open, which is the spec's promised public flow; the aggregate caps are what make that safe. |
+| `TRUST_PROXY` | `lib/ratelimit.ts` | unset | `TRUST_PROXY=1` only when a proxy in front of this server sets `x-forwarded-for`. Unset means every caller shares one rate-limit bucket, because a direct caller can forge that header. |
+| `TRUSTED_PROXY_HOPS` | `lib/ratelimit.ts` | `1` | How many proxies in front append to `x-forwarded-for`; the entry this many positions from the **end** is the one a caller cannot choose. `1` is correct for both documented hosts, for different reasons: **Fly.io appends** the address it observed, so a client that sends `x-forwarded-for: 1.1.1.1` produces `1.1.1.1, <real client>` and only the last entry is Fly's; **Vercel replaces** the header with the address it observed, so there is a single entry and it is Vercel's. Raise it only when another appending proxy of your own sits in front of that one. |
 
 ## Commands
 

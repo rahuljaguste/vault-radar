@@ -1,9 +1,9 @@
 import { expect, test } from "bun:test";
 import express from "express";
-import { TransferTransaction, TransactionId, AccountId, TokenId } from "@x402/hedera";
+import { TransferTransaction, TransactionId, AccountId, Hbar, TokenId } from "@x402/hedera";
 import { encodePaymentSignatureHeader, decodePaymentRequiredHeader } from "@x402/core/http";
 import type { PaymentPayload } from "@x402/core/types";
-import { deriveKemKeys, deriveSigningKeys, MemoryNonceStore, type SourceRef, type UnifiedVault } from "@vaultradar/core";
+import { deriveKemKeys, deriveSigningKeys, hederaScanPriceAtomic, MemoryNonceStore, type SourceRef, type UnifiedVault } from "@vaultradar/core";
 import { decodeHederaPayment, hederaPayerFromRequest, hederaTxIdFromRequest, _mapSizesForTests } from "../src/rails/hedera";
 import { buildApp, type BuildAppDeps } from "../src/app";
 import { loadConfig } from "../src/config";
@@ -33,18 +33,42 @@ const DEFAULT_FEE_PAYER = "0.0.7162784";
  * same fake facilitator, or x402's own requirements-matching step rejects the payload
  * before this rail ever sees it.
  */
-function buildPaymentSignatureHeader(payerAccount = PAYER_ACCOUNT, feePayer = DEFAULT_FEE_PAYER): string {
+function buildPaymentSignatureHeader(payerAccount = PAYER_ACCOUNT, feePayer = DEFAULT_FEE_PAYER, atomic = 1500): string {
   const tx = new TransferTransaction()
-    .addTokenTransfer(TokenId.fromString(TOKEN_ID), AccountId.fromString(payerAccount), -1500)
-    .addTokenTransfer(TokenId.fromString(TOKEN_ID), AccountId.fromString(PAYTO_ACCOUNT), 1500)
+    .addTokenTransfer(TokenId.fromString(TOKEN_ID), AccountId.fromString(payerAccount), -atomic)
+    .addTokenTransfer(TokenId.fromString(TOKEN_ID), AccountId.fromString(PAYTO_ACCOUNT), atomic)
     .setTransactionId(TransactionId.generate(AccountId.fromString(FEE_PAYER_ACCOUNT)))
     .setNodeAccountIds([AccountId.fromString("0.0.3")])
     .freeze();
   const transactionB64 = Buffer.from(tx.toBytes()).toString("base64");
   const payload: PaymentPayload = {
     x402Version: 2,
-    accepted: { scheme: "exact", network: "hedera:testnet", asset: TOKEN_ID, amount: "1500", payTo: PAYTO_ACCOUNT, maxTimeoutSeconds: 120, extra: { feePayer } },
+    accepted: { scheme: "exact", network: "hedera:testnet", asset: TOKEN_ID, amount: String(atomic), payTo: PAYTO_ACCOUNT, maxTimeoutSeconds: 120, extra: { feePayer } },
     payload: { transaction: transactionB64 },
+  };
+  return encodePaymentSignatureHeader(payload);
+}
+
+/**
+ * The same thing for the HBAR-priced scan route: native HBAR rather than an HTS token, so
+ * the transfer is an hbar transfer and `accepted.asset` is `0.0.0`. The amount must equal
+ * what the route computes for the same `X-VR-Count` (1_000_000 tinybars per vault) or
+ * x402's requirements matching rejects the payload before the rail sees it.
+ */
+function buildHbarPaymentSignatureHeader(tinybars: number, feePayer = DEFAULT_FEE_PAYER): string {
+  const tx = new TransferTransaction()
+    .addHbarTransfer(AccountId.fromString(PAYER_ACCOUNT), Hbar.fromTinybars(-tinybars))
+    .addHbarTransfer(AccountId.fromString(PAYTO_ACCOUNT), Hbar.fromTinybars(tinybars))
+    .setTransactionId(TransactionId.generate(AccountId.fromString(FEE_PAYER_ACCOUNT)))
+    .setNodeAccountIds([AccountId.fromString("0.0.3")])
+    .freeze();
+  const payload: PaymentPayload = {
+    x402Version: 2,
+    accepted: {
+      scheme: "exact", network: "hedera:testnet", asset: "0.0.0", amount: String(tinybars),
+      payTo: PAYTO_ACCOUNT, maxTimeoutSeconds: 120, extra: { feePayer },
+    },
+    payload: { transaction: Buffer.from(tx.toBytes()).toString("base64") },
   };
   return encodePaymentSignatureHeader(payload);
 }
@@ -216,8 +240,8 @@ test("the table route prices flat at TABLE_PRICE_USD regardless of X-VR-Count", 
     });
     expect(res.status).toBe(402);
     const decoded = decodePaymentRequiredHeader(res.headers.get("payment-required")!);
-    // TABLE_PRICE_USD = "0.03" -> convertToTokenAmount("0.03", 6) = "30000".
-    expect(decoded.accepts[0].amount).toBe("30000");
+    // TABLE_PRICE_USD = "0.06" -> convertToTokenAmount("0.06", 6) = "60000".
+    expect(decoded.accepts[0].amount).toBe("60000");
   } finally {
     rail.close();
     fac.close();
@@ -301,6 +325,9 @@ test("a verified and settled payment reaches the handler, returns 200 with a rec
     expect(res.status).toBe(200);
     const j = await res.json();
     expect(j.receipt).toBeDefined();
+    // The USDC-priced route: micro-USDC of the configured HTS token (TOKEN_ID is this
+    // config's `hedera.usdcToken`), which is what this payer actually transferred.
+    expect(j.receipt.price).toEqual({ amount: hederaScanPriceAtomic(1), asset: TOKEN_ID, rail: "hedera" });
 
     expect(settledCalls.length).toBe(1);
     // The settled tx id comes from the facilitator's settle response (ctx.result.transaction),
@@ -312,6 +339,44 @@ test("a verified and settled payment reaches the handler, returns 200 with a rec
     expect(settledCalls[0][0]).toEqual(j.receipt);
 
     expect(_mapSizesForTests()).toEqual({ payer: 0, receipt: 0 });
+  } finally {
+    rail.close();
+    fac.close();
+  }
+});
+
+// The HBAR-priced scan route charges tinybars of native HBAR, but the receipt used to be
+// built from the rail and tier alone — so it stated micro-USDC of the configured USDC
+// token. A payer who spent 2,000,000 tinybars got a signed, HCS-committed receipt reading
+// `amount: "2000", asset: "0.0.429274"`, and an auditor reading it would conclude USDC was
+// paid. The receipt's price now comes from the mount, which is the only thing that knows
+// what the route charges.
+test("a paid HBAR scan's receipt states tinybars of HBAR, not micro-USDC", async () => {
+  const vaults = [
+    "1:0xabababababababababababababababababababab",
+    "1:0xacacacacacacacacacacacacacacacacacacacac",
+  ];
+  const tinybars = vaults.length * 1_000_000;
+  const fac = fakeFacilitator({
+    verify: { isValid: true, payer: VERIFIED_PAYER },
+    settle: { success: true, transaction: SETTLED_TX, payer: VERIFIED_PAYER },
+  });
+  const rail = await mountRail(fac.url);
+  try {
+    const res = await fetch(`${rail.base}/hedera/v1/scan-hbar`, {
+      method: "POST",
+      headers: {
+        "content-type": "application/json",
+        "x-vr-count": String(vaults.length),
+        "payment-signature": buildHbarPaymentSignatureHeader(tinybars),
+      },
+      body: JSON.stringify({ vaults }),
+    });
+    expect(res.status).toBe(200);
+    const j = await res.json();
+    // Exactly what the 402 demanded and the payer signed for.
+    expect(j.receipt.price).toEqual({ amount: String(tinybars), asset: "0.0.0", rail: "hedera" });
+    expect(fac.calls.settle).toBe(1);
   } finally {
     rail.close();
     fac.close();
@@ -403,6 +468,128 @@ test("hederaPayerFromRequest prefers the facilitator-verified payer over the tra
     expect(res.status).toBe(200);
     expect(capturedPayer).toBe(VERIFIED_PAYER);
     expect(capturedPayer).not.toBe(PAYER_ACCOUNT);
+  } finally {
+    rail.close();
+    fac.close();
+  }
+});
+
+// --- clear-mode count binding -------------------------------------------------------
+//
+// `X-VR-Count` is what the route is priced on and `request.vaults` is what the handler
+// works on, so a clear body must not be able to name more vaults than it paid for. The
+// sealed path always checked this (`checkSealedRequest`'s count check); the clear path did
+// not, so `X-VR-Count: 1` with a hundred vaults in the body bought a hundred vaults of
+// upstream work for the one-vault price. On this rail @x402/express settles only after a
+// 2xx, so the handler's own 422 is itself pre-settlement — which is what the facilitator's
+// settle count asserts below.
+//
+// Placed last in this file on purpose: the mismatch test verifies a payment the request
+// then refuses, so no settle/settle-failure hook ever fires for it and its entry stays in
+// `verifiedPayerByTxKey` until the 10-minute TTL sweeps it. That is the documented
+// abandoned-request case (see the TTL comment in rails/hedera.ts), not a regression — but
+// the maps are module-level, so running this before the `_mapSizesForTests` assertions
+// above would make them fail on a leak they are not about.
+
+test("a clear scan body whose vault count disagrees with X-VR-Count is refused 422 count_mismatch, and never settles", async () => {
+  const fac = fakeFacilitator({
+    verify: { isValid: true, payer: VERIFIED_PAYER },
+    settle: { success: true, transaction: SETTLED_TX, payer: VERIFIED_PAYER },
+  });
+  const scanCalls: string[][] = [];
+  const rail = await mountRail(fac.url, { scan: async ids => { scanCalls.push(ids); return { vaults: [], sources: [] }; } });
+  try {
+    // Paid for one vault (the payment header carries amount 1500 = count 1), asked for three.
+    const res = await fetch(`${rail.base}/hedera/v1/scan`, {
+      method: "POST",
+      headers: { "content-type": "application/json", "x-vr-count": "1", "payment-signature": buildPaymentSignatureHeader() },
+      body: JSON.stringify({
+        vaults: [
+          "1:0xabababababababababababababababababababab",
+          "1:0xacacacacacacacacacacacacacacacacacacacac",
+          "1:0xadadadadadadadadadadadadadadadadadadadad",
+        ],
+      }),
+    });
+    expect(res.status).toBe(422);
+    expect(await res.json()).toEqual({ reason: "count_mismatch", error: "count_mismatch" });
+    // No upstream work for the under-paid request...
+    expect(scanCalls).toEqual([]);
+    // ...and the 4xx meant the verified payment was never settled, so nothing was charged.
+    expect(fac.calls.verify).toBe(1);
+    expect(fac.calls.settle).toBe(0);
+  } finally {
+    rail.close();
+    fac.close();
+  }
+});
+
+test("a clear scan body whose count matches X-VR-Count still completes and settles", async () => {
+  const fac = fakeFacilitator({
+    verify: { isValid: true, payer: VERIFIED_PAYER },
+    settle: { success: true, transaction: SETTLED_TX, payer: VERIFIED_PAYER },
+  });
+  const rail = await mountRail(fac.url);
+  try {
+    const res = await fetch(`${rail.base}/hedera/v1/scan`, {
+      method: "POST",
+      headers: { "content-type": "application/json", "x-vr-count": "1", "payment-signature": buildPaymentSignatureHeader() },
+      body: SCAN_BODY,
+    });
+    expect(res.status).toBe(200);
+    expect(fac.calls.settle).toBe(1);
+  } finally {
+    rail.close();
+    fac.close();
+  }
+});
+
+// A table request for a protocol nobody indexes used to be *charged for* and then answered
+// with an empty table: `DataProvider.table` has no entry to query, so it returns
+// `{ vaults: [], sources: [] }`. On this rail the refusal is free, because settlement only
+// follows a 2xx — which is what the settle count below asserts. (Placed here with the other
+// verify-then-refuse tests for the reason their section comment gives: no settle hook fires,
+// so the verified payment's entry stays in `verifiedPayerByTxKey` until the TTL sweeps it,
+// and the `_mapSizesForTests` assertions above are not about that.)
+test("a table request for an unindexed protocol is refused 422 unknown_protocol, and never settles", async () => {
+  const fac = fakeFacilitator({
+    verify: { isValid: true, payer: VERIFIED_PAYER },
+    settle: { success: true, transaction: SETTLED_TX, payer: VERIFIED_PAYER },
+  });
+  const rail = await mountRail(fac.url);
+  try {
+    const res = await fetch(`${rail.base}/hedera/v1/table`, {
+      method: "POST",
+      // The flat table price, 0.06 USD, is 60000 in six-decimal USDC.
+      headers: { "content-type": "application/json", "payment-signature": buildPaymentSignatureHeader(PAYER_ACCOUNT, DEFAULT_FEE_PAYER, 60_000) },
+      body: JSON.stringify({ protocol: "not-a-real-protocol", chainId: "1" }),
+    });
+    expect(res.status).toBe(422);
+    expect(await res.json()).toEqual({ reason: "unknown_protocol", error: "unknown_protocol" });
+    expect(fac.calls.verify).toBe(1);
+    expect(fac.calls.settle).toBe(0);
+  } finally {
+    rail.close();
+    fac.close();
+  }
+});
+
+test("a table request for a registered protocol on the wrong chain is refused too", async () => {
+  // aave-v3 is registered on chains 1 and 8453 only, so chain 137 names no table.
+  const fac = fakeFacilitator({
+    verify: { isValid: true, payer: VERIFIED_PAYER },
+    settle: { success: true, transaction: SETTLED_TX, payer: VERIFIED_PAYER },
+  });
+  const rail = await mountRail(fac.url);
+  try {
+    const res = await fetch(`${rail.base}/hedera/v1/table`, {
+      method: "POST",
+      headers: { "content-type": "application/json", "payment-signature": buildPaymentSignatureHeader(PAYER_ACCOUNT, DEFAULT_FEE_PAYER, 60_000) },
+      body: JSON.stringify({ protocol: "aave-v3", chainId: "137" }),
+    });
+    expect(res.status).toBe(422);
+    expect(await res.json()).toEqual({ reason: "unknown_protocol", error: "unknown_protocol" });
+    expect(fac.calls.settle).toBe(0);
   } finally {
     rail.close();
     fac.close();

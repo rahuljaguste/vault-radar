@@ -20,6 +20,9 @@ test("reader builds erc4626 UnifiedVault with substreams source from the chain-s
   expect(v.sharePrice).toBe("1.02");
   expect(v.sources[0]).toMatchObject({ kind: "substreams", block: "1000", timestamp: String(now - 60), ageSeconds: "60", freshness: "fresh" });
   expect(v.history[0].netFlowAssets).toBe("-100");
+  // Per-block rows, each carrying its own block's movement — so `risk.ts` may sum them all
+  // over a window without double-counting, unlike a merged hourly+daily Messari history.
+  expect(v.history[0].series).toBe("block");
   expect(v.asset).toEqual({ symbol: "USDC", decimals: 6 });
   expect(calls.some(c => c.includes("LIKE"))).toBe(false);
   expect(calls.some(c => c.includes("cursors_1"))).toBe(true);
@@ -37,15 +40,58 @@ test('chain id "1"\'s cursor lookup never touches chain id "10"\'s cursor table'
   expect(cursors10Touched).toBe(false);
 });
 
+/** Postgres signals an undefined table with SQLSTATE 42P01; `pg` puts it on `error.code`. */
+const undefinedTable = (table: string) =>
+  Object.assign(new Error(`relation "${table}" does not exist`), { code: "42P01" });
+
 test("a missing cursor table (chain not yet indexed) yields unavailable freshness and block 0, not a crash", async () => {
   const q = async (text: string) => {
-    if (text.includes("cursors_1")) throw new Error('relation "cursors_1" does not exist');
+    if (text.includes("cursors_1")) throw undefinedTable("cursors_1");
     if (text.includes("FROM vault_latest")) return { rows: [{ vault: "0xabc", share_price: "1.02", total_assets: "5000" }] };
     return { rows: [] };
   };
-  const [v] = await readErc4626Vaults(q, "1", ["0xabc"], { ts: now, block: 1005 });
-  expect(v.sources[0]).toMatchObject({ block: "0", timestamp: "0", freshness: "unavailable" });
-  expect(v.freshness).toBe("unavailable");
+  const warnings: string[] = [];
+  const realWarn = console.warn;
+  console.warn = (...args: unknown[]) => void warnings.push(args.join(" "));
+  try {
+    const [v] = await readErc4626Vaults(q, "1", ["0xabc"], { ts: now, block: 1005 });
+    expect(v.sources[0]).toMatchObject({ block: "0", timestamp: "0", freshness: "unavailable" });
+    expect(v.freshness).toBe("unavailable");
+  } finally {
+    console.warn = realWarn;
+  }
+  // "Not indexed yet" is an expected state, not a problem to report.
+  expect(warnings).toEqual([]);
+});
+
+test("any cursor error other than a missing table is logged once, naming the chain and nothing else", async () => {
+  // A bare `catch { return null }` made a database outage look exactly like "this chain is
+  // not indexed yet" — the difference between paging an operator and doing nothing.
+  const q = async (text: string) => {
+    if (text.includes("cursors_1")) throw new Error("password authentication failed for user in postgres://u:p@h/db");
+    if (text.includes("FROM vault_latest")) return { rows: [{ vault: "0xabc", share_price: "1.02", total_assets: "5000" }] };
+    return { rows: [] };
+  };
+  const warnings: string[] = [];
+  const realWarn = console.warn;
+  console.warn = (...args: unknown[]) => void warnings.push(args.join(" "));
+  let block: { block: string } | null;
+  try {
+    block = await readSinkCursorBlock(q, "1");
+  } finally {
+    console.warn = realWarn;
+  }
+  // Still null, so callers keep degrading rather than failing.
+  expect(block).toBeNull();
+  expect(warnings).toHaveLength(1);
+  expect(warnings[0]).toContain("chain 1");
+  // Enough of the error to act on...
+  expect(warnings[0]).toContain("password authentication failed");
+  // ...and none of the query, and nothing URL-shaped, so a driver that echoes its own DSN
+  // into an error cannot put the password in the log.
+  expect(warnings[0]).not.toContain("SELECT");
+  expect(warnings[0]).not.toContain("postgres://");
+  expect(warnings[0]).not.toContain("u:p@h");
 });
 
 test("no matching vault_meta row leaves asset null", async () => {

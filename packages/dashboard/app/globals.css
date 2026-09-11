@@ -1,4 +1,8 @@
 :root {
+  /* Tells the browser both themes are supported, so its own widget defaults — form
+     control chrome, scrollbars, focus rings — follow the scheme instead of staying
+     light while the page below them is dark. */
+  color-scheme: light dark;
   --bg: #ffffff;
   --fg: #111111;
   --muted: #666666;
@@ -167,12 +171,18 @@ label {
   margin-bottom: 0.35rem;
 }
 
-textarea {
+/* Form controls carry the page's own colours. Without this they keep the browser's
+   defaults, which are light in every theme: on the dark scheme the receipt box and
+   the scan box came out as white rectangles in an otherwise dark page. */
+textarea,
+input {
   width: 100%;
   font-family: inherit;
   font-size: inherit;
   padding: 0.5rem;
   border: 1px solid var(--border);
+  color: var(--fg);
+  background: var(--bg);
 }
 
 button {
@@ -181,6 +191,13 @@ button {
   padding: 0.4rem 1rem;
   margin-top: 0.5rem;
   cursor: pointer;
+  color: var(--fg);
+  background: var(--stripe);
+  border: 1px solid var(--border);
+}
+
+button:hover:not(:disabled) {
+  border-color: var(--fg);
 }
 
 button:disabled {

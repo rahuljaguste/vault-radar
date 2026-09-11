@@ -81,6 +81,7 @@ test("vaultradar_discover reports the verified card, the on-chain key pin and th
   const { body, isError } = await call(ctx, new RunLog(ctx), "vaultradar_discover", {});
   expect(isError).toBe(false);
   expect(body.card_signature_valid).toBe(true);
+  expect(body.key_binding_valid).toBe(true);
   expect(body.pub_hash).toBe(h.keys.sig.pubHash);
   expect(body.kid).toBe(h.keys.kem.kid);
   expect(body.sig_alg).toBe("ML-DSA-65");
@@ -106,7 +107,7 @@ test("a strict policy quotes the table price, because that is what it would actu
   const { body } = await call(ctx, new RunLog(ctx), "vaultradar_quote", { count: 3 });
   expect(body.tier).toBe("table");
   expect(body.scan_quotes_usd.hedera).toBe("0.0025");
-  expect(body.quotes_usd_for_policy_tier.hedera).toBe("0.03");
+  expect(body.quotes_usd_for_policy_tier.hedera).toBe("0.06");
   expect(body.chosen_rail).toBe("hedera");
 });
 
@@ -120,14 +121,14 @@ test("a strict-tier quote prices one table per distinct chain when given the vau
   expect(two.body.tier).toBe("table");
   expect(two.body.tables).toBe(2);
   expect(two.body.chains).toEqual(["1", "137"]);
-  expect(two.body.quotes_usd_for_policy_tier.hedera).toBe("0.06"); // 2 x 0.03
+  expect(two.body.quotes_usd_for_policy_tier.hedera).toBe("0.12"); // 2 x 0.06
   expect(two.body.note).toBeUndefined();
 
   // Two vaults on one chain is still a single table.
   const one = await call(ctx, log, "vaultradar_quote", { count: 2, vaults: [ALERT_VAULT, STALE_VAULT] });
   expect(one.body.tables).toBe(1);
   expect(one.body.chains).toEqual(["1"]);
-  expect(one.body.quotes_usd_for_policy_tier.hedera).toBe("0.03");
+  expect(one.body.quotes_usd_for_policy_tier.hedera).toBe("0.06");
 
   // Without the ids the chain spread is unknowable, so the quote says it assumed one
   // chain rather than quietly under-pricing a fan-out.
@@ -259,7 +260,7 @@ test("a strict policy makes vaultradar_scan buy the whole table and narrow it lo
   const log = new RunLog(ctx);
   const { body } = await call(ctx, log, "vaultradar_scan", { vaults: [ALERT_VAULT] });
   expect(body.tier).toBe("table");
-  expect(body.price_usd).toBe("0.03");
+  expect(body.price_usd).toBe("0.06");
   expect(body.decisions.map((d: { vaultId: string }) => d.vaultId)).toEqual([ALERT_VAULT]);
 });
 

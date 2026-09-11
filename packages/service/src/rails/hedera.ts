@@ -4,7 +4,7 @@ import { HTTPFacilitatorClient, type HTTPRequestContext } from "@x402/core/serve
 import { decodePaymentSignatureHeader } from "@x402/core/http";
 import { ExactHederaScheme } from "@x402/hedera/exact/server";
 import { extractTransactionFromPayload, inspectHederaTransaction, type ExactHederaPayloadV2 } from "@x402/hedera";
-import { clampCount, hederaScanPriceUsd, isSealed, TABLE_PRICE_USD, type Receipt } from "@vaultradar/core";
+import { clampCount, hederaScanPriceAtomic, hederaScanPriceUsd, isSealed, TABLE_PRICE_USD, type Receipt } from "@vaultradar/core";
 import { makeScanHandler, type HandlerDeps } from "../handlers/scan";
 import { asyncHandler } from "../util/async";
 import { errBody } from "../util/http";
@@ -73,6 +73,22 @@ const verifiedPayerByTxKey = new Map<string, Expiring<string>>();
 const receiptByTxKey = new Map<string, Expiring<Receipt>>();
 
 const decodedCache = new WeakMap<Request, Decoded>();
+
+/**
+ * The HBAR-priced scan variant's rate, in one place.
+ *
+ * 0.01 HBAR per vault (1_000_000 tinybars) — a demo rate for `/hedera/v1/scan-hbar`,
+ * deliberately independent of the USD-pegged `hederaScanPriceUsd` the default scan route
+ * uses. `HBAR_ASSET` is x402's id for native HBAR rather than an HTS token.
+ *
+ * Shared between the 402's price function and the receipt the handler signs, because those
+ * two stating different things is precisely the bug this consolidates away: the route
+ * charged tinybars of HBAR while the receipt claimed micro-USDC of the configured USDC
+ * token.
+ */
+const HBAR_ASSET = "0.0.0";
+const TINYBARS_PER_VAULT = 1_000_000;
+const hbarScanAmount = (count: number): string => String(count * TINYBARS_PER_VAULT);
 
 /** Extracts the base64 transaction string from the request's payment header, or null. */
 function txKeyFromRequest(req: Request): string | null {
@@ -155,7 +171,7 @@ function validateScanRequest(req: Request, res: Response, next: NextFunction): v
 
 export function mountHederaRail(
   app: Express,
-  deps: Omit<HandlerDeps, "rail" | "tier" | "getPayer" | "getTxId"> & {
+  deps: Omit<HandlerDeps, "rail" | "tier" | "price" | "getPayer" | "getTxId"> & {
     /** Fires once settlement completes for a request this rail already answered 200 for. */
     onSettled?: (receipt: Receipt, txId: string) => void;
   },
@@ -234,11 +250,9 @@ export function mountHederaRail(
     validateEnvelope(ctx);
     return `$${hederaScanPriceUsd(countFromCtx(ctx))}`;
   };
-  // 0.01 HBAR per vault (1_000_000 tinybars) — a demo rate for this HBAR-priced
-  // variant, independent of the USD-pegged hederaScanPriceUsd the default scan route uses.
   const hbarPrice = (ctx: HTTPRequestContext) => {
     validateEnvelope(ctx);
-    return { asset: "0.0.0", amount: String(countFromCtx(ctx) * 1_000_000) };
+    return { asset: HBAR_ASSET, amount: hbarScanAmount(countFromCtx(ctx)) };
   };
 
   app.use(["/hedera/v1/scan", "/hedera/v1/scan-hbar"], validateScanRequest);
@@ -250,17 +264,20 @@ export function mountHederaRail(
     "POST /hedera/v1/table": { accepts: [{ ...common, price: `$${TABLE_PRICE_USD}` }], description: "VaultRadar whole-protocol table (privacy tier)" },
   }, server));
 
-  const mountTier = (path: string, tier: "scan" | "table") => {
-    const handler = makeScanHandler({ ...deps, rail: "hedera", tier, getPayer: hederaPayerFromRequest, getTxId: hederaTxIdFromRequest });
+  // `price` is passed per mount, not derived inside the handler, because this rail mounts
+  // the same scan tier twice at two genuinely different prices — the USD-pegged route and
+  // the HBAR one — and the receipt has to state the one the payer actually paid.
+  const mountTier = (path: string, tier: "scan" | "table", price: HandlerDeps["price"]) => {
+    const handler = makeScanHandler({ ...deps, rail: "hedera", tier, price, getPayer: hederaPayerFromRequest, getTxId: hederaTxIdFromRequest });
     app.post(path, asyncHandler(async (req: Request, res: Response) => {
       const b64 = txKeyFromRequest(req);
       await handler(req, res);
       if (b64 && res.locals.receipt) putWithTtl(receiptByTxKey, b64, res.locals.receipt as Receipt);
     }));
   };
-  mountTier("/hedera/v1/scan", "scan");
-  mountTier("/hedera/v1/scan-hbar", "scan");
-  mountTier("/hedera/v1/table", "table");
+  mountTier("/hedera/v1/scan", "scan", count => ({ amount: hederaScanPriceAtomic(count), asset: c.hedera.usdcToken }));
+  mountTier("/hedera/v1/scan-hbar", "scan", count => ({ amount: hbarScanAmount(count), asset: HBAR_ASSET }));
+  mountTier("/hedera/v1/table", "table", () => ({ amount: String(Math.round(Number(TABLE_PRICE_USD) * 1e6)), asset: c.hedera.usdcToken }));
 }
 
 /**

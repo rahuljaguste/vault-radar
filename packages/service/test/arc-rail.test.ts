@@ -18,6 +18,11 @@ const ARC_NETWORK = "eip155:5042002";
 // (viem's `signTypedData` needs no network access) — never funded, never touches a
 // real chain.
 const TEST_PRIVATE_KEY = ("0x" + "ab".repeat(32)) as `0x${string}`;
+/** One well-formed vault id, for clear bodies that must agree with `X-VR-Count: 1` —
+ * `preValidateScanBody` refuses a body whose list is malformed or whose length disagrees
+ * with the header it is priced on, so `{ vaults: [] }` is no longer a valid stand-in at
+ * count 1. */
+const ONE_VAULT = "1:0xabababababababababababababababababababab";
 
 type VerifyMode = { isValid: boolean; payer?: string; invalidReason?: string };
 type SettleMode = { success: boolean; transaction?: string; payer?: string; errorReason?: string };
@@ -106,7 +111,7 @@ test("an unpaid scan request returns 402 with a payment-required header advertis
   const rail = await mountRail(fac.url);
   try {
     const res = await fetch(`${rail.base}/arc/v1/scan/s`, {
-      method: "POST", headers: { "content-type": "application/json", "x-vr-count": "1" }, body: JSON.stringify({ vaults: [] }),
+      method: "POST", headers: { "content-type": "application/json", "x-vr-count": "1" }, body: JSON.stringify({ vaults: [ONE_VAULT] }),
     });
     expect(res.status).toBe(402);
     const header = res.headers.get("payment-required");
@@ -232,6 +237,239 @@ test("a sealed envelope whose own vault count disagrees with X-VR-Count is rejec
     expect(fac.calls.supported).toBe(0);
     expect(fac.calls.verify).toBe(0);
     expect(fac.calls.settle).toBe(0);
+  } finally {
+    rail.close();
+    fac.close();
+  }
+});
+
+// --- clear-body count binding (pre-payment, because this rail settles first) --------
+//
+// `validateBucket` only reads the header, so a clear body could name any number of vaults
+// inside a bucket-valid `X-VR-Count` and get them all for the bucket price. Circle settles
+// inside `gateway.require` — before any handler runs — so the handler's own
+// `count_mismatch`/`bad_vaults` would land after the money moved; `preValidateScanBody`
+// is mounted ahead of `gateway.require` for exactly that reason, which is what the
+// facilitator call counts below assert.
+
+test("a clear scan body whose vault count disagrees with X-VR-Count is rejected 422 count_mismatch before any facilitator call", async () => {
+  const fac = fakeFacilitator({
+    verify: { isValid: true, payer: "0xtestpayer" },
+    settle: { success: true, transaction: "0xshouldnothappen", payer: "0xtestpayer" },
+  });
+  const scanCalls: string[][] = [];
+  const rail = await mountRail(fac.url, { scan: async ids => { scanCalls.push(ids); return { vaults: [], sources: [] }; } });
+  try {
+    // Count 3 is a valid "s"-bucket value, so validateBucket passes it; the body names
+    // five vaults, which is also in the "s" bucket — the mismatch is the whole point.
+    const res = await fetch(`${rail.base}/arc/v1/scan/s`, {
+      method: "POST",
+      headers: { "content-type": "application/json", "x-vr-count": "3" },
+      body: JSON.stringify({
+        vaults: [
+          "1:0xabababababababababababababababababababab",
+          "1:0xacacacacacacacacacacacacacacacacacacacac",
+          "1:0xadadadadadadadadadadadadadadadadadadadad",
+          "1:0xaeaeaeaeaeaeaeaeaeaeaeaeaeaeaeaeaeaeaeae",
+          "1:0xafafafafafafafafafafafafafafafafafafafaf",
+        ],
+      }),
+    });
+    expect(res.status).toBe(422);
+    expect(await res.json()).toEqual({ reason: "count_mismatch", error: "count_mismatch" });
+    expect(scanCalls).toEqual([]);
+    expect(fac.calls.supported).toBe(0);
+    expect(fac.calls.verify).toBe(0);
+    expect(fac.calls.settle).toBe(0);
+  } finally {
+    rail.close();
+    fac.close();
+  }
+});
+
+test("a clear scan body whose count matches X-VR-Count still reaches the facilitator", async () => {
+  const fac = fakeFacilitator();
+  const rail = await mountRail(fac.url);
+  try {
+    const res = await fetch(`${rail.base}/arc/v1/scan/s`, {
+      method: "POST",
+      headers: { "content-type": "application/json", "x-vr-count": "1" },
+      body: JSON.stringify({ vaults: ["1:0xabababababababababababababababababababab"] }),
+    });
+    expect(res.status).toBe(402); // unpaid, so the 402 is the expected answer
+    expect(fac.calls.supported).toBe(1);
+  } finally {
+    rail.close();
+    fac.close();
+  }
+});
+
+// --- pre-payment body-shape validation (bad_vaults / bad_table_request) ---------------
+//
+// Before `preValidateScanBody`/`preValidateTable` validated the body's shape, a non-array
+// `vaults` slipped past the count check's `Array.isArray` guard and a table body with
+// non-string fields passed through `preValidateTable` untouched — both reaching the
+// handler's own `bad_vaults`/`bad_table_request` only *after* Circle had settled, i.e. a
+// paid 422 with no refund path. These tests pin both rejections ahead of any facilitator
+// call, for clear bodies and for sealed envelopes (whose plaintext the rail already
+// opened in `preValidateSealed`).
+
+test("a clear scan body with a non-array vaults is rejected 422 bad_vaults before any facilitator call", async () => {
+  const fac = fakeFacilitator();
+  const scanCalls: string[][] = [];
+  const rail = await mountRail(fac.url, { scan: async ids => { scanCalls.push(ids); return { vaults: [], sources: [] }; } });
+  try {
+    const res = await fetch(`${rail.base}/arc/v1/scan/s`, {
+      method: "POST",
+      headers: { "content-type": "application/json", "x-vr-count": "1" },
+      body: JSON.stringify({ vaults: "1:0xabababababababababababababababababababab" }),
+    });
+    expect(res.status).toBe(422);
+    expect(await res.json()).toEqual({ reason: "bad_vaults", error: "bad_vaults" });
+    expect(scanCalls).toEqual([]);
+    expect(fac.calls.supported).toBe(0);
+    expect(fac.calls.verify).toBe(0);
+    expect(fac.calls.settle).toBe(0);
+  } finally {
+    rail.close();
+    fac.close();
+  }
+});
+
+test("a clear scan body with a malformed vault id is rejected 422 bad_vaults before any facilitator call", async () => {
+  const fac = fakeFacilitator();
+  const rail = await mountRail(fac.url);
+  try {
+    const res = await fetch(`${rail.base}/arc/v1/scan/s`, {
+      method: "POST",
+      headers: { "content-type": "application/json", "x-vr-count": "1" },
+      body: JSON.stringify({ vaults: ["not-a-vault"] }),
+    });
+    expect(res.status).toBe(422);
+    expect(await res.json()).toEqual({ reason: "bad_vaults", error: "bad_vaults" });
+    expect(fac.calls.supported).toBe(0);
+  } finally {
+    rail.close();
+    fac.close();
+  }
+});
+
+test("a sealed scan envelope whose plaintext vault list is garbage is rejected 422 bad_vaults before any facilitator call", async () => {
+  const fac = fakeFacilitator();
+  const rail = await mountRail(fac.url);
+  try {
+    // A non-array vaults passes checkSealedRequestPrePayment (its count check only
+    // applies to arrays), so this envelope is rejected by the shape rule alone — the
+    // exact case that used to settle and then earn a paid bad_vaults from the handler.
+    const { sealed } = buildSealedRequest({ vaults: "not-a-list" }, "0xtestpayer", rail.keys.kem.publicKey);
+    const res = await fetch(`${rail.base}/arc/v1/scan/s`, {
+      method: "POST",
+      headers: { "content-type": "application/json", "x-vr-count": "1" },
+      body: JSON.stringify(sealed),
+    });
+    expect(res.status).toBe(422);
+    expect(await res.json()).toEqual({ reason: "bad_vaults", error: "bad_vaults" });
+    expect(fac.calls.supported).toBe(0);
+    expect(fac.calls.verify).toBe(0);
+    expect(fac.calls.settle).toBe(0);
+  } finally {
+    rail.close();
+    fac.close();
+  }
+});
+
+test("a clear table body with non-string fields is rejected 422 bad_table_request before any facilitator call", async () => {
+  const fac = fakeFacilitator();
+  const rail = await mountRail(fac.url);
+  try {
+    const res = await fetch(`${rail.base}/arc/v1/table`, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ protocol: 42, chainId: "1" }),
+    });
+    expect(res.status).toBe(422);
+    expect(await res.json()).toEqual({ reason: "bad_table_request", error: "bad_table_request" });
+    expect(fac.calls.supported).toBe(0);
+    expect(fac.calls.verify).toBe(0);
+    expect(fac.calls.settle).toBe(0);
+  } finally {
+    rail.close();
+    fac.close();
+  }
+});
+
+test("a sealed table envelope with non-string fields is rejected the same way, off the already-opened plaintext", async () => {
+  const fac = fakeFacilitator();
+  const rail = await mountRail(fac.url);
+  try {
+    const { sealed } = buildSealedRequest({ protocol: null, chainId: 1 }, "0xtestpayer", rail.keys.kem.publicKey);
+    const res = await fetch(`${rail.base}/arc/v1/table`, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify(sealed),
+    });
+    expect(res.status).toBe(422);
+    expect(await res.json()).toEqual({ reason: "bad_table_request", error: "bad_table_request" });
+    expect(fac.calls.supported).toBe(0);
+  } finally {
+    rail.close();
+    fac.close();
+  }
+});
+
+// A table request for a protocol nobody indexes is answered with an empty table by
+// `DataProvider.table`, which on this rail arrives after Circle has already settled — the
+// payer would have bought nothing, with no reversal path. So the check runs in
+// `preValidateTable`, ahead of `gateway.require`: the facilitator is never even asked what
+// it supports.
+
+test("a clear table body naming an unindexed protocol is rejected 422 unknown_protocol before any facilitator call", async () => {
+  const fac = fakeFacilitator();
+  const rail = await mountRail(fac.url);
+  try {
+    const res = await fetch(`${rail.base}/arc/v1/table`, {
+      method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ protocol: "not-a-real-protocol", chainId: "1" }),
+    });
+    expect(res.status).toBe(422);
+    expect(await res.json()).toEqual({ reason: "unknown_protocol", error: "unknown_protocol" });
+    expect(fac.calls.supported).toBe(0);
+    expect(fac.calls.verify).toBe(0);
+    expect(fac.calls.settle).toBe(0);
+  } finally {
+    rail.close();
+    fac.close();
+  }
+});
+
+test("a sealed table envelope naming an unindexed protocol is rejected the same way, off the already-opened plaintext", async () => {
+  const fac = fakeFacilitator();
+  const rail = await mountRail(fac.url);
+  try {
+    // aave-v3 is registered on chains 1 and 8453; chain 137 names no table.
+    const { sealed } = buildSealedRequest({ protocol: "aave-v3", chainId: "137" }, "0xanypayer", rail.keys.kem.publicKey);
+    const res = await fetch(`${rail.base}/arc/v1/table`, {
+      method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify(sealed),
+    });
+    expect(res.status).toBe(422);
+    expect(await res.json()).toEqual({ reason: "unknown_protocol", error: "unknown_protocol" });
+    expect(fac.calls.supported).toBe(0);
+  } finally {
+    rail.close();
+    fac.close();
+  }
+});
+
+test("a clear table body is unaffected by the count check, since a table has no count", async () => {
+  const fac = fakeFacilitator();
+  const rail = await mountRail(fac.url);
+  try {
+    const res = await fetch(`${rail.base}/arc/v1/table`, {
+      method: "POST",
+      headers: { "content-type": "application/json", "x-vr-count": "99" },
+      body: JSON.stringify({ protocol: "erc4626", chainId: "1" }),
+    });
+    expect(res.status).toBe(402);
+    expect(fac.calls.supported).toBe(1);
   } finally {
     rail.close();
     fac.close();
@@ -398,7 +636,7 @@ test("a failed settle after a successful verify never reaches the handler and ne
   try {
     const gw = new GatewayClient({ chain: "arcTestnet", privateKey: TEST_PRIVATE_KEY });
     await expect(
-      gw.pay(`${rail.base}/arc/v1/scan/s`, { method: "POST", body: { vaults: [] }, headers: { "x-vr-count": "1" } }),
+      gw.pay(`${rail.base}/arc/v1/scan/s`, { method: "POST", body: { vaults: [ONE_VAULT] }, headers: { "x-vr-count": "1" } }),
     ).rejects.toThrow();
     expect(settledCalls.length).toBe(0);
   } finally {

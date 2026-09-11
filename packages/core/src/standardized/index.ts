@@ -4,7 +4,7 @@ import type { UnifiedVault } from "../unify/types";
 // per-deployment provenance list) and is re-exported from the package barrel via
 // `export * from "./receipts"`; reuse it here rather than declaring a duplicate.
 import type { SourceRef } from "../receipts";
-import { queryDeployment } from "./gateway";
+import { PAGE_SIZE, queryDeployment } from "./gateway";
 import { YIELD_VAULTS_QUERY, LENDING_MARKETS_QUERY } from "./templates";
 import { mapYieldVaults, mapLendingMarkets } from "./map";
 
@@ -25,7 +25,7 @@ export async function fetchStandardized(
     live.map(async d => {
       const headTs = heads[d.chainId] ?? Math.floor(Date.now() / 1000);
       const query = d.schema === "yield-aggregator" ? YIELD_VAULTS_QUERY : LENDING_MARKETS_QUERY;
-      const { data, meta } = await queryDeployment(d, query, apiKey, { first: 50 }, fetchImpl);
+      const { data, meta } = await queryDeployment(d, query, apiKey, { first: PAGE_SIZE }, fetchImpl);
       const vaults = d.schema === "yield-aggregator" ? mapYieldVaults(d, data, headTs) : mapLendingMarkets(d, data, headTs);
       const ref: SourceRef = { ref: d.deploymentId ?? d.subgraphId, chainId: d.chainId, block: meta.block, timestamp: meta.timestamp };
       return { vaults, ref };

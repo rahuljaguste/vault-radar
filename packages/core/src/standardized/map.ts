@@ -31,13 +31,13 @@ function source(d: Deployment, meta: Meta, headTs: number): Source {
 // null. Diffing must stay within one series: merging hourly+daily first and diffing by
 // array position (the previous behaviour) paired the oldest hourly point against the
 // newest daily point — points ~23h apart despite ~1h gaps everywhere else in the series.
-function yieldSeriesHistory(points: any[], fallbackPrice: unknown): HistoryPoint[] {
+function yieldSeriesHistory(points: any[], series: HistoryPoint["series"], fallbackPrice: unknown): HistoryPoint[] {
   return points.map((h: any, i: number, arr: any[]) => {
     const prev = arr[i + 1];
     const flow = prev && h.inputTokenBalance != null && prev.inputTokenBalance != null
       ? String(BigInt(h.inputTokenBalance) - BigInt(prev.inputTokenBalance))
       : null;
-    return { block: String(h.blockNumber), timestamp: String(h.timestamp), sharePrice: String(h.pricePerShare ?? fallbackPrice), tvlUsd: s(h.totalValueLockedUSD), netFlowAssets: flow };
+    return { block: String(h.blockNumber), timestamp: String(h.timestamp), sharePrice: String(h.pricePerShare ?? fallbackPrice), tvlUsd: s(h.totalValueLockedUSD), netFlowAssets: flow, series };
   });
 }
 
@@ -45,8 +45,8 @@ export function mapYieldVaults(d: Deployment, data: any, headTs: number): Unifie
   const src = source(d, data._meta, headTs);
   return (data.vaults ?? []).map((v: any): UnifiedVault => {
     const history: HistoryPoint[] = [
-      ...yieldSeriesHistory(v.hourlySnapshots ?? [], v.pricePerShare),
-      ...yieldSeriesHistory(v.dailySnapshots ?? [], v.pricePerShare),
+      ...yieldSeriesHistory(v.hourlySnapshots ?? [], "hourly", v.pricePerShare),
+      ...yieldSeriesHistory(v.dailySnapshots ?? [], "daily", v.pricePerShare),
     ].sort(byTimestampDesc);
     return {
       id: `${d.chainId}:${String(v.id).toLowerCase()}`, kind: "yield-vault", protocol: d.protocol, chain: d.chain, chainId: d.chainId,
@@ -62,11 +62,11 @@ export function mapYieldVaults(d: Deployment, data: any, headTs: number): Unifie
 // netFlowAssets stands alone. Still built per series (not from a pre-merged array) for
 // symmetry with yieldSeriesHistory and because the merge+sort below is what actually
 // keeps the combined history newest-first, not the per-point computation.
-function lendingSeriesHistory(points: any[], fallbackPrice: unknown): HistoryPoint[] {
+function lendingSeriesHistory(points: any[], series: HistoryPoint["series"], fallbackPrice: unknown): HistoryPoint[] {
   return points.map((h: any) => {
     const dep = Number(h.hourlyDepositUSD ?? h.dailyDepositUSD ?? 0);
     const wd = Number(h.hourlyWithdrawUSD ?? h.dailyWithdrawUSD ?? 0);
-    return { block: String(h.blockNumber), timestamp: String(h.timestamp), sharePrice: String(h.exchangeRate ?? fallbackPrice ?? "1"), tvlUsd: s(h.totalValueLockedUSD), netFlowAssets: (dep - wd).toFixed(2) };
+    return { block: String(h.blockNumber), timestamp: String(h.timestamp), sharePrice: String(h.exchangeRate ?? fallbackPrice ?? "1"), tvlUsd: s(h.totalValueLockedUSD), netFlowAssets: (dep - wd).toFixed(2), series };
   });
 }
 
@@ -74,8 +74,8 @@ export function mapLendingMarkets(d: Deployment, data: any, headTs: number): Uni
   const src = source(d, data._meta, headTs);
   return (data.markets ?? []).map((m: any): UnifiedVault => {
     const history: HistoryPoint[] = [
-      ...lendingSeriesHistory(m.hourlySnapshots ?? [], m.exchangeRate),
-      ...lendingSeriesHistory(m.dailySnapshots ?? [], m.exchangeRate),
+      ...lendingSeriesHistory(m.hourlySnapshots ?? [], "hourly", m.exchangeRate),
+      ...lendingSeriesHistory(m.dailySnapshots ?? [], "daily", m.exchangeRate),
     ].sort(byTimestampDesc);
     // inputTokenBalance is set to totalDepositBalanceUSD (both USD) so the tvl-outflow
     // ratio computed by risk.ts stays USD/USD instead of mixing atomic units with USD.

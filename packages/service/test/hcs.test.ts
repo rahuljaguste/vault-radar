@@ -2,7 +2,7 @@ import { expect, test } from "bun:test";
 import type { Client } from "@hashgraph/sdk";
 import { buildReceipt, canonicalize, deriveSigningKeys, receiptHash } from "@vaultradar/core";
 import { loadConfig } from "../src/config";
-import { HcsQueue, makeHederaSubmit, mirrorLookup } from "../src/hcs";
+import { DONE_MAX, HcsQueue, MAX_CONSECUTIVE_FAILURES, makeHederaSubmit, mirrorLookup } from "../src/hcs";
 
 const keys = deriveSigningKeys("99".repeat(32));
 const r = buildReceipt(
@@ -176,4 +176,113 @@ test("mirrorLookup gives up after 5 pages", async () => {
   const result = await mirrorLookup("0.0.9", "f".repeat(64), fetchImpl);
   expect(result).toBeNull();
   expect(calls.length).toBe(5);
+});
+
+// --- queue health: the confirmed-lookup cap and head-of-queue rotation ---------------
+
+/** A receipt that differs from every other by its price, so `receiptHash` differs too. */
+function receiptN(n: number) {
+  return buildReceipt(
+    {
+      service: { erc8004: [] },
+      request_hash: "a".repeat(64),
+      response_hash: "b".repeat(64),
+      sealed: true,
+      sources: [],
+      price: { amount: String(n), asset: "x", rail: "hedera" },
+      payment: { rail: "hedera", txId: `t${n}` },
+      tier: "scan",
+      hcs: { topicId: "0.0.5" },
+    },
+    keys,
+  );
+}
+
+test("the confirmed-lookup map keeps every entry while under the cap, and never double-counts a resubmit", async () => {
+  // The shipped cap is 10 000; filling it would need 10 002 ML-DSA signatures, so the
+  // constant is asserted directly and the eviction *policy* is driven through the
+  // injectable `doneMax` in the next test.
+  expect(DONE_MAX).toBe(10_000);
+
+  const submit = async () => ({ sequence: "1", consensusTimestamp: "1.000" });
+  const q = new HcsQueue({ submit, topicId: "0.0.5", retryMs: 1, fetchImpl: emptyMirrorPage });
+  const receipts = Array.from({ length: 12 }, (_, i) => receiptN(i));
+  for (const r of receipts) q.enqueue(r);
+  await new Promise(res => setTimeout(res, 200));
+  expect(q.pending()).toBe(0);
+  for (const r of receipts) expect((await q.lookup(receiptHash(r))).sequence).toBe("1");
+
+  // A hash submitted twice must not occupy two of the cap's slots.
+  q.enqueue(receipts[0]);
+  await new Promise(res => setTimeout(res, 50));
+  expect((await q.lookup(receiptHash(receipts[0]))).sequence).toBe("1");
+  expect(q.doneSizeForTests()).toBe(12);
+});
+
+test("the cap evicts the oldest confirmed entry, which then falls back to the mirror node", async () => {
+  const submit = async () => ({ sequence: "7", consensusTimestamp: "7.000" });
+  const q = new HcsQueue({ submit, topicId: "0.0.5", retryMs: 1, fetchImpl: emptyMirrorPage, doneMax: 3 });
+  const receipts = Array.from({ length: 5 }, (_, i) => receiptN(100 + i));
+  for (const r of receipts) q.enqueue(r);
+  await new Promise(res => setTimeout(res, 200));
+
+  expect(q.doneSizeForTests()).toBe(3);
+  // The two oldest were evicted to make room; the three newest are still cached. The map
+  // is a cache, so an evicted hash reads as "sequence unknown" (the mirror-node
+  // fallback), never as an error.
+  expect((await q.lookup(receiptHash(receipts[0]))).sequence).toBeNull();
+  expect((await q.lookup(receiptHash(receipts[1]))).sequence).toBeNull();
+  for (const r of receipts.slice(2)) expect((await q.lookup(receiptHash(r))).sequence).toBe("7");
+});
+
+test("a receipt that fails MAX_CONSECUTIVE_FAILURES submits moves to the back, so the queue keeps draining", async () => {
+  expect(MAX_CONSECUTIVE_FAILURES).toBe(5);
+  const stuck = receiptN(201);
+  const stuckHash = receiptHash(stuck);
+  const good = receiptN(202);
+  const goodHash = receiptHash(good);
+
+  const attempts: string[] = [];
+  const submit = async (message: string) => {
+    const hash = JSON.parse(message).receipt_hash as string;
+    attempts.push(hash);
+    // Fails deterministically forever — the case that used to block every message behind it.
+    if (hash === stuckHash) throw new Error("topic gone");
+    return { sequence: "9", consensusTimestamp: "9.000" };
+  };
+  const q = new HcsQueue({ submit, topicId: "0.0.5", retryMs: 1, fetchImpl: emptyMirrorPage });
+  q.enqueue(stuck);
+  q.enqueue(good);
+  await new Promise(res => setTimeout(res, 300));
+
+  // The good receipt committed despite being queued behind a permanently failing one.
+  expect((await q.lookup(goodHash)).sequence).toBe("9");
+  expect(attempts.slice(0, MAX_CONSECUTIVE_FAILURES)).toEqual(Array(MAX_CONSECUTIVE_FAILURES).fill(stuckHash));
+  expect(attempts[MAX_CONSECUTIVE_FAILURES]).toBe(goodHash);
+
+  const stats = q.stats();
+  expect(stats.rotated).toBeGreaterThanOrEqual(1);
+  expect(stats.submitted).toBe(1);
+  expect(stats.failed).toBeGreaterThanOrEqual(MAX_CONSECUTIVE_FAILURES);
+  // Nothing was dropped: the stuck receipt is still queued and still being retried.
+  expect(q.pending()).toBe(1);
+  expect((await q.lookup(stuckHash)).sequence).toBeNull();
+});
+
+test("a lone failing receipt is retried in place and never counted as rotated", async () => {
+  // With nothing behind it there is no queue to unblock, so rotating would be a no-op —
+  // and reporting one would tell an operator the queue was making progress when it isn't.
+  let calls = 0;
+  const submit = async () => {
+    calls++;
+    if (calls <= MAX_CONSECUTIVE_FAILURES + 2) throw new Error("boom");
+    return { sequence: "5", consensusTimestamp: "5.000" };
+  };
+  const q = new HcsQueue({ submit, topicId: "0.0.5", retryMs: 1, fetchImpl: emptyMirrorPage });
+  const only = receiptN(301);
+  q.enqueue(only);
+  await new Promise(res => setTimeout(res, 300));
+  expect((await q.lookup(receiptHash(only))).sequence).toBe("5");
+  expect(q.stats().rotated).toBe(0);
+  expect(q.stats().submitted).toBe(1);
 });

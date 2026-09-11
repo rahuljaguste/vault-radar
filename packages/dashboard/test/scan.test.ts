@@ -3,11 +3,12 @@ import { mkdtempSync, readFileSync, readdirSync, rmSync, writeFileSync } from "n
 import { createServer } from "node:net";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { MemoryNonceStore, type UnifiedVault } from "@vaultradar/core";
+import { MemoryNonceStore, attachSig, hederaScanPriceAtomic, type UnifiedVault } from "@vaultradar/core";
 import { buildApp, loadConfig, loadKeys, makeScanHandler, type DataProvider, type HandlerDeps } from "@vaultradar/service";
 import { VaultRadarClient, type Policy } from "@vaultradar/agent";
 import { RateLimiter } from "../lib/ratelimit";
-import { MAX_PRICE_USD, defaultPolicyPath, handleScan, redact, toMicroUsd } from "../lib/scan";
+import { MAX_PRICE_USD, chargedMicroUsd, defaultPolicyPath, handleScan, redact, toMicroUsd } from "../lib/scan";
+import { SpendLedger, usdToMicro } from "../lib/spend";
 import type { RunRecord } from "../lib/types";
 
 /**
@@ -52,6 +53,9 @@ function vault(id: string, opts: { history?: { ageSeconds: number; sharePrice: s
       sharePrice: h.sharePrice,
       tvlUsd: null,
       netFlowAssets: null,
+      // Matches what the Substreams reader produces; these fixtures score on share price
+      // only, so no flow is ever read off them.
+      series: "block" as const,
     })),
     sources: [
       {
@@ -120,6 +124,9 @@ const keys = loadKeys(config);
 const app = await buildApp({ config, keys, data, hcs: null, nonces: new MemoryNonceStore(), rails: {} });
 const scanDeps: HandlerDeps = {
   keys, config, data, nonces: new MemoryNonceStore(), rail: "hedera", tier: "scan",
+  // What `mountHederaRail` supplies for this route, so the receipt states the price the
+  // route is actually charged at.
+  price: (count) => ({ amount: hederaScanPriceAtomic(count), asset: config.hedera.usdcToken }),
   getPayer: () => "0.0.42", getTxId: () => "0.0.42@1700000000.000000001",
 };
 app.post("/hedera/v1/scan", makeScanHandler(scanDeps));
@@ -156,7 +163,14 @@ function deps(over: Partial<Deps> = {}, onChainHash: string | null = keys.sig.pu
     runsDir: () => runDir,
     policyPath: () => balancedPolicy,
     limiter: new RateLimiter(),
+    // A fresh ledger per call unless a test shares one on purpose: the default would be
+    // the process-wide singleton, and this file buys well over a dozen scans, so tests
+    // would start refusing each other once the hourly allowance ran out.
+    ledger: new SpendLedger({}),
     now: () => now,
+    // Short, so the one test that drives the timeout path does not wait the production
+    // ten seconds; every other test here answers discovery well inside it.
+    discoveryTimeoutMs: 2_000,
     env: { AGENT_HEDERA_ACCOUNT_ID: "0.0.42", AGENT_HEDERA_KEY: UNUSED_KEY, SERVICE_URL: base },
     ...over,
   };
@@ -463,11 +477,27 @@ test("429 on a second scan inside the window, with a retry-after header, and no 
   expect(runFiles()).toHaveLength(1);
 });
 
-test("the rate limit is per client address, so two callers do not block each other", async () => {
-  const shared = deps({ limiter: new RateLimiter() });
+test("behind a trusted proxy the rate limit is per client address, so two callers do not block each other", async () => {
+  const shared = deps({
+    limiter: new RateLimiter(),
+    env: { AGENT_HEDERA_ACCOUNT_ID: "0.0.42", AGENT_HEDERA_KEY: UNUSED_KEY, SERVICE_URL: base, TRUST_PROXY: "1" },
+  });
   expect((await handleScan(post([OK_VAULT], { "x-forwarded-for": "1.1.1.1" }), shared)).status).toBe(200);
   expect((await handleScan(post([OK_VAULT], { "x-forwarded-for": "2.2.2.2" }), shared)).status).toBe(200);
   expect((await handleScan(post([OK_VAULT], { "x-forwarded-for": "1.1.1.1" }), shared)).status).toBe(429);
+});
+
+test("without TRUST_PROXY a forged x-forwarded-for buys no second window", async () => {
+  // The drain this closes: every distinct header value used to get its own 30-second
+  // window, so a loop that varied the header paid for a scan on every iteration.
+  const shared = deps({ limiter: new RateLimiter() });
+  expect((await handleScan(post([OK_VAULT], { "x-forwarded-for": "1.1.1.1" }), shared)).status).toBe(200);
+  for (const forged of ["2.2.2.2", "3.3.3.3", "4.4.4.4"]) {
+    const res = await handleScan(post([OK_VAULT], { "x-forwarded-for": forged }), shared);
+    expect(res.status).toBe(429);
+    expect((await res.json()).error).toContain("one paid scan per 30 seconds");
+  }
+  expect(runFiles()).toHaveLength(1);
 });
 
 test("a rejected request does not consume the rate-limit window", async () => {
@@ -479,8 +509,88 @@ test("a rejected request does not consume the rate-limit window", async () => {
 test("502 and no payment when the service's on-chain key hash does not match its card", async () => {
   const res = await handleScan(post([OK_VAULT]), deps({}, "0".repeat(64)));
   expect(res.status).toBe(502);
-  expect((await res.json()).error).toContain("on-chain ERC-8004 key hash does not match");
+  expect((await res.json()).error).toContain("does not match its on-chain ERC-8004 registration");
   expect(runFiles()).toHaveLength(0);
+});
+
+// The anchor is the one thing a substituted card cannot choose for itself, so an anchor
+// that could not be *read* leaves the key unverified rather than verified. This route used
+// to proceed on that, and on a card that listed no identity at all — both now refuse, on
+// the agent's own `identityRefusal` rule so the two callers cannot drift apart.
+
+test("502 and no payment when the on-chain anchor cannot be read at all", async () => {
+  const ledger = new SpendLedger({ DASHBOARD_SPEND_CAP_USD: "1.00", DASHBOARD_MAX_SCANS_PER_HOUR: "100" });
+  const res = await handleScan(post([OK_VAULT]), deps({ ledger }, null));
+  expect(res.status).toBe(502);
+  expect((await res.json()).error).toContain("could not be read for any identity the card lists");
+  expect(runFiles()).toHaveLength(0);
+  // Refused before paying, so the reservation taken at step 5 was given back.
+  expect(ledger.snapshot()).toMatchObject({ spentMicroUsd: 0, scansLastHour: 0 });
+});
+
+test("502 and no payment when the service's card lists no ERC-8004 identity", async () => {
+  const ledger = new SpendLedger({ DASHBOARD_SPEND_CAP_USD: "1.00", DASHBOARD_MAX_SCANS_PER_HOUR: "100" });
+  // The real card with its identities stripped and re-signed by the real service key, so
+  // the *only* thing wrong with it is that nothing anchors the key it ships.
+  const unanchored = async () => {
+    const card = (await (await fetch(`${base}/.well-known/agent.json`)).json()) as Record<string, unknown>;
+    const stripped = attachSig({ ...card, erc8004: [] }, keys.sig);
+    return new Response(JSON.stringify(stripped), { headers: { "content-type": "application/json" } });
+  };
+  const res = await handleScan(
+    post([OK_VAULT]),
+    deps({
+      ledger,
+      makeClient: (serviceUrl, hedera) =>
+        new VaultRadarClient({
+          serviceUrl,
+          hedera,
+          readPqHash: async () => keys.sig.pubHash,
+          fetchImpl: unanchored as unknown as typeof fetch,
+          payingFetch: async () => {
+            throw new Error("must not pay a service whose key nothing anchors");
+          },
+        }),
+    }),
+  );
+  expect(res.status).toBe(502);
+  expect((await res.json()).error).toContain("lists no on-chain ERC-8004 identity");
+  expect(runFiles()).toHaveLength(0);
+  expect(ledger.snapshot()).toMatchObject({ spentMicroUsd: 0, scansLastHour: 0 });
+});
+
+test("502 when discovery never answers, and the held reservation is released", async () => {
+  // The reservation is taken before discovery's round trip, so a service that accepts the
+  // connection and then says nothing used to hold it (and the caller's rate-limit slot)
+  // with no upper bound — `fetch` has none of its own.
+  const ledger = new SpendLedger({ DASHBOARD_SPEND_CAP_USD: "0.0015", DASHBOARD_MAX_SCANS_PER_HOUR: "100" });
+  const started = Date.now();
+  const res = await handleScan(
+    post([OK_VAULT]),
+    deps({
+      ledger,
+      discoveryTimeoutMs: 250,
+      makeClient: (serviceUrl, hedera) =>
+        new VaultRadarClient({
+          serviceUrl,
+          hedera,
+          readPqHash: async () => keys.sig.pubHash,
+          // Never resolves, never rejects: the case a race is the only defence against.
+          fetchImpl: (() => new Promise<Response>(() => {})) as unknown as typeof fetch,
+          payingFetch: async () => {
+            throw new Error("must not pay a service that never answered discovery");
+          },
+        }),
+    }),
+  );
+  expect(res.status).toBe(502);
+  expect((await res.json()).error).toContain("did not answer discovery");
+  expect(Date.now() - started).toBeLessThan(5_000);
+  expect(runFiles()).toHaveLength(0);
+  expect(ledger.snapshot()).toMatchObject({ spentMicroUsd: 0, scansLastHour: 0 });
+
+  // And the full allowance is available again to the next caller.
+  expect((await handleScan(post([OK_VAULT]), deps({ ledger }))).status).toBe(200);
 });
 
 test("502 when the service cannot be reached at all", async () => {
@@ -513,6 +623,329 @@ test("502 when the paid scan itself fails, with the key redacted from the messag
   expect(error).toContain("the paid scan failed");
   expect(error).not.toContain(UNUSED_KEY);
   expect(error).toContain("[redacted]");
+});
+
+/* ------------------------------------------------- the run survives a failure */
+
+test("a post-payment failure still writes a run, with the reason as an insufficient-data decision", async () => {
+  // `client.scan` throws both for a refused 402 and for a failure after the transfer was
+  // signed, and the caller cannot tell which. The attempt used to vanish: the 502 returned
+  // before anything was saved, so a purchase that may well have been paid for left no
+  // record at all. It is now recorded in `RunRecord`'s own vocabulary for "paid, nothing
+  // trustworthy came back".
+  const failing = deps({
+    makeClient: (serviceUrl, hedera) =>
+      new VaultRadarClient({
+        serviceUrl,
+        hedera,
+        readPqHash: async () => keys.sig.pubHash,
+        payingFetch: async () => {
+          throw new Error(`settlement confirmed but the reply never arrived, key ${UNUSED_KEY}`);
+        },
+      }),
+  });
+  const res = await handleScan(post([OK_VAULT, WATCH_VAULT]), failing);
+  expect(res.status).toBe(502);
+  const body = await res.json();
+  expect(body.runId).toMatch(/^web-[0-9a-f]{12}$/);
+
+  const runs = runFiles();
+  expect(runs).toHaveLength(1);
+  const run = runs[0];
+  expect(run.id).toBe(body.runId);
+  expect(run.serviceUrl).toBe(base);
+  expect(run.policy).toEqual(BALANCED);
+  expect(run.discovery.cardSignatureValid).toBe(true);
+  // No receipt came back, so there is no request to record — which is itself the signal.
+  expect(run.requests).toEqual([]);
+  // One decision per vault asked about, carrying the reason and a null payment reference.
+  expect(run.decisions.map((d) => d.vaultId).sort()).toEqual([OK_VAULT, WATCH_VAULT].sort());
+  for (const d of run.decisions) {
+    expect(d.action).toBe("insufficient data");
+    expect(d.reason).toContain("the paid scan failed");
+    expect(d.citations).toEqual({ block: "", source: "", txId: null, receiptHash: "" });
+  }
+
+  // And the key is redacted out of the persisted reason, not just out of the response.
+  const raw = readdirSync(runDir).map((f) => readFileSync(join(runDir, f), "utf8")).join("");
+  expect(raw).not.toContain(UNUSED_KEY);
+  expect(raw).toContain("[redacted]");
+});
+
+test("a receipt that does not verify yields no actionable decisions, only the failed run", async () => {
+  // The run file is the operator's record, and `/runs/[id]` renders a saved `withdraw` the
+  // same way whether or not the receipt behind it verified — `RunRecord` has no field that
+  // could say otherwise. So a purchase whose ML-DSA signature fails must not produce
+  // decisions at all, which means checking validity before `decide` runs, not after.
+  const ledger = new SpendLedger({ DASHBOARD_SPEND_CAP_USD: "1.00", DASHBOARD_MAX_SCANS_PER_HOUR: "100" });
+  const res = await handleScan(
+    post([ALERT_VAULT, WATCH_VAULT]),
+    deps({
+      ledger,
+      makeClient: (serviceUrl, hedera) =>
+        new VaultRadarClient({
+          serviceUrl,
+          hedera,
+          readPqHash: async () => keys.sig.pubHash,
+          // A real service reply with one byte of its receipt signature flipped: everything
+          // else about the purchase is genuine, so the only thing wrong is that the receipt
+          // is not a receipt this service signed.
+          payingFetch: async (url, init) => {
+            const real = await fetch(url, init);
+            const body = (await real.json()) as { receipt: { sig: { value: string } } };
+            const v = body.receipt.sig.value;
+            body.receipt.sig.value = (v[0] === "A" ? "B" : "A") + v.slice(1);
+            return new Response(JSON.stringify(body), { status: 200, headers: { "content-type": "application/json" } });
+          },
+        }),
+    }),
+  );
+
+  expect(res.status).toBe(502);
+  const body = await res.json();
+  expect(body.error).toContain("receipt did not verify");
+  expect(body.runId).toMatch(/^web-[0-9a-f]{12}$/);
+
+  const runs = runFiles();
+  expect(runs).toHaveLength(1);
+  const run = runs[0];
+  expect(run.id).toBe(body.runId);
+  // No verdicts, no prices, no actions derived from data nothing vouches for.
+  expect(run.requests).toEqual([]);
+  for (const d of run.decisions) {
+    expect(d.action).toBe("insufficient data");
+    expect(d.reason).toContain("receipt did not verify");
+  }
+  expect(run.decisions.map((d) => d.action)).not.toContain("hold");
+  expect(run.decisions.map((d) => d.action)).not.toContain("withdraw");
+  expect(run.decisions.map((d) => d.action)).not.toContain("rebalance");
+  // The evidence that the purchase happened is kept: the payment reference and the hash the
+  // receipt would be looked up by.
+  expect(run.decisions[0].citations.txId).toBe("0.0.42@1700000000.000000001");
+  expect(run.decisions[0].citations.receiptHash).toMatch(/^[0-9a-f]{64}$/);
+  // The money moved, so the allowance is consumed regardless.
+  expect(ledger.snapshot().scansLastHour).toBe(1);
+});
+
+test("a failure after payment is charged to the ledger, so a rail that fails while charging is still capped", async () => {
+  const ledger = new SpendLedger({ DASHBOARD_MAX_SCANS_PER_HOUR: "100" });
+  const failing = deps({
+    ledger,
+    makeClient: (serviceUrl, hedera) =>
+      new VaultRadarClient({
+        serviceUrl,
+        hedera,
+        readPqHash: async () => keys.sig.pubHash,
+        payingFetch: async () => {
+          throw new Error("paid, then the upstream died");
+        },
+      }),
+  });
+  expect((await handleScan(post([OK_VAULT]), failing)).status).toBe(502);
+  // The quoted amount, since no receipt price is available for a purchase that failed.
+  expect(ledger.snapshot().spentMicroUsd).toBe(usdToMicro("0.0015"));
+  expect(ledger.snapshot().scansLastHour).toBe(1);
+});
+
+/* ------------------------------------------------------- aggregate spend caps */
+
+test("429 spend_cap_24h when the purchase would take the rolling total past the cap, before paying", async () => {
+  const ledger = new SpendLedger({ DASHBOARD_SPEND_CAP_USD: "0.002", DASHBOARD_MAX_SCANS_PER_HOUR: "100" });
+  const shared = deps({ ledger });
+  expect((await handleScan(post([OK_VAULT]), shared)).status).toBe(200); // 0.0015 spent
+
+  const res = await handleScan(post([OK_VAULT]), deps({ ledger }));
+  expect(res.status).toBe(429);
+  const body = await res.json();
+  expect(body.error).toBe("spend_cap_24h");
+  expect(body.spentUsd).toBe("0.0015");
+  expect(body.capUsd).toBe("0.002");
+  // Nothing was bought, so no second run exists.
+  expect(runFiles()).toHaveLength(1);
+});
+
+test("429 scan_rate_1h once the global hourly allowance is used up, whatever the client key is", async () => {
+  // The drain the per-client limiter cannot stop: a fresh limiter per request (the same
+  // effect as a forged client key) gets past it every time, so the aggregate count is the
+  // only thing standing between a loop and the operator's wallet.
+  const ledger = new SpendLedger({ DASHBOARD_SPEND_CAP_USD: "100.00", DASHBOARD_MAX_SCANS_PER_HOUR: "2" });
+  expect((await handleScan(post([OK_VAULT]), deps({ ledger }))).status).toBe(200);
+  expect((await handleScan(post([OK_VAULT]), deps({ ledger }))).status).toBe(200);
+
+  const res = await handleScan(post([OK_VAULT]), deps({ ledger }));
+  expect(res.status).toBe(429);
+  expect(await res.json()).toEqual({ error: "scan_rate_1h", reason: "scan_rate_1h", scansLastHour: 2, maxScansPerHour: 2 });
+  expect(runFiles()).toHaveLength(2);
+});
+
+test("the ledger records at least the quote, so a payee cannot charge the cap nothing", async () => {
+  // A real purchase: the receipt's price and the quote agree, so either rule gives 0.002.
+  const ledger = new SpendLedger({ DASHBOARD_SPEND_CAP_USD: "100.00", DASHBOARD_MAX_SCANS_PER_HOUR: "100" });
+  const res = await handleScan(post([OK_VAULT, WATCH_VAULT]), deps({ ledger }));
+  expect(res.status).toBe(200);
+  expect((await res.json()).priceUsd).toBe("0.002");
+  expect(ledger.snapshot().spentMicroUsd).toBe(usdToMicro("0.002"));
+
+  // The figure in the receipt belongs to the payee, and this is a spending cap. Taking it on
+  // trust let a service answer every purchase with `price: "0"` and consume no allowance at
+  // all while still being paid the quote — switching the cap off. `chargedMicroUsd` is the
+  // rule, asserted directly because the in-process service always prices honestly.
+  expect(chargedMicroUsd(2000, "0")).toBe(2000);
+  expect(chargedMicroUsd(2000, "0.000001")).toBe(2000);
+  expect(chargedMicroUsd(2000, "0.002")).toBe(2000);
+  // Above the quote is believed: that is the service saying it charged more.
+  expect(chargedMicroUsd(2000, "0.05")).toBe(50_000);
+  // No price, or one that is not a number, falls back to the quote rather than to zero.
+  expect(chargedMicroUsd(2000, null)).toBe(2000);
+  expect(chargedMicroUsd(2000, "")).toBe(2000);
+  expect(chargedMicroUsd(2000, "free")).toBe(2000);
+  expect(chargedMicroUsd(2000, "NaN")).toBe(2000);
+});
+
+test("a service that under-reports its price still consumes the quoted allowance", async () => {
+  // End to end through the route with a service that signs a receipt claiming it charged
+  // nothing. The ledger must still count the quote, which is what stops an unbounded number
+  // of such purchases.
+  const ledger = new SpendLedger({ DASHBOARD_SPEND_CAP_USD: "0.003", DASHBOARD_MAX_SCANS_PER_HOUR: "100" });
+  const zeroPriced = () =>
+    deps({
+      ledger,
+      makeClient: (serviceUrl, hedera) => {
+        const client = new VaultRadarClient({ serviceUrl, hedera, payingFetch: fetch, readPqHash: async () => keys.sig.pubHash });
+        const realScan = client.scan.bind(client);
+        // Stands in for a service whose signed receipt understates the price; the agent
+        // itself flags that as `receiptValid: false`, but only after the money moved, which
+        // is exactly why the ledger must not trust the lower figure.
+        client.scan = async (...args: Parameters<typeof realScan>) => ({ ...(await realScan(...args)), priceUsd: "0" });
+        return client;
+      },
+    });
+
+  // Two one-vault scans at 0.0015 each fill a 0.003 cap.
+  expect((await handleScan(post([OK_VAULT]), zeroPriced())).status).toBe(200);
+  expect(ledger.snapshot().spentMicroUsd).toBe(usdToMicro("0.0015"));
+  expect((await handleScan(post([OK_VAULT]), zeroPriced())).status).toBe(200);
+  expect(ledger.snapshot().spentMicroUsd).toBe(usdToMicro("0.003"));
+
+  // The third is refused, which it would not be if "0" had been taken at face value.
+  const res = await handleScan(post([OK_VAULT]), zeroPriced());
+  expect(res.status).toBe(429);
+  expect((await res.json()).error).toBe("spend_cap_24h");
+});
+
+test("two concurrent requests against a cap that admits one: exactly one pays", async () => {
+  // The race the reservation closes. Before it, the route checked the cap, then awaited a
+  // quote, a discovery round trip and a payment, and only then recorded — so both requests
+  // saw an empty ledger, both passed, and both paid. Fired together with no await in
+  // between, so they genuinely interleave inside the route.
+  const ledger = new SpendLedger({ DASHBOARD_SPEND_CAP_USD: "0.0015", DASHBOARD_MAX_SCANS_PER_HOUR: "100" });
+  const [a, b] = await Promise.all([
+    handleScan(post([OK_VAULT]), deps({ ledger })),
+    handleScan(post([OK_VAULT]), deps({ ledger })),
+  ]);
+
+  const statuses = [a.status, b.status].sort();
+  expect(statuses).toEqual([200, 429]);
+  const refused = a.status === 429 ? a : b;
+  expect((await refused.json()).error).toBe("spend_cap_24h");
+  // One purchase, one run file, one scan's worth of allowance consumed.
+  expect(runFiles()).toHaveLength(1);
+  expect(ledger.snapshot()).toMatchObject({ spentMicroUsd: usdToMicro("0.0015"), scansLastHour: 1 });
+});
+
+test("a burst of ten against a two-scan allowance pays exactly twice", async () => {
+  const ledger = new SpendLedger({ DASHBOARD_SPEND_CAP_USD: "100.00", DASHBOARD_MAX_SCANS_PER_HOUR: "2" });
+  const results = await Promise.all(Array.from({ length: 10 }, () => handleScan(post([OK_VAULT]), deps({ ledger }))));
+  expect(results.filter((r) => r.status === 200)).toHaveLength(2);
+  expect(results.filter((r) => r.status === 429)).toHaveLength(8);
+  expect(ledger.snapshot().scansLastHour).toBe(2);
+  expect(runFiles()).toHaveLength(2);
+});
+
+test("a reservation is released when the purchase is refused after it, so a failed discovery costs nothing", async () => {
+  // Reserving before paying means the allowance is held across the discovery round trip;
+  // giving it back on a refusal is what keeps an unreachable service from eating the budget.
+  const ledger = new SpendLedger({ DASHBOARD_SPEND_CAP_USD: "0.0015", DASHBOARD_MAX_SCANS_PER_HOUR: "100" });
+  const unreachable = `http://127.0.0.1:${await freePort()}`;
+  const res = await handleScan(
+    post([OK_VAULT]),
+    deps({ ledger, env: { AGENT_HEDERA_ACCOUNT_ID: "0.0.42", AGENT_HEDERA_KEY: UNUSED_KEY, SERVICE_URL: unreachable } }),
+  );
+  expect(res.status).toBe(502);
+  expect(ledger.snapshot()).toMatchObject({ spentMicroUsd: 0, scansLastHour: 0 });
+
+  // And the next request, against the real service, is allowed on the full allowance.
+  expect((await handleScan(post([OK_VAULT]), deps({ ledger }))).status).toBe(200);
+});
+
+test("a reservation is released when the rate limiter refuses, and when the card cannot be verified", async () => {
+  const ledger = new SpendLedger({ DASHBOARD_SPEND_CAP_USD: "1.00", DASHBOARD_MAX_SCANS_PER_HOUR: "100" });
+  const shared = deps({ ledger, limiter: new RateLimiter() });
+  expect((await handleScan(post([OK_VAULT]), shared)).status).toBe(200);
+  expect(ledger.snapshot().scansLastHour).toBe(1);
+
+  // Rate-limited: the reservation taken just before the limiter check is given back.
+  expect((await handleScan(post([OK_VAULT]), shared)).status).toBe(429);
+  expect(ledger.snapshot().scansLastHour).toBe(1);
+
+  // A substituted on-chain key hash: refused before paying, so no allowance is consumed.
+  expect((await handleScan(post([OK_VAULT]), deps({ ledger }, "0".repeat(64)))).status).toBe(502);
+  expect(ledger.snapshot().scansLastHour).toBe(1);
+});
+
+test("a refusal before payment does not touch the ledger", async () => {
+  const ledger = new SpendLedger({});
+  const broke = policyFile("broke3", { ...BALANCED, budget: { usdc_hedera: "0.001", usdc_arc: "1.00" } });
+  expect((await handleScan(post([OK_VAULT, WATCH_VAULT]), deps({ ledger, policyPath: () => broke }))).status).toBe(400);
+  expect((await handleScan(post(["garbage"]), deps({ ledger }))).status).toBe(400);
+  expect(ledger.snapshot()).toMatchObject({ spentMicroUsd: 0, scansLastHour: 0 });
+});
+
+/* --------------------------------------------------------- the access token */
+
+test("with SCAN_ACCESS_TOKEN set, a request without a matching bearer token is 401 and spends nothing", async () => {
+  const ledger = new SpendLedger({});
+  const gated = { AGENT_HEDERA_ACCOUNT_ID: "0.0.42", AGENT_HEDERA_KEY: UNUSED_KEY, SERVICE_URL: base, SCAN_ACCESS_TOKEN: "s3cret-token" };
+  for (const headers of [
+    {},
+    { authorization: "" },
+    { authorization: "Bearer" },
+    { authorization: "Bearer wrong-token!" },
+    { authorization: "Bearer s3cret-toke" },
+    { authorization: "Bearer s3cret-tokenX" },
+    { authorization: "s3cret-token" },
+    { authorization: "Basic s3cret-token" },
+  ] as Record<string, string>[]) {
+    const res = await handleScan(post([OK_VAULT], headers), deps({ ledger, env: gated }));
+    expect(res.status).toBe(401);
+    expect(await res.json()).toEqual({ error: "unauthorized" });
+    expect(res.headers.get("www-authenticate")).toContain("Bearer");
+  }
+  expect(ledger.snapshot().scansLastHour).toBe(0);
+  expect(runFiles()).toHaveLength(0);
+});
+
+test("the right bearer token is accepted, in either header casing, and the token never appears in a response", async () => {
+  const gated = { AGENT_HEDERA_ACCOUNT_ID: "0.0.42", AGENT_HEDERA_KEY: UNUSED_KEY, SERVICE_URL: base, SCAN_ACCESS_TOKEN: "s3cret-token" };
+  const ok = await handleScan(post([OK_VAULT], { authorization: "Bearer s3cret-token" }), deps({ env: gated }));
+  expect(ok.status).toBe(200);
+  expect(JSON.stringify(await ok.json())).not.toContain("s3cret-token");
+
+  // `bearer` lower-case is equally valid per RFC 7235's case-insensitive scheme.
+  const lower = await handleScan(post([OK_VAULT], { authorization: "bearer  s3cret-token " }), deps({ env: gated }));
+  expect(lower.status).toBe(200);
+});
+
+test("with SCAN_ACCESS_TOKEN unset or blank the route stays open, as the spec's public flow requires", async () => {
+  for (const SCAN_ACCESS_TOKEN of [undefined, "", "   "]) {
+    const env = { AGENT_HEDERA_ACCOUNT_ID: "0.0.42", AGENT_HEDERA_KEY: UNUSED_KEY, SERVICE_URL: base, SCAN_ACCESS_TOKEN };
+    expect((await handleScan(post([OK_VAULT]), deps({ env }))).status).toBe(200);
+  }
+});
+
+test("the access check runs before the keys check, so an unauthenticated caller learns nothing about this deploy", async () => {
+  const res = await handleScan(post([OK_VAULT]), deps({ env: { SCAN_ACCESS_TOKEN: "tok" } }));
+  expect(res.status).toBe(401);
 });
 
 test("a client that cannot be constructed is a 503, not a crash", async () => {

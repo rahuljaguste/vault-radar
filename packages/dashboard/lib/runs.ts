@@ -54,9 +54,21 @@ async function readDemoRun(): Promise<RunRecord | null> {
   }
 }
 
-/** Real run filenames, sorted, or `[]` when demo mode is forced or the directory is missing/empty. */
+/**
+ * Real run filenames, sorted, or `[]` when the directory is missing or empty.
+ *
+ * `DEMO=1` used to make this return `[]` unconditionally, which meant a deployment with
+ * that variable set showed the committed `public/demo-run.json` *instead of* its own real
+ * runs — so an operator who set it for the hosted demo and then made a real paid scan from
+ * `/portfolio` was shown fixture data in place of the purchase they had just paid for, with
+ * nothing on the page saying so. Real runs now always win; the demo run is the fallback
+ * when there are none, which it already was with `DEMO` unset.
+ *
+ * `DEMO=1` is therefore no longer a switch that changes what is served — it only states the
+ * intent of a hosted demo deployment, where the runs directory is empty and the fallback is
+ * what gets shown anyway.
+ */
 async function listRunFiles(): Promise<string[]> {
-  if (process.env.DEMO === "1") return [];
   try {
     const entries = await fs.readdir(runsDir());
     return entries.filter((f) => f.endsWith(".json")).sort();

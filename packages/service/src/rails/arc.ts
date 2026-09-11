@@ -7,7 +7,9 @@ import {
   checkSealedRequestPrePayment,
   clampCount,
   isSealed,
+  knownProtocol,
   openSealedRequest,
+  validScanVaults,
   type Receipt,
   type ScanRequest,
   type SealedRequest,
@@ -117,9 +119,83 @@ function preValidateSealed(tier: "scan" | "table", deps: Pick<HandlerDeps, "keys
   };
 }
 
+/**
+ * The scan tier's whole pre-payment body rule: the vault list must be a valid scan
+ * request (`bad_vaults`), and — for a clear body, whose list is the payer's own claim —
+ * its length must equal the `X-VR-Count` the route is priced against
+ * (`count_mismatch`). Sealed bodies are read off the plaintext `preValidateSealed`
+ * already opened onto `res.locals.opened`, never decrypted twice.
+ *
+ * Both rejections must happen ahead of `gateway.require(price)`: Circle settles before
+ * any handler runs (see `validateBucket`'s trace), and the handler's own `bad_vaults`
+ * and `count_mismatch` checks — which this mirrors exactly, via the same shared
+ * `validScanVaults` predicate — would land only after the money moved. Before this
+ * existed, a non-array `vaults` (clear or sealed) slipped past the count check's
+ * `Array.isArray` guard and bought a paid 422; a valid-but-mismatched clear list did
+ * the same for the underpriced-work reason `validateBucket`'s sibling comment on the
+ * handler side documents.
+ *
+ * A `table` request has no count and no vault list; this middleware passes it through
+ * untouched.
+ */
+function preValidateScanBody(tier: "scan" | "table") {
+  return (req: Request, res: Response, next: NextFunction): void => {
+    if (tier !== "scan") {
+      next();
+      return;
+    }
+    const opened = res.locals.opened as SealedRequest<ScanRequest> | undefined;
+    const vaults = (opened ? opened.request : req.body as { vaults?: unknown })?.vaults;
+    if (!validScanVaults(vaults)) {
+      res.status(422).json(errBody("bad_vaults"));
+      return;
+    }
+    // Sealed requests already had their count checked against the same header inside
+    // `checkSealedRequestPrePayment`; only a clear body still needs it here.
+    if (!opened && vaults.length !== clampCount(req.header("x-vr-count"))) {
+      res.status(422).json(errBody("count_mismatch"));
+      return;
+    }
+    next();
+  };
+}
+
+/**
+ * The table tier's pre-payment rule: a body whose `protocol`/`chainId` are not both
+ * strings is `bad_table_request`, and a well-formed pair nobody indexes is
+ * `unknown_protocol` — both ahead of `gateway.require`, since Circle settles before the
+ * handler's own equivalent checks could run (see `validateBucket`'s trace for why that
+ * ordering is load-bearing).
+ *
+ * Reads a sealed request off the plaintext `preValidateSealed` already opened onto
+ * `res.locals.opened` rather than decrypting twice. Before this rejected non-string
+ * fields they were passed through to the handler's `bad_table_request` — a paid 422 on
+ * a rail with no refund path; now the only table bodies that still reach payment are
+ * ones this rail can actually answer.
+ */
+function preValidateTable(tier: "scan" | "table") {
+  return (req: Request, res: Response, next: NextFunction): void => {
+    if (tier !== "table") {
+      next();
+      return;
+    }
+    const opened = res.locals.opened as SealedRequest<TableRequest> | undefined;
+    const body = (opened ? opened.request : req.body) as { protocol?: unknown; chainId?: unknown } | null;
+    if (typeof body?.protocol !== "string" || typeof body.chainId !== "string") {
+      res.status(422).json(errBody("bad_table_request"));
+      return;
+    }
+    if (!knownProtocol(body.protocol, body.chainId)) {
+      res.status(422).json(errBody("unknown_protocol"));
+      return;
+    }
+    next();
+  };
+}
+
 export function mountArcRail(
   app: Express,
-  deps: Omit<HandlerDeps, "rail" | "tier" | "getPayer" | "getTxId"> & {
+  deps: Omit<HandlerDeps, "rail" | "tier" | "price" | "getPayer" | "getTxId"> & {
     /** Fires once settlement completes for a request this rail already answered 200 for
      * (same contract as `rails/hedera.ts`'s `onSettled`). */
     onSettled?: (receipt: Receipt, txId: string) => void;
@@ -154,12 +230,14 @@ export function mountArcRail(
    * `res.locals.receipt` are simultaneously available with nothing async in between to
    * correlate across.
    */
-  const mountTier = (path: string, tier: "scan" | "table", price: string, pre: RequestHandler[]) => {
-    const handler = makeScanHandler({ ...deps, rail: "arc", tier, getPayer: arcPayerFromRequest, getTxId: arcTxIdFromRequest });
+  const mountTier = (path: string, tier: "scan" | "table", price: string, receiptPrice: HandlerDeps["price"], pre: RequestHandler[]) => {
+    const handler = makeScanHandler({ ...deps, rail: "arc", tier, price: receiptPrice, getPayer: arcPayerFromRequest, getTxId: arcTxIdFromRequest });
     app.post(
       path,
       ...pre,
       preValidateSealed(tier, deps),
+      preValidateScanBody(tier),
+      preValidateTable(tier),
       gateway.require(price),
       asyncHandler(async (req: Request, res: Response) => {
         // `req.payment` is always populated here: reaching this wrapper at all means
@@ -193,8 +271,15 @@ export function mountArcRail(
     );
   };
 
+  // Two prices per mount, and they are not duplicates of each other: `price` is the string
+  // Circle's middleware charges (`$`-prefixed USD), `receiptPrice` is what the signed
+  // receipt states for a given vault count. On this rail they agree on a USD decimal and
+  // the asset is simply "USDC", which is what the receipt said before this was threaded
+  // through — identical values, now stated by the mount that knows them.
   for (const b of ["s", "m", "l"] as const) {
-    mountTier(`/arc/v1/scan/${b}`, "scan", `$${ARC_BUCKET_PRICE[b]}`, [validateBucket(b)]);
+    mountTier(`/arc/v1/scan/${b}`, "scan", `$${ARC_BUCKET_PRICE[b]}`, count => ({ amount: ARC_BUCKET_PRICE[arcBucket(count)], asset: "USDC" }), [
+      validateBucket(b),
+    ]);
   }
-  mountTier("/arc/v1/table", "table", `$${TABLE_PRICE_USD}`, []);
+  mountTier("/arc/v1/table", "table", `$${TABLE_PRICE_USD}`, () => ({ amount: TABLE_PRICE_USD, asset: "USDC" }), []);
 }

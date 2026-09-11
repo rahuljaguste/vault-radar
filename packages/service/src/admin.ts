@@ -9,6 +9,21 @@ import type { readPqHash as ReadPqHashFn } from "./erc8004";
 import { errBody } from "./util/http";
 import { asyncHandler } from "./util/async";
 
+/**
+ * Compares a presented token against the configured one without leaking where they first
+ * differ. `!==` on strings returns as soon as it finds a mismatching character, so the time
+ * it takes is a measure of how many leading characters were right — enough, over enough
+ * requests, to recover a token one character at a time. Same shape as the dashboard's
+ * `SCAN_ACCESS_TOKEN` check (`lib/scan.ts`): the length check is not itself constant-time
+ * and does not need to be, since a token's length is not secret.
+ */
+function tokenMatches(presented: string, expected: string): boolean {
+  if (presented.length !== expected.length) return false;
+  let diff = 0;
+  for (let i = 0; i < expected.length; i++) diff |= presented.charCodeAt(i) ^ expected.charCodeAt(i);
+  return diff === 0;
+}
+
 export type AdminDeps = {
   config: Config;
   metrics: Metrics;
@@ -44,7 +59,7 @@ export function mountAdmin(app: Express, deps: AdminDeps): void {
       }
       const auth = req.header("authorization") ?? "";
       const token = auth.startsWith("Bearer ") ? auth.slice(7) : null;
-      if (!token || token !== deps.config.adminToken) {
+      if (!token || !tokenMatches(token, deps.config.adminToken)) {
         res.status(401).json(errBody("unauthorized"));
         return;
       }

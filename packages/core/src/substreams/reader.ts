@@ -24,12 +24,33 @@ export function makePgQuery(databaseUrl: string): SqlQuery {
 // regex guard is what makes that interpolation safe against injection.
 // A missing table (chain not yet indexed) or an empty one both surface as `null`, not a
 // thrown error, so callers don't need to special-case "not deployed yet".
+//
+// Everything else that can fail here — credentials, connection refused, a pool with no
+// free clients, a statement timeout — also has to surface as `null`, because the caller
+// degrades to `freshness: "unavailable"` rather than failing the request. But returning
+// null *silently* made a database outage indistinguishable from "this chain is not indexed
+// yet", which is the difference between paging an operator and doing nothing. So anything
+// that is not Postgres `42P01` (undefined table) is logged once. Only the error's own code
+// and message go to the log, never the query text and never the connection string.
+const PG_UNDEFINED_TABLE = "42P01";
+
+/**
+ * Drops anything URL-shaped out of a message before it is logged. A driver that echoes its
+ * own DSN into an error text would otherwise put `postgres://user:password@host/db` in the
+ * log, which is the one thing this must never do — and whether any given driver does that is
+ * not something this function should have to know.
+ */
+const withoutUrls = (s: string): string => s.replace(/\b[a-z][a-z0-9+.-]*:\/\/\S*/gi, "[redacted-url]");
+
 export async function readSinkCursorBlock(q: SqlQuery, chainId: string): Promise<{ block: string } | null> {
   if (!/^\d+$/.test(chainId)) throw new Error(`readSinkCursorBlock: chainId must be numeric, got ${JSON.stringify(chainId)}`);
   let rows: any[];
   try {
     ({ rows } = await q(`SELECT block_num FROM cursors_${chainId} ORDER BY block_num DESC LIMIT 1`, []));
-  } catch {
+  } catch (e) {
+    if ((e as { code?: unknown })?.code !== PG_UNDEFINED_TABLE) {
+      console.warn(`substreams cursor read failed for chain ${chainId}: ${withoutUrls(e instanceof Error ? e.message : String(e))}`);
+    }
     return null;
   }
   return rows[0] ? { block: String(rows[0].block_num) } : null;
@@ -58,7 +79,10 @@ export async function readErc4626Vaults(q: SqlQuery, chainId: string, vaults: st
       `SELECT block, timestamp, share_price, net_flow_assets, total_assets FROM vault_metrics WHERE chain_id=$1 AND vault=$2 AND timestamp >= $3 ORDER BY block DESC LIMIT 500`,
       [chainId, r.vault, String(head.ts - 8 * 86400)],
     );
-    const history: HistoryPoint[] = h.rows.map((x: any) => ({ block: String(x.block), timestamp: String(x.timestamp), sharePrice: String(x.share_price), tvlUsd: null, netFlowAssets: x.net_flow_assets == null ? null : String(x.net_flow_assets) }));
+    // `series: "block"` — the sink writes one row per block it observed an event in, and
+    // each row's `net_flow_assets` is that block's own movement, so these telescope cleanly
+    // over any window with no second series mixed in.
+    const history: HistoryPoint[] = h.rows.map((x: any) => ({ block: String(x.block), timestamp: String(x.timestamp), sharePrice: String(x.share_price), tvlUsd: null, netFlowAssets: x.net_flow_assets == null ? null : String(x.net_flow_assets), series: "block" }));
     out.push({
       id: `${chainId}:${String(r.vault).toLowerCase()}`, kind: "erc4626", protocol: "erc4626", chain: chainId === "1" ? "ethereum" : chainId === "8453" ? "base" : chainId, chainId,
       asset: r.asset_symbol ? { symbol: r.asset_symbol, decimals: Number(r.asset_decimals) } : null,

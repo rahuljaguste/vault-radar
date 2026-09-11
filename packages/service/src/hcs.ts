@@ -28,22 +28,48 @@ export interface HcsSink {
   lookup(h: string): Promise<LookupResult>;
   /** Counters for the admin metrics endpoint (spec §13.1); see `HcsQueue.stats()`. Part
    * of the interface (not just the concrete class) so `admin.ts`/`metrics.ts` can type
-   * against `HcsSink` — the same reasoning as `enqueue`/`lookup` above. */
-  stats(): { pending: number; submitted: number; failed: number; lastSequence: string | null };
+   * against `HcsSink` — the same reasoning as `enqueue`/`lookup` above. `rotated` is
+   * optional: `metrics.ts` reads only the four §13.1 fields, so a fake sink (or any
+   * future sink without a retry queue) need not supply it. */
+  stats(): { pending: number; submitted: number; failed: number; lastSequence: string | null; rotated?: number };
 }
 
 const defaultFetch: FetchLike = url => fetch(url);
+
+/**
+ * How many confirmed commitments `HcsQueue` keeps in memory for the `/v1/receipts/:hash`
+ * fast path. The map is a cache, not a store of record — `mirrorLookup` answers for
+ * anything not in it — but it was unbounded, so a long-lived process accumulated one
+ * `LookupResult` per receipt it ever committed and grew without limit. At this size the
+ * map holds roughly a megabyte; the oldest entry is evicted to make room, which is the
+ * right one to lose because it is also the one most likely to have aged past the
+ * in-memory window a caller would poll within.
+ */
+export const DONE_MAX = 10_000;
+
+/**
+ * Consecutive failed submits of the same head-of-queue receipt before it is moved to the
+ * back. `drain` used to retry the head forever, so one permanently unsubmittable message
+ * — a receipt whose topic was deleted, or any message HCS rejects deterministically —
+ * blocked every later commitment behind it indefinitely. Rotating means the queue keeps
+ * making progress on messages that *can* be submitted; nothing is dropped, the rotated
+ * receipt is retried again once the queue comes back round to it.
+ */
+export const MAX_CONSECUTIVE_FAILURES = 5;
 
 /**
  * Background commitment queue for HCS receipt anchoring (spec §5.5). `enqueue` is
  * synchronous and returns immediately — it only pushes onto an in-memory list and
  * kicks off (or lets an already-running) drain loop — so a slow or failing HCS submit
  * never blocks the HTTP response for the paid request the receipt belongs to. `drain`
- * retries the same head-of-queue message forever on failure (fixed delay) rather than
- * dropping it, since a receipt commitment is meant to be durable; only a successful
- * submit advances the queue.
+ * retries a failing message rather than dropping it, since a receipt commitment is meant
+ * to be durable; a message that fails `MAX_CONSECUTIVE_FAILURES` times in a row moves to
+ * the back of the queue so it cannot block the messages behind it, and is retried again
+ * on the next pass. Only a successful submit removes a message.
  */
 export class HcsQueue implements HcsSink {
+  /** Confirmed commitments by receipt hash, newest last, capped at `DONE_MAX` — see
+   * `remember`. A cache in front of `mirrorLookup`, never the store of record. */
   private done = new Map<string, LookupResult>();
   private q: Receipt[] = [];
   private running = false;
@@ -56,11 +82,23 @@ export class HcsQueue implements HcsSink {
   // not just the eventual pass/fail of each receipt.
   private submittedCount = 0;
   private failedCount = 0;
+  /** How many times a head-of-queue receipt has been rotated to the back after
+   * `MAX_CONSECUTIVE_FAILURES` failed submits. Surfaced by `stats()` so an operator can
+   * tell "HCS is flaky and everything eventually lands" (failures, no rotations) apart
+   * from "one message is permanently stuck and the queue is cycling past it" (rotations
+   * climbing). Not part of the §13.1 admin response shape. */
+  private rotatedCount = 0;
   private lastSeq: string | null = null;
 
-  constructor(private deps: { submit: Submit; topicId: string; retryMs?: number; fetchImpl?: FetchLike }) {
+  private doneMax: number;
+
+  /** `retryMs`, `fetchImpl` and `doneMax` exist so tests can drive the retry, mirror and
+   * eviction paths without waiting seconds or committing ten thousand receipts;
+   * production callers set none of them. */
+  constructor(private deps: { submit: Submit; topicId: string; retryMs?: number; fetchImpl?: FetchLike; doneMax?: number }) {
     this.retryMs = deps.retryMs ?? 2000;
     this.fetchImpl = deps.fetchImpl ?? defaultFetch;
+    this.doneMax = deps.doneMax ?? DONE_MAX;
   }
 
   /** Number of receipts submitted but not yet durably committed (queued or mid-retry). */
@@ -68,10 +106,23 @@ export class HcsQueue implements HcsSink {
     return this.q.length;
   }
 
+  /** Test-only: how many confirmed commitments are cached, to check the `DONE_MAX`
+   * eviction invariant. Nothing outside this module's own tests should read it. */
+  doneSizeForTests(): number {
+    return this.done.size;
+  }
+
   /** Counters for the admin metrics endpoint. Reset on process restart, same as every
-   * other in-process counter this service exposes there. */
-  stats(): { pending: number; submitted: number; failed: number; lastSequence: string | null } {
-    return { pending: this.pending(), submitted: this.submittedCount, failed: this.failedCount, lastSequence: this.lastSeq };
+   * other in-process counter this service exposes there. `rotated` is extra
+   * (queue-health) detail beyond the four fields §13.1's response carries. */
+  stats(): { pending: number; submitted: number; failed: number; lastSequence: string | null; rotated: number } {
+    return {
+      pending: this.pending(),
+      submitted: this.submittedCount,
+      failed: this.failedCount,
+      lastSequence: this.lastSeq,
+      rotated: this.rotatedCount,
+    };
   }
 
   enqueue(r: Receipt): void {
@@ -79,16 +130,32 @@ export class HcsQueue implements HcsSink {
     void this.drain();
   }
 
+  /** Records a confirmed commitment, evicting the oldest entries to stay within
+   * `DONE_MAX`. A `Map` iterates in insertion order, so the first key is the oldest. */
+  private remember(h: string, result: LookupResult): void {
+    // A re-submitted hash already present must not count against the cap twice.
+    this.done.delete(h);
+    while (this.done.size >= this.doneMax) {
+      const oldest = this.done.keys().next();
+      if (oldest.done) break;
+      this.done.delete(oldest.value);
+    }
+    this.done.set(h, result);
+  }
+
   private async drain(): Promise<void> {
     if (this.running) return;
     this.running = true;
+    // Consecutive failures of the *current* head only: reset whenever the head changes,
+    // whether because it succeeded or because it was rotated away.
+    let consecutiveFailures = 0;
     while (this.q.length) {
       const r = this.q[0];
       const h = receiptHash(r);
       try {
         const message = canonicalize({ v: 1, receipt_hash: h, sig: r.sig, issued_at: r.issued_at });
         const res = await this.deps.submit(message);
-        this.done.set(h, {
+        this.remember(h, {
           receipt_hash: h,
           topicId: this.deps.topicId,
           sequence: res.sequence,
@@ -98,9 +165,21 @@ export class HcsQueue implements HcsSink {
         this.submittedCount++;
         this.lastSeq = res.sequence;
         this.q.shift();
+        consecutiveFailures = 0;
       } catch {
-        // Leave the message at the head of the queue and retry after a delay.
+        // Leave the message at the head of the queue and retry after a delay — unless it
+        // has now failed `MAX_CONSECUTIVE_FAILURES` times in a row and there is something
+        // else waiting, in which case move it to the back so the rest of the queue is not
+        // held up by one message that may never submit. Nothing is dropped.
         this.failedCount++;
+        consecutiveFailures++;
+        if (consecutiveFailures >= MAX_CONSECUTIVE_FAILURES) {
+          if (this.q.length > 1) {
+            this.q.push(this.q.shift()!);
+            this.rotatedCount++;
+          }
+          consecutiveFailures = 0;
+        }
         await new Promise(resolve => setTimeout(resolve, this.retryMs));
       }
     }

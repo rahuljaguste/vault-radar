@@ -9,7 +9,7 @@ Built for ETHOnline 2026. Partner tracks targeted below.
 | The Graph, Best Use of Composable or Standardized Graph Products | One template per schema family in `packages/core/src/standardized/templates.ts`, run across 15 pinned deployments in `packages/core/src/standardized/deployments.json`. The ERC-4626 module in `substreams/erc4626-vault-metrics/` imports Pinax `erc4626` and ships to two chains from one WASM binary. |
 | The Graph, Best AI Tooling or AI Use Case (From Scratch) | The agent in `packages/agent/src/client.ts` discovers, seals, pays, opens and verifies before it reasons. It refuses stale data on its own clock, not on the service's word. Package: `<<FILL: substreams.dev package URL for erc4626-vault-metrics>>` |
 | Hedera, AI & Agentic Payments on Hedera | The x402 rail in `packages/service/src/rails/hedera.ts` prices per vault and settles HTS USDC through Blocky402. A real settled request: `<<FILL: HashScan transaction URL for a settled Hedera scan>>` |
-| Arc, Best Agentic Economy Application with Circle Agent Stack | Bucketed Arc routes on the agent card, the Circle Gateway rail (in progress, see scope notes), and the dashboard at `<<FILL: deployed dashboard URL>>` showing a live Arc payment. A real settled request: `<<FILL: Arcscan transaction URL for a settled Arc payment>>` |
+| Arc, Best Agentic Economy Application with Circle Agent Stack | Bucketed Arc routes on the agent card, the Circle Gateway rail, and the dashboard at `<<FILL: deployed dashboard URL>>` showing a live Arc payment. A real settled request: `<<FILL: Arcscan transaction URL for a settled Arc payment>>` |
 | Arc, Launch on Arc Testnet & Push to Mainnet | Arc testnet config lives in `packages/service/src/config.ts` under `arc`, network `eip155:5042002`. The mainnet path is a config swap, documented in the run section below. |
 
 Live service: `<<FILL: deployed service URL, e.g. https://vaultradar.fly.dev>>`
@@ -33,7 +33,7 @@ The shape is: The Graph supplies data two ways, the service turns it into signed
 1. The agent fetches `/.well-known/agent.json`, verifies the card's ML-DSA-65 signature, and compares `pq.sig.pub_hash` against the ERC-8004 registry's `getMetadata(agentId, "pq.sig.pubhash")` on chain 296.
 2. The agent generates an ephemeral KEM keypair, seals `{ request, reply_pk, payer, ts, req_nonce }` to the service's KEM public key, and POSTs it to `/hedera/v1/scan` with the clear header `X-VR-Count`.
 3. The price function reads `X-VR-Count`, validates the envelope's shape, and the middleware answers 402 with a `PAYMENT-REQUIRED` header. The amount is $0.001 plus $0.0005 per vault, in HTS USDC `0.0.429274` on `hedera:testnet`.
-4. The agent signs a Hedera `TransferTransaction` naming the Blocky402 facilitator as fee payer, and retries the POST with a `PAYMENT-SIGNATURE` header.
+4. The agent checks the demanded amount against its own quote, and only then signs a Hedera `TransferTransaction` naming the Blocky402 facilitator as fee payer and retries the POST with a `PAYMENT-SIGNATURE` header. That quote is computed locally from the pricing table shared with the service rather than probed over the wire, so the check is what binds the two: a 402 demanding more than one percent over the quote is refused before anything is signed, on either rail, and the receipt's stated price is checked against the same band afterwards.
 5. The middleware calls Blocky402 `/verify`. Only on success does the handler run.
 6. The handler opens the envelope, checks `ts` against a 120 second window, checks `req_nonce` against the replay store, checks `payer` against the payer the facilitator verified, and checks `X-VR-Count` against the request's own vault count. It then runs the standardized queries and the Postgres read under a 60 second cap, unifies, computes freshness and risk, signs one attestation per vault, seals the body to `reply_pk`, signs the receipt, and answers 200.
 7. The middleware settles via Blocky402 `/settle` and sets `PAYMENT-RESPONSE` with the transaction id.
@@ -65,7 +65,7 @@ Full write-up for judges: [docs/standards-leverage.md](docs/standards-leverage.m
 | lending 3.1.0 | aave-v3 (Ethereum, Base), compound-v3, spark, morpho-aave-v3, euler |
 | yield-aggregator 1.3.1 | yearn-v2 (Ethereum, Arbitrum), convex-finance, aura-finance, arrakis-finance (Ethereum, Optimism, Polygon), gamma-strategies (Ethereum, Polygon) |
 
-Live deployments as of the last verification gate run: `<<FILL: live/total count printed by bun run verify-deployments>>`. Every query goes to the pinned `deploymentId`, never a subgraph name, so a re-point cannot silently change the data underneath a risk verdict.
+Live deployments as of the last verification gate run: `<<FILL: live/total count printed by bun run verify-deployments>>`. Every query goes to the pinned `deploymentId` once the verification gate has run, so a re-point cannot silently change the data underneath a risk verdict. Until it has, every `deploymentId` in `deployments.json` is still null and the registry resolves by subgraph id instead (`packages/core/src/standardized/gateway.ts`); pinning the ids needs a Studio key, which `bun run verify-deployments` writes back on its first successful run.
 
 **One module, two chains.** `substreams/erc4626-vault-metrics/` imports Pinax's public `erc4626` package as a dependency and never scans logs itself. `chain_id` is a Substreams runtime parameter, so the same compiled WASM runs on Ethereum mainnet and on Base. Only the manifest differs: `substreams.yaml` versus `substreams.base.yaml`. Both sinks write to one Postgres, because every table's primary key includes `chain_id`.
 
@@ -98,7 +98,7 @@ The agent refuses independently. It checks each attestation's `timestamp` agains
 
 **Replay defence.** The service rejects an envelope whose `ts` is more than 120 seconds from server time, whose `req_nonce` has been seen in the last 10 minutes, whose `payer` does not match the payer the payment layer verified, or whose count does not match. All four checks return 422 before settlement, so a rejected request costs nothing.
 
-**Privacy tiers.** A clear `scan` hides nothing. A sealed `scan` hides the portfolio from every intermediary, but the vendor still decrypts it. The `table` tier hides holdings from the vendor too, by buying every vault of one protocol and filtering locally. `table` costs a flat $0.03 on both rails, which is deliberately never cheaper than a sealed scan.
+**Privacy tiers.** A clear `scan` hides nothing. A sealed `scan` hides the portfolio from every intermediary, but the vendor still decrypts it. The `table` tier hides holdings from the vendor too, by buying every vault of one protocol and filtering locally. `table` costs a flat $0.06 on both rails, which is deliberately never cheaper than a sealed scan: a scan of the maximum 100 vaults costs $0.051.
 
 **Receipts and attestations.** Every response carries an ML-DSA-65 signed receipt binding `request_hash`, `response_hash`, the sources with their blocks, the price, the payment transaction id, the tier, and whether the exchange was sealed. Each vault also gets its own signed attestation, so a single vault's data stays portable and verifiable after the sealed response is opened and discarded.
 
@@ -149,7 +149,7 @@ curl -s localhost:8787/.well-known/agent.json | jq '{endpoints, prices, pq}'
 bun run agent watch --vaults 1:0xVAULT_ADDRESS,8453:0xVAULT_ADDRESS --policy packages/agent/policy.example.json
 ```
 
-The `watch` command and its policy file are Tasks 22 and 23, specified but not yet built. The client library underneath them is built and tested.
+The `watch` command and its policy file are built and covered by `bun test`: the loop lives in `packages/agent/src/watch.ts`, and two ready-made policies ship as `packages/agent/policy.example.json` (balanced, sealed scan) and `packages/agent/policy.strict.json` (strict, whole-protocol table). `scripts/demo.sh` drives both — step 3 runs `watch` under the balanced policy and step 4 runs it again under the strict one.
 
 ### Dashboard
 
@@ -216,7 +216,7 @@ Honest scope notes, so nothing here is read as more than it is:
 - **HCS-14 UAID is not implemented.** The agent card has no `uaid` field. Identity is ERC-8004 plus the signed card, nothing more.
 - **Falcon signatures are not implemented.** Signatures are ML-DSA-65 only. Falcon was considered as a smaller-signature option and dropped.
 - **The upstream x402 payment to The Graph gateway was cut.** Standardized queries use a Studio API key. The service does not pay the gateway per query.
-- **In flight at the time of writing.** The HCS commitment queue, the ERC-8004 registration script, the Arc rail, the Fly deployment, and the agent policy and CLI are specified in `docs/superpowers/plans/2026-09-09-vaultradar.md` and described above in future tense. Everything else in this README is built and covered by `bun test`.
+- **What is built, and what waits on credentials.** The HCS commitment queue, the ERC-8004 registration script (`scripts/identity.ts`), the Arc rail, and the agent policy and CLI are built and covered by `bun test`. What is not done is everything that needs a funded account or a host: the Fly deployment, the identity registration run against both registries, and the live links marked `<<FILL>>` above. The identity run is a prerequisite for any paid request, not a nicety: a card that lists no ERC-8004 identity, or an identity whose registry entry cannot be read, is refused by both the agent and the dashboard before they pay. That is the key-substitution defence working as specified, and it means every purchase also depends on a reachable Hashio or Arc RPC.
 - **KEM key rotation and forward secrecy are out of scope.** So are on-chain PQ payment signatures and zero-knowledge proofs of the risk computation.
 
 ## License

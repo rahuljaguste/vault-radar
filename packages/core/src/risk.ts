@@ -1,4 +1,4 @@
-import type { UnifiedVault } from "./unify/types";
+import type { HistoryPoint, UnifiedVault } from "./unify/types";
 
 export type FlagName =
   | "share_price_drawdown_1h"
@@ -6,7 +6,8 @@ export type FlagName =
   | "share_price_drawdown_7d"
   | "tvl_outflow_24h"
   | "deposit_limit_reached"
-  | "stale_data";
+  | "stale_data"
+  | "bad_share_price";
 
 export type Flag = { name: FlagName; value: string; threshold: string; window: string };
 export type Verdict = "ok" | "watch" | "alert" | "unavailable";
@@ -36,6 +37,36 @@ const isPlainInt = (s: string) => /^\d+$/.test(s);
 // either string isn't a plain integer.
 const gteExact = (a: string, b: string): boolean => (isPlainInt(a) && isPlainInt(b) ? BigInt(a) >= BigInt(b) : Number(a) >= Number(b));
 
+/** Finest series first: the one with the most points inside a 24 h window wins the tie. */
+const SERIES_PREFERENCE: HistoryPoint["series"][] = ["hourly", "daily", "block"];
+
+/**
+ * The last 24 hours' flows, taken from exactly ONE sampling series.
+ *
+ * `history` is a merge. The Messari mappers concatenate a vault's hourly and daily
+ * snapshots into one array (`standardized/map.ts`), and each series' `netFlowAssets`
+ * describes that series' own sampling interval — the ~23 hourly flows inside the window
+ * telescope to roughly the 24 h change, and the newest daily point states roughly that same
+ * change again. Adding them together reported about twice the real movement: an 11% outflow
+ * read as 22%, crossed the 20% threshold, added 25 points, and turned an `ok` vault into a
+ * `watch` (or a `watch` into an `alert`, which makes the agent emit `withdraw`). Spec §5.3
+ * asks for "the 24 h change" — one figure, from one series.
+ *
+ * Finest available series wins, so resolution is never thrown away: hourly if any hourly
+ * point inside the window carries a flow, else daily, else block (the Substreams path, which
+ * is per block and was always self-consistent).
+ *
+ * Share-price drawdowns are left merged on purpose: each window picks a single reference
+ * point and compares it to the current price, so having more candidate points to choose from
+ * is harmless — nothing is summed.
+ */
+function flows24h(v: UnifiedVault, nowTs: number): number[] {
+  const inWindow = v.history.filter(h => nowTs - Number(h.timestamp) <= 86400 && h.netFlowAssets != null);
+  const series = SERIES_PREFERENCE.find(s => inWindow.some(h => h.series === s));
+  if (!series) return [];
+  return inWindow.filter(h => h.series === series).map(h => Number(h.netFlowAssets));
+}
+
 export function computeRisk(v: UnifiedVault, nowTs: number): RiskReport {
   const evidence = v.sources.map(s => ({ source: `${s.kind}:${s.ref}`, block: s.block, timestamp: s.timestamp, ageSeconds: s.ageSeconds }));
   const flags: Flag[] = [];
@@ -43,7 +74,20 @@ export function computeRisk(v: UnifiedVault, nowTs: number): RiskReport {
     flags.push({ name: "stale_data", value: v.freshness, threshold: "fresh", window: "now" });
     return { vaultId: v.id, flags, score: 0, verdict: "unavailable", evidence };
   }
+  // Every drawdown window compares against this one number, and a NaN makes each of those
+  // comparisons false — so an unparseable share price used to score 0 and read `ok`, which
+  // is a verdict inferred from data the model could not read. Spec §5.3: "No verdict is ever
+  // inferred from partial data." Treated exactly like a stale source: `unavailable`, score 0,
+  // and a flag naming the value that could not be parsed.
+  //
+  // The blank case is checked separately because `Number("")` is 0, not NaN: an absent share
+  // price would otherwise read as a share price of zero, which is a different (and equally
+  // unfounded) claim rather than a missing one.
   const cur = num(v.sharePrice)!;
+  if (v.sharePrice.trim() === "" || !Number.isFinite(cur)) {
+    flags.push({ name: "bad_share_price", value: String(v.sharePrice), threshold: "finite", window: "now" });
+    return { vaultId: v.id, flags, score: 0, verdict: "unavailable", evidence };
+  }
   let score = 0;
   for (const w of WINDOWS) {
     const pts = v.history.filter(h => { const age = nowTs - Number(h.timestamp); return age >= w.min && age <= w.max; });
@@ -53,7 +97,7 @@ export function computeRisk(v: UnifiedVault, nowTs: number): RiskReport {
     if (drop >= w.threshold) { flags.push({ name: w.name, value: fmt(drop), threshold: fmt(w.threshold), window: w.label }); score += w.weight; }
   }
   const bal = num(v.inputTokenBalance);
-  const flows = v.history.filter(h => nowTs - Number(h.timestamp) <= 86400 && h.netFlowAssets != null).map(h => Number(h.netFlowAssets));
+  const flows = flows24h(v, nowTs);
   if (bal && flows.length) {
     const out = -flows.reduce((a, b) => a + b, 0) / bal;
     if (out >= 0.2) { flags.push({ name: "tvl_outflow_24h", value: fmt(out), threshold: "0.200000", window: "24h" }); score += 25; }

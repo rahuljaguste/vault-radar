@@ -126,13 +126,13 @@ A verdict of `unavailable` is also `insufficient data`. It is never a weak `ok`.
 |---|---|---|
 | `POST /hedera/v1/scan` | scan, metered | $0.001 + $0.0005 per vault, in HTS USDC `0.0.429274` |
 | `POST /hedera/v1/scan-hbar` | scan, metered | 0.01 HBAR per vault |
-| `POST /hedera/v1/table` | table | $0.03 flat |
+| `POST /hedera/v1/table` | table | $0.06 flat |
 | `POST /arc/v1/scan/s` | scan, 1 to 5 vaults | $0.003 |
 | `POST /arc/v1/scan/m` | scan, 6 to 20 vaults | $0.01 |
 | `POST /arc/v1/scan/l` | scan, 21 to 100 vaults | $0.05 |
-| `POST /arc/v1/table` | table | $0.03 flat |
+| `POST /arc/v1/table` | table | $0.06 flat |
 
-The `table` tier returns every vault of one protocol on one chain, so the vendor never learns which of them you hold. It is priced above a sealed scan on purpose, so privacy is never the cheap option by accident.
+The `table` tier returns every vault of one protocol on one chain, so the vendor never learns which of them you hold. It is priced above a sealed scan on purpose, so privacy is never the cheap option by accident: $0.06 is above the $0.051 a scan of the maximum 100 vaults costs.
 
 Maximum 100 vaults per scan.
 

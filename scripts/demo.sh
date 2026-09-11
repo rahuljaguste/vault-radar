@@ -9,11 +9,12 @@
 # Run against the deployed service:
 #   SERVICE_URL=https://vaultradar.fly.dev bash scripts/demo.sh
 #
-# Steps 3, 4 and 5 drive pieces that are specified but not yet built (the agent CLI
-# from Tasks 22 and 23, the Arc rail and its hello-arc client from Task 19). The
-# commands below are the contract those tasks implement, so they are written out in
-# full. Until the files exist the script prints the command instead of running it,
-# rather than aborting, so the earlier and later steps still demo.
+# Steps 3, 4 and 5 run the three paid entrypoints: `agent watch` under the balanced
+# policy (a sealed per-vault scan on Hedera), `agent watch` again under the strict
+# policy (the whole-protocol table, so the vendor never learns which vault is held),
+# and `hello-arc.ts` (a bucketed Arc payment through Circle Gateway). All three exist;
+# `run_or_show` still guards each on its entrypoint file, so a tree missing one prints
+# that step's command instead of aborting the whole demo.
 
 set -euo pipefail
 
@@ -22,7 +23,29 @@ SERVICE_URL="${SERVICE_URL%/}"
 
 # Two vault ids the service can actually resolve, as "<chainId>:<0x address>".
 # Pick them from `curl -s "$SERVICE_URL/v1/catalog"` before recording.
-VAULTS="${VAULTS:-<<FILL: two live vault ids, comma separated, e.g. 1:0xabc...,8453:0xdef...>>}"
+#
+# Checked here rather than left as a placeholder: every paid step below passes $VAULTS
+# straight to `agent watch`, which would spend real testnet USDC on a request for the
+# literal string "<<FILL: ...>>" and then print an unhelpful parse error — after paying.
+VAULTS="${VAULTS:-}"
+case "$VAULTS" in
+  "" | *"<<FILL"*)
+    cat >&2 <<MSG
+demo.sh needs VAULTS set to real vault ids before it can run a paid scan.
+
+  VAULTS="1:0xAAA...,8453:0xBBB..." bash scripts/demo.sh
+
+Each id is "<chainId>:<0x 40-hex address>", comma separated. Pick ids this service can
+actually resolve:
+
+  curl -s "$SERVICE_URL/v1/catalog" | jq
+  curl -s "$SERVICE_URL/v1/vaults?chainId=1" | jq '.vaults[0:5]'
+
+Refusing to continue rather than paying for a scan of a placeholder.
+MSG
+    exit 1
+    ;;
+esac
 
 POLICY="${POLICY:-packages/agent/policy.example.json}"
 POLICY_STRICT="${POLICY_STRICT:-packages/agent/policy.strict.json}"
@@ -120,8 +143,8 @@ run_or_show packages/agent/src/cli.ts \
 
 heading "4. Paid request on Hedera, strict policy: table tier"
 note "privacy: \"strict\" buys the whole protocol table instead of naming holdings, so"
-note "the vendor never learns which vaults are held. Flat 0.03 USD, deliberately more"
-note "than a sealed scan."
+note "the vendor never learns which vaults are held. Flat 0.06 USD, deliberately more"
+note "than a sealed scan of the maximum 100 vaults (0.051 USD)."
 run_or_show packages/agent/src/cli.ts \
   bun run agent watch --vaults "$VAULTS" --policy "$POLICY_STRICT" --service "$SERVICE_URL"
 

@@ -248,6 +248,11 @@ export function vaultradarTools(ctx: AgentContext, log: RunLog = new RunLog(ctx)
         return ok({
           name: d.card.name,
           card_signature_valid: d.cardSignatureValid,
+          // Reported alongside the signature because the two are independent: a card can
+          // be correctly signed by the key it ships while advertising someone else's key
+          // hash, which is the substitution the on-chain anchor exists to catch. False
+          // here means the paid tools will refuse, so the model should see it.
+          key_binding_valid: d.keyBindingValid,
           pub_hash: d.card.pq.sig.pub_hash,
           kid: d.card.pq.kem.kid,
           sig_alg: d.card.pq.sig.alg,
@@ -263,7 +268,7 @@ export function vaultradarTools(ctx: AgentContext, log: RunLog = new RunLog(ctx)
 
     tool(
       "vaultradar_quote",
-      "Price a scan of `count` vaults on both payment rails and report which rail the policy would use, with the wallet balances, per-rail budgets and facilitator health behind that choice. Pass the actual `vaults` too whenever you have them: under a strict privacy policy the price depends on how many chains they span, because that tier buys one table per chain. Costs nothing.",
+      "Price a scan of `count` vaults on both payment rails and report which rail the policy would use, with the wallet balances, per-rail budgets and facilitator health behind that choice. Pass the actual `vaults` too whenever you have them: under a strict privacy policy the price depends on how many chains they span, because that tier buys one table per chain. Costs nothing, and contacts nothing: the figures are computed locally from the pricing table shared with the service, and the amount the service actually demands in its 402 is checked against this quote before anything is signed.",
       {
         count: z.number().int().min(1).max(100).describe("How many vaults the scan would cover"),
         vaults: z

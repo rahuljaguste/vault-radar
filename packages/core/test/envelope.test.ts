@@ -8,7 +8,9 @@ import {
   checkSealedRequestPrePayment,
   commitNonce,
   openSealedRequest,
+  validScanVaults,
 } from "../src/envelope";
+import { MAX_SCAN } from "../src/pricing";
 import { seal } from "../src/pq/seal";
 import { randomBytes, toB64, toHex } from "../src/util/bytes";
 
@@ -123,6 +125,39 @@ test("commitNonce marks the nonce seen, so a subsequent pre-payment check report
   commitNonce(p, seen, now);
   expect(seen.has(p.req_nonce)).toBe(true);
   expect(checkSealedRequestPrePayment(p, { now, count: 1, seen })).toMatchObject({ ok: false, reason: "nonce_replay" });
+});
+
+test("commitNonce reports which caller won: the first commit returns true, a racing second returns false", () => {
+  const { sealed } = buildSealedRequest({ vaults: ["1:0xabc"] }, "0.0.1", svc.publicKey, now);
+  const p = openSealedRequest<{ vaults: string[] }>(sealed, svc.secretKey, svc.kid);
+  const seen = new MemoryNonceStore();
+  // The Arc rail's pre-payment check and its commit straddle Circle's synchronous
+  // settlement, so two concurrent submissions of one envelope can both pass the check;
+  // the loser's commit is what must refuse it (handlers/scan.ts turns false into 422
+  // nonce_replay), never a second answer.
+  expect(commitNonce(p, seen, now)).toBe(true);
+  expect(commitNonce(p, seen, now)).toBe(false);
+});
+
+// --- validScanVaults: the shared bad_vaults rule (scan handler + Arc pre-payment) ------
+
+test("validScanVaults accepts 1..MAX_SCAN well-formed ids and rejects every other shape", () => {
+  const id = (n: number) => `1:0x${n.toString(16).padStart(40, "0")}`;
+  expect(validScanVaults([id(1)])).toBe(true);
+  // Uppercase hex is accepted, matching the handler's old inline regex (`/i`).
+  expect(validScanVaults(["1:0xABABABABABABABABABABABABABABABABABABABAB"])).toBe(true);
+  expect(validScanVaults(Array.from({ length: MAX_SCAN }, (_, i) => id(i + 1)))).toBe(true);
+
+  expect(validScanVaults(null)).toBe(false);
+  expect(validScanVaults("1:0xabc")).toBe(false);
+  expect(validScanVaults({ vaults: [id(1)] })).toBe(false);
+  expect(validScanVaults([])).toBe(false);
+  expect(validScanVaults(Array.from({ length: MAX_SCAN + 1 }, (_, i) => id(i + 1)))).toBe(false);
+  expect(validScanVaults(["not-a-vault"])).toBe(false);
+  // A short or long hex body fails the 40-hex-character shape, not just the prefix.
+  expect(validScanVaults(["1:0xabc"])).toBe(false);
+  expect(validScanVaults(["0x" + "a".repeat(40)])).toBe(false);
+  expect(validScanVaults([id(1), 42])).toBe(false);
 });
 
 test("checkSealedRequest (composed) still commits the nonce only once every check passes, same as before the split", () => {

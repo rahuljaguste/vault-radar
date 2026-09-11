@@ -6,10 +6,12 @@ import {
   deriveSigningKeys,
   MemoryNonceStore,
   open,
+  openSealedRequest,
   verifyReceipt,
   verifyAttestation,
   requestHash,
   hederaScanPriceAtomic,
+  arcBucket,
   ARC_BUCKET_PRICE,
   TABLE_PRICE_USD,
 } from "@vaultradar/core";
@@ -47,16 +49,32 @@ function makeData(overrides: { scan?: any; table?: any; catalog?: any } = {}) {
   };
 }
 
+/**
+ * The `price` the real mount for this rail and tier supplies (see `rails/hedera.ts` and
+ * `rails/arc.ts`), so a bare-mounted handler signs the receipt production would. The
+ * handler no longer derives this from `{rail, tier}` itself, because one rail mounts the
+ * same tier at two prices: `/hedera/v1/scan-hbar` is the scan handler priced in tinybars.
+ */
+const routePrice = (rail: "hedera" | "arc", tier: "scan" | "table"): HandlerDeps["price"] =>
+  rail === "hedera"
+    ? tier === "scan"
+      ? (count) => ({ amount: hederaScanPriceAtomic(count), asset: config.hedera.usdcToken })
+      : () => ({ amount: String(Math.round(Number(TABLE_PRICE_USD) * 1e6)), asset: config.hedera.usdcToken })
+    : tier === "scan"
+      ? (count) => ({ amount: ARC_BUCKET_PRICE[arcBucket(count)], asset: "USDC" })
+      : () => ({ amount: TABLE_PRICE_USD, asset: "USDC" });
+
 // Mounts a fresh app + server per test so different tier/rail/data/capMs combinations
 // (and their nonce stores) never interact across tests.
 function mount(overrides: Partial<HandlerDeps> & { data: any }) {
   const app = express();
   app.use(express.json());
-  const deps: HandlerDeps = {
-    keys, config, nonces: new MemoryNonceStore(), rail: "hedera", tier: "scan",
+  const resolved = {
+    keys, config, nonces: new MemoryNonceStore(), rail: "hedera" as const, tier: "scan" as const,
     getPayer: () => "0.0.1234", getTxId: () => "0.0.1234@1.000",
     ...overrides,
   };
+  const deps: HandlerDeps = { price: routePrice(resolved.rail, resolved.tier), ...resolved };
   app.post("/scan", makeScanHandler(deps));
   const srv = app.listen(0);
   const url = () => `http://127.0.0.1:${(srv.address() as any).port}/scan`;
@@ -87,6 +105,42 @@ test("sealed scan returns sealed body and a receipt with every required field", 
     expect(body.vaults[0].id).toBe("1:0xabababababababababababababababababababab");
     expect(body.reports[0].verdict).toBe("ok");
     expect(verifyAttestation(body.attestations[0], keys.sig.publicKey)).toBe(true);
+  } finally {
+    srv.close();
+  }
+});
+
+test("the Arc path (pre-opened envelope) refuses a request whose nonce a concurrent twin already committed", async () => {
+  // The Arc rail checks the nonce pre-payment but commits it only here in the handler
+  // (a payer-mismatched or never-paid request must not burn its nonce), so two
+  // concurrent submissions of one envelope can both pass that earlier check and both
+  // settle. This mounts the handler exactly as that rail does — plaintext pre-stashed
+  // on res.locals.opened — with the twin's commit already in the store, and asserts
+  // the loser is refused rather than answered a second time.
+  const { sealed } = buildSealedRequest({ vaults: ["1:0xabababababababababababababababababababab"] }, "0.0.1234", keys.kem.publicKey, now);
+  const opened = openSealedRequest<{ vaults: string[] }>(sealed, keys.kem.secretKey, keys.kem.kid);
+  const nonces = new MemoryNonceStore();
+  nonces.add(opened.req_nonce, now + 600); // the winning twin committed between pre-check and here
+  const scanCalls: string[][] = [];
+  const app = express();
+  app.use(express.json());
+  app.post(
+    "/scan",
+    (req, res, next) => { res.locals.opened = opened; next(); },
+    makeScanHandler({
+      keys, config, nonces, rail: "arc", tier: "scan", price: routePrice("arc", "scan"),
+      getPayer: () => "0.0.1234", getTxId: () => "0xgateway-batch",
+      data: makeData({ scan: async (ids: string[]) => { scanCalls.push(ids); return { vaults: [], sources: [] }; } }),
+    }),
+  );
+  const srv = app.listen(0);
+  try {
+    const res = await fetch(`http://127.0.0.1:${(srv.address() as any).port}/scan`, {
+      method: "POST", headers: { "content-type": "application/json", "x-vr-count": "1" }, body: JSON.stringify(sealed),
+    });
+    expect(res.status).toBe(422);
+    expect(await res.json()).toEqual({ reason: "nonce_replay", error: "nonce_replay" });
+    expect(scanCalls).toEqual([]); // refused before any upstream work
   } finally {
     srv.close();
   }
@@ -159,6 +213,63 @@ test("malformed, empty, or oversized vault lists return 422 bad_vaults", async (
   }
 });
 
+test("a clear scan body whose count disagrees with X-VR-Count returns 422 count_mismatch, before any DataProvider call", async () => {
+  // The rail-independent half of the count rule: `X-VR-Count` is what the request was
+  // priced on, `request.vaults` is what the handler would work on, and a clear body used
+  // to be able to name any number of vaults at the one-vault price. The sealed path has
+  // always checked this; this is the clear path.
+  const scanCalls: string[][] = [];
+  const { url, srv } = mount({ data: makeData({ scan: async (ids: string[]) => { scanCalls.push(ids); return { vaults: [], sources: [] }; } }) });
+  try {
+    const three = ["1:0x" + "ab".repeat(20), "1:0x" + "ac".repeat(20), "1:0x" + "ad".repeat(20)];
+    const res = await post(url(), { vaults: three }, { "x-vr-count": "1" });
+    expect(res.status).toBe(422);
+    expect((await res.json()).reason).toBe("count_mismatch");
+    expect(scanCalls).toEqual([]);
+
+    // A missing or unusable header is the same refusal: there is no count to have paid.
+    const badHeaders: Record<string, string>[] = [{}, { "x-vr-count": "0" }, { "x-vr-count": "abc" }, { "x-vr-count": "101" }];
+    for (const headers of badHeaders) {
+      const bad = await post(url(), { vaults: [three[0]] }, headers);
+      expect(bad.status).toBe(422);
+      expect((await bad.json()).reason).toBe("count_mismatch");
+    }
+    expect(scanCalls).toEqual([]);
+
+    // The matching case still goes through.
+    const ok = await post(url(), { vaults: three }, { "x-vr-count": "3" });
+    expect(ok.status).toBe(200);
+    expect(scanCalls).toEqual([three]);
+  } finally {
+    srv.close();
+  }
+});
+
+test("the count rule does not touch the table tier, which has no count", async () => {
+  const { url, srv } = mount({ data: makeData(), tier: "table" });
+  try {
+    const res = await post(url(), { protocol: "erc4626", chainId: "1" }, { "x-vr-count": "99" });
+    expect(res.status).toBe(200);
+  } finally {
+    srv.close();
+  }
+});
+
+test("a sealed request is unaffected by the clear-mode count rule", async () => {
+  // The sealed branch already compares the envelope's own count against the header (and
+  // skips the comparison when there is no usable header, since `checkSealedRequest` takes
+  // `count: undefined` then). Pinned so the new clear-mode check cannot start applying to
+  // sealed envelopes as a side effect.
+  const { url, srv } = mount({ data: makeData() });
+  try {
+    const { sealed } = buildSealedRequest({ vaults: ["1:0xabababababababababababababababababababab"] }, "0.0.1234", keys.kem.publicKey);
+    const res = await post(url(), sealed); // no x-vr-count at all
+    expect(res.status).toBe(200);
+  } finally {
+    srv.close();
+  }
+});
+
 test("a table request missing protocol or chainId returns 422 bad_table_request", async () => {
   const { url, srv } = mount({ data: makeData(), tier: "table" });
   try {
@@ -184,10 +295,15 @@ test("table tier on the arc rail prices flat at TABLE_PRICE_USD and returns the 
   }
 });
 
+// Every clear scan body below carries `x-vr-count`, because the handler now requires a
+// clear body's vault count to equal the count the request was priced on (422
+// count_mismatch otherwise). Both mounted rails reject a missing/invalid count with a 400
+// before the handler is ever reached, so in production the header is always present here;
+// these tests mount the handler bare, so they have to supply it themselves.
 test("scan tier on the arc rail prices by count bucket", async () => {
   const { url, srv } = mount({ data: makeData(), rail: "arc" });
   try {
-    const res = await post(url(), { vaults: ["1:0xabababababababababababababababababababab"] });
+    const res = await post(url(), { vaults: ["1:0xabababababababababababababababababababab"] }, { "x-vr-count": "1" });
     const j = await res.json();
     expect(j.receipt.price).toEqual({ amount: ARC_BUCKET_PRICE.s, asset: "USDC", rail: "arc" });
   } finally {
@@ -201,7 +317,7 @@ test("an upstream provider failure returns 502 upstream_failed and logs only the
   const originalError = console.error;
   console.error = (...args: unknown[]) => { logged.push(args); };
   try {
-    const res = await post(url(), { vaults: ["1:0xabababababababababababababababababababab"] });
+    const res = await post(url(), { vaults: ["1:0xabababababababababababababababababababab"] }, { "x-vr-count": "1" });
     expect(res.status).toBe(502);
     expect(await res.json()).toEqual({ reason: "upstream_failed" });
   } finally {
@@ -215,7 +331,7 @@ test("an upstream provider failure returns 502 upstream_failed and logs only the
 test("a handler that exceeds its time cap returns 504 handler_cap", async () => {
   const { url, srv } = mount({ data: makeData({ scan: () => new Promise(() => {}) }), capMs: 20 });
   try {
-    const res = await post(url(), { vaults: ["1:0xabababababababababababababababababababab"] });
+    const res = await post(url(), { vaults: ["1:0xabababababababababababababababababababab"] }, { "x-vr-count": "1" });
     expect(res.status).toBe(504);
     expect(await res.json()).toEqual({ reason: "handler_cap" });
   } finally {
