@@ -117,6 +117,23 @@ test("checkSealedRequestPayer matches or rejects payer alone, independent of ts/
   expect(checkSealedRequestPayer(p, "0.0.other")).toEqual({ ok: false, reason: "payer_mismatch" });
 });
 
+// The two sides of this comparison are produced by different libraries on different rails:
+// the client seals whatever its signer hands it (viem returns EIP-55 checksummed), while
+// Circle's Gateway reports the settled payer in lower case. Comparing them byte-for-byte
+// rejected every Arc payment — after settlement, with no refund path, which is the exact
+// failure this check exists to catch.
+test("checkSealedRequestPayer treats an EVM address's checksum case as insignificant", () => {
+  const checksummed = "0x80e24337503CBF24f7b2e3ba91b99D42C9E3583C";
+  const { sealed } = buildSealedRequest({ vaults: ["1:0xabc"] }, checksummed, svc.publicKey, now);
+  const p = openSealedRequest<{ vaults: string[] }>(sealed, svc.secretKey, svc.kid);
+
+  expect(p.payer).toBe(checksummed); // the seal carries what it was given, unchanged
+  expect(checkSealedRequestPayer(p, checksummed.toLowerCase())).toEqual({ ok: true });
+  // And a genuinely different address still fails, in either spelling.
+  expect(checkSealedRequestPayer(p, "0x0000000000000000000000000000000000000000")).toEqual({ ok: false, reason: "payer_mismatch" });
+  expect(checkSealedRequestPayer(p, checksummed.replace(/^0x80/, "0x81"))).toEqual({ ok: false, reason: "payer_mismatch" });
+});
+
 test("commitNonce marks the nonce seen, so a subsequent pre-payment check reports nonce_replay", () => {
   const { sealed } = buildSealedRequest({ vaults: ["1:0xabc"] }, "0.0.1", svc.publicKey, now);
   const p = openSealedRequest<{ vaults: string[] }>(sealed, svc.secretKey, svc.kid);

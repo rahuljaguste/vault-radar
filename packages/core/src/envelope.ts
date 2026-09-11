@@ -76,9 +76,19 @@ export function checkSealedRequestPrePayment(p: SealedRequest<unknown>, o: { now
  * that payer is only known once `gateway.require` has already verified (and settled)
  * the payment, so a `payer_mismatch` caught here is caught *after* money has moved —
  * see `rails/arc.ts`'s handler-side comment for why this is not refunded there.
+ *
+ * Compared case-insensitively, because the two sides are spelled by different libraries
+ * and an EVM address's checksum case carries no meaning. The client seals whatever its
+ * signer library hands it — viem returns EIP-55 checksummed, e.g.
+ * `0x80e24337503CBF24f7b2e3ba91b99D42C9E3583C` — while Circle's Gateway reports the payer
+ * it settled with in lower case. A byte comparison therefore rejected every Arc payment
+ * with `payer_mismatch`, after settlement and with no refund path, which is precisely the
+ * failure this check exists to catch — just pointing at itself. Lower-casing both sides
+ * is safe for a Hedera account id too (it has no letters); the check stays exact in every
+ * way that matters, since a different address still differs.
  */
 export function checkSealedRequestPayer(p: SealedRequest<unknown>, payer: string): Check {
-  return p.payer === payer ? { ok: true } : { ok: false, reason: "payer_mismatch" };
+  return p.payer.toLowerCase() === payer.toLowerCase() ? { ok: true } : { ok: false, reason: "payer_mismatch" };
 }
 
 /**
