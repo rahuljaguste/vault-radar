@@ -6,6 +6,9 @@ dist/
 .next/
 target/
 *.spkg
+# …except the packed modules this repo builds and ships; the sink image and the
+# published package URL both need the artifact itself, not a rebuild instruction.
+!substreams/erc4626-vault-metrics/*.spkg
 .DS_Store
 *.log
 .claude/
