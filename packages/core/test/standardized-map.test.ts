@@ -67,6 +67,24 @@ test("missing snapshot arrays degrade to empty history instead of throwing", () 
   expect(v.history).toEqual([]);
 });
 
+test("a non-integer balance nulls only that point's net flow, instead of failing the whole deployment", () => {
+  const fx = {
+    ...yieldFx,
+    vaults: [{
+      ...yieldFx.vaults[0],
+      hourlySnapshots: [
+        { blockNumber: 2, timestamp: 1759999900, pricePerShare: "1.0", totalValueLockedUSD: "1", inputTokenBalance: "1.5" },
+        { blockNumber: 1, timestamp: 1759996300, pricePerShare: "1.0", totalValueLockedUSD: "1", inputTokenBalance: "100" },
+      ],
+      dailySnapshots: [],
+    }],
+  };
+  const [v] = mapYieldVaults(d("yield-aggregator"), fx, 1759999999);
+  expect(v.history).toHaveLength(2);
+  expect(v.history[0].netFlowAssets).toBeNull();
+  expect(v.history[1].netFlowAssets).toBeNull();
+});
+
 test("stale block on a live deployment is reflected in freshness, not thrown", () => {
   const farFuture = Number(yieldFx._meta.block.timestamp) + 100000;
   const [v] = mapYieldVaults(d("yield-aggregator"), yieldFx, farFuture);

@@ -6,6 +6,18 @@ type Meta = { block: { number: number | string; timestamp: number | string }; ha
 
 const s = (x: unknown) => (x == null ? null : String(x));
 
+// Atomic-unit balances are expected to be integer strings, but a subgraph can return a
+// decimal or scientific-notation value (or a number, or garbage). `BigInt()` throws on all
+// of those, and because mapping runs inside `fetchStandardized`'s `Promise.allSettled`, one
+// such vault would reject the whole deployment's worth of data. Parsing defensively keeps
+// the failure local: the point simply has no computable net flow.
+const toBigInt = (x: unknown): bigint | null => {
+  if (typeof x === "bigint") return x;
+  if (typeof x === "number") return Number.isInteger(x) ? BigInt(x) : null;
+  if (typeof x === "string" && /^-?\d+$/.test(x)) return BigInt(x);
+  return null;
+};
+
 // Both query templates fetch each series (hourly, daily) individually ordered newest
 // first; after mapping each series to HistoryPoints, the two arrays are concatenated
 // and must be re-sorted by timestamp so the merged history stays newest-first overall
@@ -34,9 +46,9 @@ function source(d: Deployment, meta: Meta, headTs: number): Source {
 function yieldSeriesHistory(points: any[], series: HistoryPoint["series"], fallbackPrice: unknown): HistoryPoint[] {
   return points.map((h: any, i: number, arr: any[]) => {
     const prev = arr[i + 1];
-    const flow = prev && h.inputTokenBalance != null && prev.inputTokenBalance != null
-      ? String(BigInt(h.inputTokenBalance) - BigInt(prev.inputTokenBalance))
-      : null;
+    const curBal = toBigInt(h.inputTokenBalance);
+    const prevBal = toBigInt(prev?.inputTokenBalance);
+    const flow = prev && curBal !== null && prevBal !== null ? String(curBal - prevBal) : null;
     return { block: String(h.blockNumber), timestamp: String(h.timestamp), sharePrice: String(h.pricePerShare ?? fallbackPrice), tvlUsd: s(h.totalValueLockedUSD), netFlowAssets: flow, series };
   });
 }
