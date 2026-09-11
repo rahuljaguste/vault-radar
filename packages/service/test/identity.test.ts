@@ -51,6 +51,34 @@ test("--dry-run prints the agentURI and calldata for this seed's derived pub has
   expect(hexToString(metadata[0].metadataValue)).toBe(expectedPubHash);
 });
 
+// `register()` mints a new agent id on every call, so a second run of this script after one
+// chain was registered would quietly mint a duplicate identity for the other. Every
+// pre-existing id skips instead. No network access is possible here: the HCS topic exists
+// (so `createHcsTopicIfNeeded` returns early) and no deployer key is set, which is the same
+// no-op path the dry run takes.
+test("a chain whose agent id is already in the environment is skipped, not registered again", async () => {
+  const proc = Bun.spawn({
+    cmd: ["bun", "run", `${import.meta.dir}/../scripts/identity.ts`],
+    env: {
+      ...process.env,
+      PQ_SIG_SEED: "11".repeat(32),
+      PUBLIC_URL: "https://svc.example",
+      HEDERA_HCS_TOPIC_ID: "0.0.1234",
+      ERC8004_HEDERA_AGENT_ID: "112",
+      ERC8004_ARC_AGENT_ID: "",
+      DEPLOYER_KEY_HEDERA: "",
+      DEPLOYER_KEY_ARC: "",
+    },
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+  const [stdout, stderr, exitCode] = await Promise.all([new Response(proc.stdout).text(), new Response(proc.stderr).text(), proc.exited]);
+  expect(stderr).toBe("");
+  expect(exitCode).toBe(0);
+  expect(stdout).toContain("skip 296: already registered as agent 112");
+  expect(stdout).toContain("skip 5042002: no deployer key");
+});
+
 test("--dry-run without PQ_SIG_SEED fails fast with a clear error, before any chain or HCS call", async () => {
   const proc = Bun.spawn({
     cmd: ["bun", "run", `${import.meta.dir}/../scripts/identity.ts`, "--dry-run"],

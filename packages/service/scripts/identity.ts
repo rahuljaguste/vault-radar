@@ -64,6 +64,15 @@ async function registerOnChain(chainId: string, deployerKey: string | undefined,
     console.log(`[dry-run] ${c.name}: calldata=${buildRegisterCalldata(agentURI, pubHash)}`);
     return;
   }
+  // Idempotent, like the topic creation above: `register()` mints a new agent id every
+  // call, so re-running this script after registering one chain would quietly mint a
+  // second identity for the other. Re-registering is a deliberate act — clear the id from
+  // the environment (or delete the agent) and run again.
+  const existing = process.env[AGENT_ID_ENV[chainId]];
+  if (existing) {
+    console.log(`skip ${chainId}: already registered as agent ${existing} (${AGENT_ID_ENV[chainId]} is set)`);
+    return;
+  }
   if (!deployerKey) {
     console.log(`skip ${chainId}: no deployer key (${DEPLOYER_KEY_ENV[chainId]} not set)`);
     return;
