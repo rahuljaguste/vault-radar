@@ -9,11 +9,11 @@ Built for ETHOnline 2026. Partner tracks targeted below.
 | The Graph, Best Use of Composable or Standardized Graph Products | One template per schema family in `packages/core/src/standardized/templates.ts`, run across 15 pinned deployments in `packages/core/src/standardized/deployments.json`. The ERC-4626 module in `substreams/erc4626-vault-metrics/` imports Pinax `erc4626` and ships to two chains from one WASM binary. |
 | The Graph, Best AI Tooling or AI Use Case (From Scratch) | The agent in `packages/agent/src/client.ts` discovers, seals, pays, opens and verifies before it reasons. It refuses stale data on its own clock, not on the service's word. Package: `<<FILL: substreams.dev package URL for erc4626-vault-metrics>>` |
 | Hedera, AI & Agentic Payments on Hedera | The x402 rail in `packages/service/src/rails/hedera.ts` prices per vault and settles HTS USDC through Blocky402. A real settled request: `<<FILL: HashScan transaction URL for a settled Hedera scan>>` |
-| Arc, Best Agentic Economy Application with Circle Agent Stack | Bucketed Arc routes on the agent card, the Circle Gateway rail, and the dashboard at `<<FILL: deployed dashboard URL>>` showing a live Arc payment. A real settled request: `<<FILL: Arcscan transaction URL for a settled Arc payment>>` |
+| Arc, Best Agentic Economy Application with Circle Agent Stack | Bucketed Arc routes on the agent card, the Circle Gateway rail, and the dashboard at <https://vaultradar-dashboard-production.up.railway.app> showing the same receipts and decisions. A real settled request: `<<FILL: Arcscan transaction URL for a settled Arc payment>>` |
 | Arc, Launch on Arc Testnet & Push to Mainnet | Arc testnet config lives in `packages/service/src/config.ts` under `arc`, network `eip155:5042002`. The mainnet path is a config swap, documented in the run section below. |
 
-Live service: `<<FILL: deployed service URL, e.g. https://vaultradar.fly.dev>>`
-Dashboard: `<<FILL: deployed dashboard URL>>`
+Live service: <https://vaultradar-service-production.up.railway.app>
+Dashboard: <https://vaultradar-dashboard-production.up.railway.app>
 Video: `<<FILL: 2-4 minute demo video URL>>`
 
 ## Architecture
@@ -104,12 +104,12 @@ The agent refuses independently. It checks each attestation's `timestamp` agains
 
 **HCS commitments.** After settlement the service enqueues `{ v: 1, receipt_hash, sig, issued_at }` to a Hedera Consensus Service topic. Only the hash and the signature go on the public log, never the content, so the audit trail cannot leak what anyone asked about. Look a receipt up by hash at `/v1/receipts/:hash`, which returns the sequence number once consensus confirms it.
 
-Topic: `<<FILL: HCS topic id>>`
-Mirror node: `<<FILL: https://testnet.mirrornode.hedera.com/api/v1/topics/<topicId>/messages>>`
+Topic: `0.0.10483981`
+Mirror node: <https://testnet.mirrornode.hedera.com/api/v1/topics/0.0.10483981/messages>
 
 **On-chain key anchor.** The service's ML-DSA public-key hash is written as ERC-8004 metadata under `pq.sig.pubhash`, at registry `0x8004A818BFB912233c491871b3d84c89A494BD9e` on both testnets. Discovery reads it from the chain, so a forged agent card served from a compromised host still fails the check.
 
-ERC-8004 agent ids: Hedera chain 296 `<<FILL: ERC-8004 agent id on Hedera testnet>>`, Arc chain 5042002 `<<FILL: ERC-8004 agent id on Arc testnet>>`
+ERC-8004 agent ids: Hedera chain 296 `112` (registration tx `0x0f23d2a0c2c3a820e69e4304027f5d442c6ae4a8cff1147a6ea8b4e5bda9ca3a`); Arc chain 5042002 not registered — see the scope notes.
 
 **The boundary, stated plainly.** Quoting the design spec:
 
@@ -126,7 +126,9 @@ ERC-8004 agent ids: Hedera chain 296 `<<FILL: ERC-8004 agent id on Hedera testne
 - Hashio JSON-RPC access for the Hedera ECDSA-alias deployer, with the gas limit set explicitly.
 - A publicly reachable Postgres for the Substreams sink. Neon works.
 - A substreams.dev login and a The Graph Market API key, for publishing and for the Substreams endpoint.
-- An Anthropic API key for the agent, and a Fly.io account for hosting the service.
+- An Anthropic API key for the agent, and a host for the service. It runs on Railway today
+  (`packages/service/Dockerfile`, `packages/dashboard/Dockerfile`, and
+  `substreams/erc4626-vault-metrics/Dockerfile` for the sink); nothing in the code is specific to it.
 
 ### Setup
 
@@ -216,7 +218,9 @@ Honest scope notes, so nothing here is read as more than it is:
 - **HCS-14 UAID is not implemented.** The agent card has no `uaid` field. Identity is ERC-8004 plus the signed card, nothing more.
 - **Falcon signatures are not implemented.** Signatures are ML-DSA-65 only. Falcon was considered as a smaller-signature option and dropped.
 - **The upstream x402 payment to The Graph gateway was cut.** Standardized queries use a Studio API key. The service does not pay the gateway per query.
-- **What is built, and what waits on credentials.** The HCS commitment queue, the ERC-8004 registration script (`scripts/identity.ts`), the Arc rail, and the agent policy and CLI are built and covered by `bun test`. What is not done is everything that needs a funded account or a host: the Fly deployment, the identity registration run against both registries, and the live links marked `<<FILL>>` above. The identity run is a prerequisite for any paid request, not a nicety: a card that lists no ERC-8004 identity, or an identity whose registry entry cannot be read, is refused by both the agent and the dashboard before they pay. That is the key-substitution defence working as specified, and it means every purchase also depends on a reachable Hashio or Arc RPC.
+- **What is deployed, and what is not.** The service and the dashboard are live on Railway, and the Hedera identity is registered on chain (HCS topic `0.0.10483981`, ERC-8004 agent id `112`), so the on-chain key anchor resolves to the hash on the agent card. The Substreams sink is deployed in the same project and its schema is in place, but it cannot stream yet: the `SUBSTREAMS_API_TOKEN` in this workspace is a 39-character placeholder rather than a The Graph Market JWT, so the endpoint answers `invalid JWT token`. The Arc registration is not done either — there is no Arc deployer key in the environment, so `scripts/identity.ts` skipped chain 5042002 and the card lists only the Hedera identity. The remaining `<<FILL>>` markers are the video and the settled-payment links, both of which need a funded payer.
+- **A paid request needs a funded agent account.** The agent account is associated with HTS USDC and holds testnet HBAR, but its USDC balance is zero until the Circle faucet is used, and the service's `payTo` account is not associated with the token at all — so a settled request needs one faucet visit and one token association before it can be demonstrated. The identity rule still applies on top of that: a card with no ERC-8004 identity, or an identity whose registry read fails, is refused by both the agent and the dashboard before they pay.
+
 - **KEM key rotation and forward secrecy are out of scope.** So are on-chain PQ payment signatures and zero-knowledge proofs of the risk computation.
 
 ## License

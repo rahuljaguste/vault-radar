@@ -27,4 +27,7 @@ RUN apt-get update \
 COPY substreams/erc4626-vault-metrics/erc4626-vault-metrics-v0.1.0.spkg /pkg/mainnet.spkg
 
 ENV ENDPOINT=mainnet.eth.streamingfast.io:443
-CMD ["sh", "-c", "set -e; DSN=$(printf '%s' \"$DATABASE_URL\" | sed 's#^postgresql://#postgres://'); echo \"sink: starting (endpoint=$ENDPOINT)\"; substreams-sink-sql setup \"$DSN\" /pkg/mainnet.spkg --cursors-table cursors_1; exec substreams-sink-sql run \"$DSN\" /pkg/mainnet.spkg -e \"$ENDPOINT\" --params db_out=1 --cursors-table cursors_1 --final-blocks-only"]
+# The DSN rewrite is a `case` rather than `sed`: the `#` delimiters of a sed expression do
+# not survive this file's own escaping cleanly, and dash (the image's /bin/sh) supports
+# neither `${var/x/y}` nor sed's brevity here for free.
+CMD ["sh", "-c", "set -e; case \"$DATABASE_URL\" in postgresql://*) DSN=\"postgres://${DATABASE_URL#postgresql://}\";; *) DSN=\"$DATABASE_URL\";; esac; echo \"sink: starting (endpoint=$ENDPOINT)\"; substreams-sink-sql setup \"$DSN\" /pkg/mainnet.spkg --cursors-table cursors_1; exec substreams-sink-sql run \"$DSN\" /pkg/mainnet.spkg -e \"$ENDPOINT\" --params db_out=1 --cursors-table cursors_1 --final-blocks-only"]
