@@ -1,0 +1,13 @@
+# Keeps the build context to what the images actually copy. The worktrees alone are a
+# second full checkout of the repo, and the Rust target directory is gigabytes.
+.git
+.worktrees
+.superpowers
+node_modules
+**/node_modules
+runs
+substreams/**/target
+.env
+.env.*
+!.env.example
+*.log
