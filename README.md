@@ -27,7 +27,7 @@ the project and track selection, the design approval, the scope cuts, every acco
 the deployment and key-management decisions, and the interactive steps that needed a browser.
 
 Every artifact of that process ships in the repository, as the rules require:
-[`docs/ai-workflow/`](docs/ai-workflow/README.md) holds the decision ledger, the per-task
+[`docs/ai-workflow/`](docs/ai-workflow/README.md) holds the prompts in sequence, the decision ledger, the per-task
 briefs and reports, and the three review reports, alongside the
 [spec](docs/superpowers/specs/2026-09-05-vaultradar-design.md) and
 [plan](docs/superpowers/plans/2026-09-09-vaultradar.md). Start with the ledger: it records

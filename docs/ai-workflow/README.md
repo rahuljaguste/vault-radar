@@ -33,6 +33,7 @@ disagree with the project rather than the reverse, and this file is the record t
 
 | File | What it is |
 |---|---|
+| `direction.md` | The human's prompts in sequence, and what each one produced. The shortest honest account of where the direction came from. |
 | `ledger.md` | The decision log, in order. Every ruling the controller made when the plan met reality, each with the reason and what it would cost if wrong — including the scope cuts (the Hedera harness PR, HCS-14 UAID, Falcon, upstream x402 to The Graph) and the calls made under time pressure. Start here. |
 | `task-N-brief.md` | What each implementer was told. These are the prompts: one per task, written to be self-contained, with the exact values, signatures and tests required. |
 | `task-N-report.md` | What each implementer did, what it deviated on and why, which tests it added, and the concerns it raised. |
