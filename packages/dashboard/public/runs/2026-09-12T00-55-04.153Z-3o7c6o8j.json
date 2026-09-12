@@ -1,0 +1,103 @@
+{
+  "id": "3o7c6o8j",
+  "startedAt": "2026-09-12T00:55:04.153Z",
+  "serviceUrl": "https://vaultradar-service-production.up.railway.app",
+  "policy": {
+    "budget": {
+      "usdc_hedera": "1.00",
+      "usdc_arc": "1.00"
+    },
+    "privacy": "strict",
+    "rail_preference": "cheapest",
+    "max_age_seconds": 900,
+    "expected_erc8004": []
+  },
+  "discovery": {
+    "cardSignatureValid": true,
+    "pubHash": "dd4a56bffd570c901648dcac7261d5bc38c079a139f3bc0e26c619a138cbf2e1",
+    "kid": "9c4ea1f4a473e205",
+    "onChain": [
+      {
+        "chainId": "296",
+        "agentId": "112",
+        "matches": true
+      },
+      {
+        "chainId": "5042002",
+        "agentId": "894342",
+        "matches": true
+      }
+    ]
+  },
+  "requests": [
+    {
+      "rail": "hedera",
+      "tier": "table",
+      "sealed": true,
+      "priceUsd": "0.06",
+      "txId": "0.0.7162784@1789174499.520253147",
+      "receiptHash": "666a8f86e15003bdcd63fe6daab4e34085b4e8839304c680f56887a4f8868ff9",
+      "receipt": {
+        "v": 1,
+        "service": {
+          "erc8004": [
+            {
+              "chainId": "296",
+              "agentId": "112"
+            },
+            {
+              "chainId": "5042002",
+              "agentId": "894342"
+            }
+          ]
+        },
+        "request_hash": "01dad024a7b1d3bc14d2ba7deccf25e3f74f89d60bfe7fab628ce081630dcc6f",
+        "response_hash": "ae2a65e0cb2bad441bbbfe05a48b43a609207cb9f3d2a1c01ea627427e9115e0",
+        "sealed": true,
+        "sources": [
+          {
+            "ref": "substreams:erc4626-vault-metrics",
+            "chainId": "1",
+            "block": "25957300",
+            "timestamp": "1789167551"
+          }
+        ],
+        "price": {
+          "amount": "60000",
+          "asset": "0.0.429274",
+          "rail": "hedera"
+        },
+        "payment": {
+          "rail": "hedera",
+          "txId": "0.0.7162784@1789174499.520253147"
+        },
+        "tier": "table",
+        "hcs": {
+          "topicId": "0.0.10483981"
+        },
+        "issued_at": "1789174510",
+        "nonce": "034d19cdc644d74afa14038dfc967e2f",
+        "sig": {
+          "alg": "ML-DSA-65",
+          "pub_hash": "dd4a56bffd570c901648dcac7261d5bc38c079a139f3bc0e26c619a138cbf2e1",
+          "value": "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"
+        }
+      },
+      "verdicts": [],
+      "rejected": []
+    }
+  ],
+  "decisions": [
+    {
+      "vaultId": "1:0x27b5739e22ad9033bcbf192059122d163b60349d",
+      "action": "insufficient data",
+      "reason": "This vault was not present in the fetched table(s), so nothing about it was bought.",
+      "citations": {
+        "block": "",
+        "source": "",
+        "txId": "0.0.7162784@1789174499.520253147",
+        "receiptHash": "666a8f86e15003bdcd63fe6daab4e34085b4e8839304c680f56887a4f8868ff9"
+      }
+    }
+  ]
+}

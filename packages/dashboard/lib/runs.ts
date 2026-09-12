@@ -1,4 +1,4 @@
-import { promises as fs, readFileSync } from "node:fs";
+import { promises as fs, existsSync, readFileSync } from "node:fs";
 import path from "node:path";
 import type { RunMatch, RunRecord } from "./types";
 
@@ -65,8 +65,23 @@ export function runsDir(): string {
   return path.join(repoRoot(), "runs");
 }
 
+/**
+ * A path inside the dashboard package's `public/`.
+ *
+ * Two candidates for the same reason `repoRoot()` has a walk-up: the container and the
+ * documented dev command both run with `process.cwd()` at `packages/dashboard`, but the
+ * repository's own `bun test` runs from the root, where a cwd-relative `public/` is not where
+ * the files are — and the fixture would silently resolve to nothing there, which is how a
+ * deployment could end up serving the recordings without the run `/flow` links to.
+ */
+function publicPath(...rest: string[]): string {
+  const fromCwd = path.resolve(process.cwd(), "public", ...rest);
+  if (existsSync(fromCwd)) return fromCwd;
+  return path.resolve(repoRoot(), "packages", "dashboard", "public", ...rest);
+}
+
 function demoRunPath(): string {
-  return path.resolve(process.cwd(), "public", "demo-run.json");
+  return publicPath("demo-run.json");
 }
 
 async function readDemoRun(): Promise<RunRecord | null> {
@@ -76,6 +91,49 @@ async function readDemoRun(): Promise<RunRecord | null> {
   } catch {
     return null;
   }
+}
+
+/** Where the recordings of real purchases are committed, for a deployment with no runs. */
+function bundledRunsDir(): string {
+  return publicPath("runs");
+}
+
+/**
+ * What a deployment with no runs directory serves: every committed recording, and
+ * `public/demo-run.json` beside them.
+ *
+ * Both, rather than one or the other. The fixture is deep-linked from `/flow` and from the
+ * runs table, so dropping it once recordings exist would 404 a link on a page a judge is
+ * likely to click. And the fixture being the *only* fallback meant a hosted deployment could
+ * show exactly one run, chosen when the fixture was written — so it could never show a scan
+ * that was refused, and the `no data` state was unreachable on the deployed site while every
+ * local checkout had three of them in `runs/`.
+ *
+ * Deduplicated by id, because the same purchase committed twice — once as a file, once as
+ * the fixture — would otherwise list as two scans.
+ */
+async function readBundledRuns(): Promise<RunRecord[]> {
+  const dir = bundledRunsDir();
+  let files: string[] = [];
+  try {
+    files = (await fs.readdir(dir)).filter((f) => f.endsWith(".json")).sort();
+  } catch {
+    // Nothing committed: the fixture is the whole fallback, as it always was.
+  }
+
+  const runs: RunRecord[] = [];
+  for (const file of files) {
+    try {
+      runs.push(JSON.parse(await fs.readFile(path.join(dir, file), "utf8")) as RunRecord);
+    } catch {
+      // Same rule as a real run file: skip one that will not parse rather than failing.
+    }
+  }
+
+  const demo = await readDemoRun();
+  const all = demo ? [demo, ...runs] : runs;
+  const seen = new Set<string>();
+  return all.filter((r) => (seen.has(r.id) ? false : (seen.add(r.id), true)));
 }
 
 /**
@@ -112,13 +170,10 @@ async function readRunFile(file: string): Promise<RunRecord | null> {
   }
 }
 
-/** Every run, newest last, falling back to the bundled demo run. */
+/** Every run, newest last, falling back to the committed recordings and the fixture. */
 async function readAllRuns(): Promise<RunRecord[]> {
   const files = await listRunFiles();
-  if (files.length === 0) {
-    const demo = await readDemoRun();
-    return demo ? [demo] : [];
-  }
+  if (files.length === 0) return readBundledRuns();
   const runs: RunRecord[] = [];
   for (const file of files) {
     const run = await readRunFile(file);
@@ -136,8 +191,9 @@ export async function getRun(id: string): Promise<RunRecord | null> {
   if (!isValidRunId(id)) return null;
   const files = await listRunFiles();
   if (files.length === 0) {
-    const demo = await readDemoRun();
-    return demo && demo.id === id ? demo : null;
+    // Same source `listRuns` listed from, so every id in the runs table resolves.
+    const bundled = await readBundledRuns();
+    return bundled.find((r) => r.id === id) ?? null;
   }
   // `saveRun` (packages/agent/src/runs.ts) names files `<startedAt>-<id>.json`, so
   // the id is a suffix of the stem, not the whole stem — matching only `<id>.json`

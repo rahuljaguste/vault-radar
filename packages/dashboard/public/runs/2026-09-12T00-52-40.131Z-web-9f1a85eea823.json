@@ -1,0 +1,282 @@
+{
+  "id": "web-9f1a85eea823",
+  "startedAt": "2026-09-12T00:52:40.131Z",
+  "serviceUrl": "https://vaultradar-service-production.up.railway.app",
+  "policy": {
+    "budget": {
+      "usdc_hedera": "1.00",
+      "usdc_arc": "1.00"
+    },
+    "privacy": "balanced",
+    "rail_preference": "cheapest",
+    "max_age_seconds": 900,
+    "expected_erc8004": []
+  },
+  "discovery": {
+    "cardSignatureValid": true,
+    "pubHash": "dd4a56bffd570c901648dcac7261d5bc38c079a139f3bc0e26c619a138cbf2e1",
+    "kid": "9c4ea1f4a473e205",
+    "onChain": [
+      {
+        "chainId": "296",
+        "agentId": "112",
+        "matches": true
+      },
+      {
+        "chainId": "5042002",
+        "agentId": "894342",
+        "matches": true
+      }
+    ]
+  },
+  "requests": [
+    {
+      "rail": "hedera",
+      "tier": "scan",
+      "sealed": true,
+      "priceUsd": "0.0015",
+      "txId": "0.0.7162784@1789174355.527711263",
+      "receiptHash": "8b2c14e908f2a4f90ba20907a3462a603c60fee64a7002d67110e91dcbdfc924",
+      "receipt": {
+        "v": 1,
+        "service": {
+          "erc8004": [
+            {
+              "chainId": "296",
+              "agentId": "112"
+            },
+            {
+              "chainId": "5042002",
+              "agentId": "894342"
+            }
+          ]
+        },
+        "request_hash": "71ca5907cada80ff2449b85777c1753270634c0470e1ccd843fe390c206962ad",
+        "response_hash": "678c6c8048cf5d302dfdbc362fb95e99f9762f5f20bbaddb19fec001a4dd1406",
+        "sealed": true,
+        "sources": [
+          {
+            "ref": "QmcXE5QVcBcvcaJddPxd8mFs6W9xt7STmwfgguoiM6ddAd",
+            "chainId": "1",
+            "block": "25957867",
+            "timestamp": "1789174355"
+          },
+          {
+            "ref": "QmNrQoow7pjM3biRnnhzeCaDYhuEbDyjKCpFeNv2oGXnuK",
+            "chainId": "1",
+            "block": "25957867",
+            "timestamp": "1789174355"
+          },
+          {
+            "ref": "QmTVumjhubXWP8MeDx5g114MRX99E4Gie5mFqVurttF99X",
+            "chainId": "1",
+            "block": "25957867",
+            "timestamp": "1789174355"
+          },
+          {
+            "ref": "QmVpuZKrjhjHx2hCtpGNaW29ZYq4Xt2GyPLpiMDP2YTAHE",
+            "chainId": "1",
+            "block": "25957867",
+            "timestamp": "1789174355"
+          },
+          {
+            "ref": "QmfTzwSoE3krDFMfYT9XTdwLcdMYBmMwyPqA1FHTMkmsVs",
+            "chainId": "1",
+            "block": "25957866",
+            "timestamp": "1789174343"
+          },
+          {
+            "ref": "QmXK4zttkPkpuMYjpyp8YdQYmb15CPN4WETqLStXW9XiGD",
+            "chainId": "1",
+            "block": "25957866",
+            "timestamp": "1789174343"
+          },
+          {
+            "ref": "QmbmeihANx6cyZB7UxWkzTGeMg7XpdW5DVnjtvuJZj6Hnx",
+            "chainId": "1",
+            "block": "25955374",
+            "timestamp": "1789144319"
+          },
+          {
+            "ref": "Qmd5Ct1Pn3V47jhBVEscS1NH8e5L6tz1wrTgzZE5hvHN4b",
+            "chainId": "1",
+            "block": "25957866",
+            "timestamp": "1789174343"
+          }
+        ],
+        "price": {
+          "amount": "1500",
+          "asset": "0.0.429274",
+          "rail": "hedera"
+        },
+        "payment": {
+          "rail": "hedera",
+          "txId": "0.0.7162784@1789174355.527711263"
+        },
+        "tier": "scan",
+        "hcs": {
+          "topicId": "0.0.10483981"
+        },
+        "issued_at": "1789174368",
+        "nonce": "e9c074ab6e6d5c531d488fc03e17d0f7",
+        "sig": {
+          "alg": "ML-DSA-65",
+          "pub_hash": "dd4a56bffd570c901648dcac7261d5bc38c079a139f3bc0e26c619a138cbf2e1",
+          "value": "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"
+        }
+      },
+      "verdicts": [
+        {
+          "vaultId": "1:0x27b5739e22ad9033bcbf192059122d163b60349d",
+          "verdict": "ok",
+          "score": 0,
+          "flags": [],
+          "history": [
+            {
+              "t": 1788633191,
+              "v": 2597543630514023400
+            },
+            {
+              "t": 1788735779,
+              "v": 2598367380825701400
+            },
+            {
+              "t": 1788811991,
+              "v": 2599248013085689300
+            },
+            {
+              "t": 1788887771,
+              "v": 2599936615022577700
+            },
+            {
+              "t": 1788896795,
+              "v": 2600025467031189500
+            },
+            {
+              "t": 1788896795,
+              "v": 2600025467031189500
+            },
+            {
+              "t": 1788918239,
+              "v": 2600209227129497000
+            },
+            {
+              "t": 1788920999,
+              "v": 2600235062205379000
+            },
+            {
+              "t": 1788941651,
+              "v": 2600428343893564000
+            },
+            {
+              "t": 1788949979,
+              "v": 2600506294900350000
+            },
+            {
+              "t": 1788986255,
+              "v": 2600845903187251700
+            },
+            {
+              "t": 1788986255,
+              "v": 2600845903187251700
+            },
+            {
+              "t": 1788999203,
+              "v": 2600967251910219300
+            },
+            {
+              "t": 1789007423,
+              "v": 2601063166017119000
+            },
+            {
+              "t": 1789019471,
+              "v": 2601203733625277400
+            },
+            {
+              "t": 1789020743,
+              "v": 2601218574725530000
+            },
+            {
+              "t": 1789048031,
+              "v": 2601537015475622400
+            },
+            {
+              "t": 1789051619,
+              "v": 2601578905477591000
+            },
+            {
+              "t": 1789061735,
+              "v": 2601697147309436400
+            },
+            {
+              "t": 1789077707,
+              "v": 2601883929467608000
+            },
+            {
+              "t": 1789083623,
+              "v": 2601953100646636500
+            },
+            {
+              "t": 1789083623,
+              "v": 2601953100646636500
+            },
+            {
+              "t": 1789090619,
+              "v": 2601976117132793000
+            },
+            {
+              "t": 1789093823,
+              "v": 2602013776693610500
+            },
+            {
+              "t": 1789106555,
+              "v": 2602163411682749400
+            },
+            {
+              "t": 1789113599,
+              "v": 2602246202974810600
+            },
+            {
+              "t": 1789114643,
+              "v": 2602258475084247000
+            },
+            {
+              "t": 1789122767,
+              "v": 2602353977867826700
+            },
+            {
+              "t": 1789137647,
+              "v": 2602528812748763000
+            },
+            {
+              "t": 1789137647,
+              "v": 2602528812748763000
+            },
+            {
+              "t": 1789171799,
+              "v": 2602932878281837600
+            },
+            {
+              "t": 1789171799,
+              "v": 2602932878281837600
+            }
+          ]
+        }
+      ],
+      "rejected": []
+    }
+  ],
+  "decisions": [
+    {
+      "vaultId": "1:0x27b5739e22ad9033bcbf192059122d163b60349d",
+      "action": "hold",
+      "reason": "Verdict ok at score 0 with no flags: hold.",
+      "citations": {
+        "block": "25957866",
+        "source": "messari:QmXK4zttkPkpuMYjpyp8YdQYmb15CPN4WETqLStXW9XiGD",
+        "txId": "0.0.7162784@1789174355.527711263",
+        "receiptHash": "8b2c14e908f2a4f90ba20907a3462a603c60fee64a7002d67110e91dcbdfc924"
+      }
+    }
+  ]
+}
