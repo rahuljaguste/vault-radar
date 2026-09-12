@@ -11,7 +11,7 @@ test("messari within 3600s is fresh, beyond is stale, error is unavailable", () 
 // data that was final and correct. This asserts the threshold clears the lag with slack,
 // which is the property that matters, rather than pinning the constant.
 test("substreams data behind the finality lag is still fresh, and genuinely old data is not", () => {
-  expect(classifyFreshness("substreams", 1000, 1000 + 16 * 60)).toBe("fresh"); // 16 minutes behind
+  expect(classifyFreshness("substreams", 1000, 1000 + 25 * 60)).toBe("fresh"); // inside the measured band
   expect(classifyFreshness("substreams", 1000, 1000 + 3600)).toBe("stale"); // an hour behind
 });
 test("vault freshness is the worst source; no sources is unavailable", () => {

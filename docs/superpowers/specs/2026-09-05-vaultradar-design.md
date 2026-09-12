@@ -181,7 +181,7 @@ The Arc path differs in steps 3 to 7: Gateway middleware, EIP-3009 authorization
   lag — 64 to 95 blocks, 13 to 19 minutes. Five minutes was therefore unsatisfiable in
   practice: the sink ran correctly and every vault it backed still read `stale`, which the
   service reports as `unavailable` — "no data" for data that is final and right. Twenty
-  minutes clears the lag with slack while still bounding staleness, and it stays below the
+  minutes (raised to 30 after measuring the running sink at an 80-150 block band) clears the lag while still bounding staleness, and it stays below the
   agent's own default `max_age_seconds` of 900s for the common case.
 - Envelope malformed at quote time: 400 before payment. Envelope fails `ts`, nonce, payer or count checks after verify: 422, no settlement, nothing charged.
 - Handler exceeds 60 seconds: 504, no settlement.

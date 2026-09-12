@@ -9,10 +9,15 @@ import type { Freshness, Source, SourceKind } from "./types";
  * five-minute threshold (spec §7's original figure) was therefore unsatisfiable: the sink
  * was correct and current and every vault it backed still read `stale`, which is worse than
  * useless because it reports "no data" for data that is final and right. Twenty minutes
- * covers the finality lag with slack and still bounds staleness, and it stays under the
- * agent's own default `max_age_seconds` of 900s for the common case.
+ * Measured against the running sink, the lag is not a constant: finality puts a floor of
+ * roughly 64 to 95 blocks on it, and the pipeline's own jitter pushes the cursor to around
+ * 80 to 150 blocks — 16 to 30 minutes — as it catches up and drifts back. A threshold
+ * inside that band makes freshness a coin toss, which is what a 20-minute figure turned out
+ * to be: one scan of 100 vaults came back entirely `stale`, minutes later the same query
+ * would have been fresh. Thirty minutes sits just above the observed band, while staying
+ * well under the Messari threshold because on-chain data still has a block to point at.
  */
-export const THRESHOLDS: Record<SourceKind, number> = { messari: 3600, substreams: 1200 };
+export const THRESHOLDS: Record<SourceKind, number> = { messari: 3600, substreams: 1800 };
 
 export function classifyFreshness(kind: SourceKind, sourceTs: number, headTs: number, error = false): Freshness {
   if (error) return "unavailable";
