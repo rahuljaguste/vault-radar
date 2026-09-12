@@ -160,6 +160,15 @@ bun install
 bun test
 ```
 
+### Both at once
+
+```bash
+bun run dev
+```
+
+Service on `:8787`, dashboard on `:3000`, with the dashboard pointed at the local service
+rather than at any deployment you have configured. `Ctrl-C` stops both.
+
 ### Service
 
 ```bash
