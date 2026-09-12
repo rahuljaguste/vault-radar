@@ -95,7 +95,10 @@ export function ScanForm({ keysConfigured, demoRunId }: { keysConfigured: boolea
           id="vaults"
           rows={6}
           spellCheck={false}
-          placeholder={`${EXAMPLE_VAULT_ID}\n8453:0x0000000000000000000000000000000000000000`}
+          // One real example, which the service resolves. The second line used to be
+          // `8453:0x000…000` — an address that exists nowhere, on a chain the service
+          // currently returns no vaults for at all, so following the example failed twice.
+          placeholder={EXAMPLE_VAULT_ID}
           value={text}
           onChange={(e) => setText(e.target.value)}
           disabled={running}
@@ -108,15 +111,10 @@ export function ScanForm({ keysConfigured, demoRunId }: { keysConfigured: boolea
               : parsed.error}
         </p>
 
-        <p className="toolbar">
-          <button type="button" onClick={onScan} disabled={running || !parsed.ok || !keysConfigured}>
-            {busy === "scanning" ? "Paying and scanning..." : "Scan now"}
-          </button>
-          <button type="button" onClick={onShowHistory} disabled={running || !parsed.ok}>
-            {busy === "history" ? "Loading..." : "Show history (free)"}
-          </button>
-        </p>
-
+        {/* What the buttons do comes before the buttons. It used to sit underneath them, so a
+            visitor met "Scan now" with no statement of what it costs or who pays until after
+            they had read past it — and when the keys are missing, the reason both buttons are
+            disabled arrived last instead of first. */}
         {keysConfigured ? (
           <p className="muted">
             &ldquo;Scan now&rdquo; buys a real x402 request. The payer is the operator&apos;s agent account, not your
@@ -140,6 +138,15 @@ export function ScanForm({ keysConfigured, demoRunId }: { keysConfigured: boolea
             </p>
           </div>
         )}
+
+        <p className="toolbar">
+          <button type="button" onClick={onScan} disabled={running || !parsed.ok || !keysConfigured}>
+            {busy === "scanning" ? "Paying and scanning..." : "Scan now"}
+          </button>
+          <button type="button" onClick={onShowHistory} disabled={running || !parsed.ok}>
+            {busy === "history" ? "Loading..." : "Show history (free)"}
+          </button>
+        </p>
 
         {error && (
           <div className="card">
