@@ -33,6 +33,14 @@ COPY docs ./docs
 COPY README.md ./README.md
 COPY LICENSE ./LICENSE
 
+# The ARG is what makes the note at the top of this file true. Railway passes a service's
+# variables to a Dockerfile build only when the Dockerfile declares them, and without this
+# line `next build` saw the variable unset and inlined the `http://localhost:8787` fallback —
+# so the deployed /verify page, whose whole job is to fetch the agent card from the browser,
+# could not reach the service. The comment above described a requirement nothing implemented.
+ARG NEXT_PUBLIC_SERVICE_URL
+ENV NEXT_PUBLIC_SERVICE_URL=$NEXT_PUBLIC_SERVICE_URL
+
 ENV NODE_ENV=production
 WORKDIR /app/packages/dashboard
 RUN if command -v node >/dev/null 2>&1; then \
