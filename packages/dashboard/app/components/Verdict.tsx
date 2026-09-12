@@ -1,53 +1,57 @@
 import type { ReactNode } from "react";
-
-/** The four states a vault can be in, in one place so every page spells them the same. */
-export type Verdict = "ok" | "watch" | "alert" | "unavailable";
-
-/** Risk score at or above which `risk.ts` calls it an alert, and below which it is ok. */
-const ALERT_AT = 50;
-const WATCH_AT = 20;
+import { VERDICT_MEANING, VERDICT_WORDS, scoreLabel, verdictOf, type Verdict } from "@/lib/verdict";
 
 /**
- * The verdict a score maps to, matching `risk.ts`'s own thresholds. Duplicated here rather
- * than exported from core because the dashboard renders stored runs: a run recorded last
- * week should read as the verdict it *had*, not as whatever today's thresholds would say.
- * The recorded verdict is preferred everywhere; this is only for a bare score.
+ * The verdict vocabulary lives in `lib/verdict.ts` and is re-exported here, so a page can keep
+ * importing the words from the component it renders them with.
  */
-export function verdictOf(score: number): Verdict {
-  return score >= ALERT_AT ? "alert" : score >= WATCH_AT ? "watch" : "ok";
-}
+export { verdictOf };
+export type { Verdict };
 
-/** The word shown for each verdict. `unavailable` is a refusal, not a mild `ok`. */
-const WORDS: Record<Verdict, string> = {
-  ok: "ok",
-  watch: "watch",
-  alert: "alert",
-  unavailable: "no data",
-};
-
+/**
+ * A verdict as a badge.
+ *
+ * The `title` defaults to what the verdict actually claims, because the four words are this
+ * project's own and a bare `ok` does not tell a reader that it means "nothing was flagged"
+ * rather than "this is safe". A caller passing its own `title` (a flag, say) overrides it.
+ */
 export function VerdictBadge({ verdict, title }: { verdict: Verdict; title?: string }): ReactNode {
   const tone = verdict === "unavailable" ? "unavailable" : verdict;
   return (
-    <span className={`badge ${tone}`} title={title}>
-      {WORDS[verdict]}
+    <span className={`badge ${tone}`} title={title ?? VERDICT_MEANING[verdict]}>
+      {VERDICT_WORDS[verdict]}
     </span>
   );
 }
 
 /**
- * A 0-100 score as a bar. A number alone ("82") makes the reader recall the thresholds
- * before they know whether to care; the bar's length and colour answer that on sight, and
- * the number stays for anyone comparing two vaults over time.
+ * A 0-100 score as a bar, or a dash when there is no score to show.
+ *
+ * A number alone ("82") makes the reader recall the thresholds before they know whether to
+ * care; the bar's length and colour answer that on sight, and the number stays for anyone
+ * comparing two vaults over time.
+ *
+ * `unavailable` renders no bar at all. It carries a score of 0 for the same mechanical
+ * reason every unremarkable vault does — nothing was added to it — but the two mean opposite
+ * things, and a row of empty bars with a `0` in it read as a hundred vaults scoring zero
+ * when fifteen of them had not been assessed.
  */
 export function ScoreBar({ score, verdict }: { score: number; verdict?: Verdict }): ReactNode {
   const tone = verdict ?? verdictOf(score);
+  if (tone === "unavailable") {
+    return (
+      <span className="score absent" title={VERDICT_MEANING.unavailable}>
+        {scoreLabel(score, tone)}
+      </span>
+    );
+  }
   const pct = Math.max(0, Math.min(100, score));
   return (
-    <span className={`score ${tone === "unavailable" ? "absent" : tone}`} title={`${score} / 100`}>
+    <span className={`score ${tone}`} title={`${score} / 100 — ${VERDICT_MEANING[tone]}`}>
       <span className="track">
         <span className="fill" style={{ width: `${pct}%` }} />
       </span>
-      <span>{score}</span>
+      <span>{scoreLabel(score, tone)}</span>
     </span>
   );
 }

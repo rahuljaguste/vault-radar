@@ -6,6 +6,7 @@ import { Sparkline } from "@/app/components/Sparkline";
 import { ScoreBar, VerdictBadge, type Verdict } from "@/app/components/Verdict";
 import { compactFlag, formatFlag } from "@/lib/flags";
 import { explorerTxUrl } from "@/lib/explorer";
+import { VERDICT_MEANING } from "@/lib/verdict";
 
 export const metadata = { title: "VaultRadar — vault ranking" };
 
@@ -95,6 +96,31 @@ export default async function UniversePage({ searchParams }: { searchParams: Pro
           )}
           {summaries.length > 1 && <span className="faint">{summaries.length} runs recorded</span>}
         </div>
+      </section>
+
+      {/* The four words are this project's own, and `ok` at score 0 against `no data` at score 0
+          was the single most confusing thing on the page — they are opposite findings that
+          printed identically. So the definitions are on the page, not only in a tooltip. */}
+      <section className="stack tight">
+        <h3>What the verdicts mean</h3>
+        <dl className="kv">
+          <dt>
+            <VerdictBadge verdict="ok" />
+          </dt>
+          <dd>{VERDICT_MEANING.ok}</dd>
+          <dt>
+            <VerdictBadge verdict="watch" />
+          </dt>
+          <dd>{VERDICT_MEANING.watch}</dd>
+          <dt>
+            <VerdictBadge verdict="alert" />
+          </dt>
+          <dd>{VERDICT_MEANING.alert}</dd>
+          <dt>
+            <VerdictBadge verdict="unavailable" />
+          </dt>
+          <dd>{VERDICT_MEANING.unavailable}</dd>
+        </dl>
       </section>
 
       {!run ? (
