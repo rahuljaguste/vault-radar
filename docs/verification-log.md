@@ -54,9 +54,39 @@ The agent's own `discover()` — the code path that decides whether to pay — r
 
 ## Settled payments
 
-### Hedera rail
+Nine paid requests have settled: eight on Hedera, one on Arc. Every row below was read back
+rather than copied from the run records — the transactions from the Hedera mirror node, the
+receipt hashes from the deployed service, which still serves each one.
 
-One sealed scan of one vault, priced at 0.0015 USDC (0.001 + 0.0005 × 1).
+All eight Hedera transactions are `SUCCESS`, all eight move HTS USDC `0.0.429274` from payer
+`0.0.10463726` to pay-to `0.0.10463666`, and all eight are submitted by the same facilitator
+account `0.0.7162784`, which is why the ids share a prefix.
+
+| Paid for | USDC | Transaction | Receipt | Consensus (UTC) |
+| --- | --- | --- | --- | --- |
+| one sealed vault scan | 0.0015 | [`0.0.7162784@1789169558.289173297`](https://hashscan.io/testnet/transaction/0.0.7162784-1789169558-289173297) · [mirror](https://testnet.mirrornode.hedera.com/api/v1/transactions/0.0.7162784-1789169558-289173297) | [`50bddf81`](https://vaultradar-service-production.up.railway.app/v1/receipts/50bddf81474ad98fca492c1f640a695ea525342dc4cef85c2f5ff0704ff50cbc) | 2026-09-11 23:33:04 |
+| one sealed vault scan | 0.0015 | [`0.0.7162784@1789174355.527711263`](https://hashscan.io/testnet/transaction/0.0.7162784-1789174355-527711263) · [mirror](https://testnet.mirrornode.hedera.com/api/v1/transactions/0.0.7162784-1789174355-527711263) | [`8b2c14e9`](https://vaultradar-service-production.up.railway.app/v1/receipts/8b2c14e908f2a4f90ba20907a3462a603c60fee64a7002d67110e91dcbdfc924) | 2026-09-12 00:52:50 |
+| the strict-tier table | 0.06 | [`0.0.7162784@1789174499.520253147`](https://hashscan.io/testnet/transaction/0.0.7162784-1789174499-520253147) · [mirror](https://testnet.mirrornode.hedera.com/api/v1/transactions/0.0.7162784-1789174499-520253147) | [`666a8f86`](https://vaultradar-service-production.up.railway.app/v1/receipts/666a8f86e15003bdcd63fe6daab4e34085b4e8839304c680f56887a4f8868ff9) | 2026-09-12 00:55:12 |
+| a 100-vault sealed scan | 0.051 | [`0.0.7162784@1789174549.473281947`](https://hashscan.io/testnet/transaction/0.0.7162784-1789174549-473281947) · [mirror](https://testnet.mirrornode.hedera.com/api/v1/transactions/0.0.7162784-1789174549-473281947) | [`799fe27f`](https://vaultradar-service-production.up.railway.app/v1/receipts/799fe27f262e04967f1a703be7d217b77ebf2b2ced20fcb3abdd4a8192e7a3a0) | 2026-09-12 00:56:08 |
+| a 100-vault sealed scan | 0.051 | [`0.0.7162784@1789174993.567530846`](https://hashscan.io/testnet/transaction/0.0.7162784-1789174993-567530846) · [mirror](https://testnet.mirrornode.hedera.com/api/v1/transactions/0.0.7162784-1789174993-567530846) | [`0dc9ee02`](https://vaultradar-service-production.up.railway.app/v1/receipts/0dc9ee02fe31a0f1aed46cb8b89e0fdeccea10352287264710f325c0e9957c08) | 2026-09-12 01:03:34 |
+| a 100-vault sealed scan | 0.051 | [`0.0.7162784@1789175488.013994200`](https://hashscan.io/testnet/transaction/0.0.7162784-1789175488-013994200) · [mirror](https://testnet.mirrornode.hedera.com/api/v1/transactions/0.0.7162784-1789175488-013994200) | [`70957716`](https://vaultradar-service-production.up.railway.app/v1/receipts/70957716b5d83a3bfd2bd6cb9a8f5e6f07663c64abdff2e3af5195b1d7c8dd53) | 2026-09-12 01:11:44 |
+| a 100-vault sealed scan | 0.051 | [`0.0.7162784@1789175602.112134940`](https://hashscan.io/testnet/transaction/0.0.7162784-1789175602-112134940) · [mirror](https://testnet.mirrornode.hedera.com/api/v1/transactions/0.0.7162784-1789175602-112134940) | [`8b37ccbf`](https://vaultradar-service-production.up.railway.app/v1/receipts/8b37ccbfb4727a87a2b45ad854152d268b170b58a4f1236a02be0de4548d1563) | 2026-09-12 01:13:38 |
+| a 100-vault sealed scan | 0.051 | [`0.0.7162784@1789176159.407789041`](https://hashscan.io/testnet/transaction/0.0.7162784-1789176159-407789041) · [mirror](https://testnet.mirrornode.hedera.com/api/v1/transactions/0.0.7162784-1789176159-407789041) | [`c67e8437`](https://vaultradar-service-production.up.railway.app/v1/receipts/c67e843747d707cb27e96c580faa2017e19f24e43db132b6a66270710cb1e95e) | 2026-09-12 01:22:58 |
+| **total** | **0.318** | | | |
+
+The amounts are the pricing constants as they land on chain, which is the check that the quote
+the client enforced and the charge the facilitator signed are the same number: `0.0015` is
+`0.001 + 0.0005 × 1` and `0.051` is that formula at a hundred vaults, both
+`hederaScanPriceUsd` in `packages/core/src/pricing.ts`, and the strict tier's whole-protocol
+table is the flat `TABLE_PRICE_USD` of `0.06` in the same file.
+
+The five 100-vault scans are the ones worth clicking: each bought a sealed verdict for every
+vault under the two live Messari registrations in one request, and the price rose with the
+count, which a single-vault example cannot show.
+
+### One in full
+
+The first row, as the mirror node returns it:
 
 ```
 transaction  0.0.7162784@1789169558.289173297
@@ -65,13 +95,13 @@ payTo        0.0.10463666   +1500 atomic units
 result       SUCCESS            consensus 1789169584.294669104
 ```
 
-[HashScan](https://hashscan.io/testnet/transaction/0.0.7162784-1789169558-289173297) ·
-[mirror node JSON](https://testnet.mirrornode.hedera.com/api/v1/transactions/0.0.7162784-1789169558-289173297)
-
 The client verified the returned receipt, opened the sealed reply, and printed the signed
 per-vault attestation inside it.
 
 ### Arc rail
+
+The ninth. 2 USDC deposited into Circle Gateway, then a 0.003 USDC sealed scan. Gateway batches
+settlement, so a payment's own reference is a batch id rather than a transaction hash:
 
 2 USDC deposited into Circle Gateway, then a 0.003 USDC sealed scan. Gateway batches settlement,
 so a payment's own reference is a batch id rather than a transaction hash:
