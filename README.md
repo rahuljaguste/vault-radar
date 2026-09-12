@@ -40,8 +40,6 @@ wrong, and it does not flatter the outcome.
 
 ![One paid request on the Hedera rail](docs/payment-flow.png)
 
-Both diagrams are mermaid source in [docs/architecture.md](docs/architecture.md). Regenerate the PNGs with `node scripts/render-diagrams.mjs`.
-
 The shape is: The Graph supplies data two ways, the service turns it into signed risk reports behind an x402 paywall, and an agent buys it under a policy.
 
 ## Payment flow
