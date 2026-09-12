@@ -535,6 +535,27 @@ function buildFailedRecord({
   };
 }
 
+
+/** How many price points a run records per vault. Enough to show the shape of a 7-day
+ *  window at the ~1h resolution Messari serves, and small enough to keep run files light. */
+const MAX_SERIES_POINTS = 90;
+
+/**
+ * The share-price series behind one vault's verdict, oldest first, or undefined when the
+ * vault is not in this response (a rejected vault has no series, and a table-tier run may
+ * not include the vault at all).
+ */
+function seriesFor(vaults: { id: string; history: { timestamp: string; sharePrice: string }[] }[], vaultId: string) {
+  const vault = vaults.find((v) => v.id === vaultId);
+  if (!vault || vault.history.length < 2) return undefined;
+  const points = vault.history
+    .map((h) => ({ t: Number(h.timestamp), v: Number(h.sharePrice) }))
+    .filter((p) => Number.isFinite(p.t) && Number.isFinite(p.v))
+    .sort((a, b) => a.t - b.t);
+  if (points.length < 2) return undefined;
+  return points.slice(-MAX_SERIES_POINTS);
+}
+
 function buildRecord({
   result,
   discovery,
@@ -582,6 +603,12 @@ function buildRecord({
           verdict: r.verdict,
           score: r.score,
           flags: r.flags.map((f) => ({ name: f.name, value: f.value, threshold: f.threshold, window: f.window })),
+          // The series this verdict came from, so the run page can draw the shape the flags
+          // describe. Capped rather than stored whole: a vault's history can run to hundreds
+          // of points, the chart is a few hundred pixels wide, and run files are read back by
+          // a page. `sharePrice` is compared within one vault only, so its unit does not
+          // matter here — the shape is the same either way, and the flags carry the numbers.
+          history: seriesFor(result.vaults, r.vaultId),
         })),
         rejected: age.rejected,
       },

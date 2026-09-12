@@ -34,6 +34,17 @@ export type RunRecord = {
       verdict: "ok" | "watch" | "alert" | "unavailable";
       score: number;
       flags: { name: string; value: string; threshold: string; window: string }[];
+      /**
+       * The share-price points this verdict was computed from, oldest first, as
+       * `{ t: unix seconds, v: share price }`. Optional and dashboard-local: a purchase made
+       * in the browser has the series in hand and records it, so the run page can draw the
+       * shape the flags are about; the agent's own runs never write it, and runs recorded
+       * before this existed — the committed demo fixture among them — simply omit it and
+       * render without a chart. The values are in whatever unit the source reported (an
+       * 18-decimal string for some protocols, a short decimal for others), so the chart
+       * shows shape and the flags carry the percentages; nothing reads `v` as USD.
+       */
+      history?: { t: number; v: number }[];
     }[];
     rejected: { vaultId: string; ageSeconds: number }[];
   }[];

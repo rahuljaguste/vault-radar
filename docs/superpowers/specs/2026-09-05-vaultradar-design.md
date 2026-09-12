@@ -176,6 +176,13 @@ The Arc path differs in steps 3 to 7: Gateway middleware, EIP-3009 authorization
 
 - Upstream subgraph error, timeout, or indexing errors: source `unavailable`; dependent verdicts `unavailable`; the receipt lists the failed source.
 - Sink cursor more than 5 minutes behind head: Substreams source `stale`; same rule.
+  **Amended 2026-09-12: the figure is 20 minutes, not 5.** The sink indexes finalized
+  blocks only, so the newest block it can ever write trails the head by Ethereum's finality
+  lag — 64 to 95 blocks, 13 to 19 minutes. Five minutes was therefore unsatisfiable in
+  practice: the sink ran correctly and every vault it backed still read `stale`, which the
+  service reports as `unavailable` — "no data" for data that is final and right. Twenty
+  minutes clears the lag with slack while still bounding staleness, and it stays below the
+  agent's own default `max_age_seconds` of 900s for the common case.
 - Envelope malformed at quote time: 400 before payment. Envelope fails `ts`, nonce, payer or count checks after verify: 422, no settlement, nothing charged.
 - Handler exceeds 60 seconds: 504, no settlement.
 - Payment verify or settle failure: standard x402 4xx; agent retries once on transient errors, then reports.

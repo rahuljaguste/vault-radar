@@ -100,7 +100,7 @@ A risk verdict is only as good as the block it was computed from, so freshness i
 | Source kind | Reference block | Fresh within |
 |---|---|---|
 | Messari subgraph | `_meta.block` | 60 minutes of chain head |
-| Substreams sink | the sink's cursor block | 5 minutes of chain head |
+| Substreams sink | the sink's cursor block | 20 minutes of chain head (the sink indexes finalized blocks, so it trails the head by Ethereum's finality lag) |
 
 Anything past the threshold is `stale`. A failed query, or `_meta.hasIndexingErrors`, is `unavailable`. Chain head comes from a per-chain JSON-RPC provider, cached 15 seconds. If that RPC call fails, every source on that chain is marked stale rather than assumed current.
 

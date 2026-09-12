@@ -1,27 +1,83 @@
 import Link from "next/link";
 import { Table } from "./components/Table";
+import { Id } from "./components/Id";
 import { fetchCard, fetchCatalog, type AgentCard, type CatalogEntry } from "@/lib/service";
 import { listRuns, type RunSummary } from "@/lib/runs";
 import { erc8004ExplorerUrl } from "@/lib/explorer";
 
 export default async function HomePage() {
   const [card, catalog, runs] = await Promise.all([fetchCard(), fetchCatalog(), listRuns()]);
+  // Counts of the registry's own statuses, not of `vaultCount`: that figure comes from a
+  // cache the service only warms when someone buys a scan, so on a freshly started service
+  // it reads zero for every protocol and would tell a first-time visitor the index is empty.
+  const byStatus = (want: string) => catalog?.protocols.filter((p) => p.status === want).length ?? 0;
 
   return (
     <>
-      <section>
-        <h2>Agent card</h2>
+      <section className="hero">
+        <h1>Vault risk, bought one request at a time.</h1>
+        <p className="lede">
+          VaultRadar sells cross-protocol vault risk over x402, metered per vault, on Hedera and on Arc. Requests are
+          sealed with a post-quantum KEM before they leave the buyer, every receipt is signed with ML-DSA-65, and the
+          service&rsquo;s signing key is pinned on chain so a forged agent card cannot pass itself off as this one.
+        </p>
+        <div className="row">
+          <Link className="cta primary" href="/portfolio">
+            Scan a portfolio
+          </Link>
+          <Link className="cta" href="/verify">
+            Verify a receipt
+          </Link>
+          <Link className="cta" href="/admin">
+            Operator metrics
+          </Link>
+        </div>
+      </section>
+
+      <section className="steps">
+        <div>
+          <strong>Discover</strong>
+          The buyer fetches the agent card, checks its signature, and compares the published key hash against the
+          ERC-8004 registry on chain.
+        </div>
+        <div>
+          <strong>Pay</strong>
+          A 402 quotes the price for exactly how many vaults were asked about. The buyer checks it against its own
+          quote, pays over x402, and the service settles only after a handler answers.
+        </div>
+        <div>
+          <strong>Verify</strong>
+          The reply is sealed to the buyer&rsquo;s ephemeral key. The receipt and every per-vault attestation are signed,
+          and the receipt hash is committed to Hedera Consensus Service.
+        </div>
+      </section>
+
+      <section className="stack">
+        <div className="row between">
+          <h3>Service</h3>
+          <span className="faint">
+            {byStatus("live")} live · {byStatus("stale")} stale · {byStatus("down")} down of {catalog?.protocols.length ?? 0} registrations
+          </span>
+        </div>
         {card ? <CardSummary card={card} /> : <p className="error">Service unreachable — could not load /.well-known/agent.json.</p>}
       </section>
 
-      <section>
-        <h2>Catalog</h2>
+      <section className="stack">
+        <h3>Catalog</h3>
         {catalog ? (
           <Table<CatalogEntry>
             columns={[
               { key: "protocol", label: "Protocol" },
               { key: "chain", label: "Chain" },
-              { key: "status", label: "Status" },
+              {
+                key: "status",
+                label: "Status",
+                render: (row) => (
+                  <span className={`badge ${row.status === "live" ? "ok" : row.status === "down" ? "alert" : "unavailable"}`}>
+                    {row.status}
+                  </span>
+                ),
+              },
               { key: "vaultCount", label: "Vaults" },
             ]}
             rows={catalog.protocols}
@@ -33,8 +89,8 @@ export default async function HomePage() {
         )}
       </section>
 
-      <section>
-        <h2>Runs</h2>
+      <section className="stack">
+        <h3>Runs</h3>
         <Table<RunSummary>
           columns={[
             {
@@ -47,7 +103,7 @@ export default async function HomePage() {
           ]}
           rows={runs}
           rowKey={(row) => row.id}
-          empty="No runs yet."
+          empty="No runs yet. Buy one from the portfolio page, or run the agent's watch loop."
         />
       </section>
     </>
@@ -56,53 +112,65 @@ export default async function HomePage() {
 
 function CardSummary({ card }: { card: AgentCard }) {
   return (
-    <dl>
-      <dt>Name</dt>
-      <dd>
-        {card.name} v{card.version} — {card.description}
-      </dd>
+    <div className="card">
+      <dl className="kv">
+        <dt>Name</dt>
+        <dd>
+          {card.name} v{card.version}
+        </dd>
 
-      <dt>ERC-8004</dt>
-      <dd>
-        {card.erc8004.length === 0 && "none registered"}
-        {card.erc8004.map((e) => {
-          const url = erc8004ExplorerUrl(e.chainId);
-          return (
-            <span key={e.chainId} className="pill">
-              {url ? (
-                <a href={url} target="_blank" rel="noopener noreferrer">
-                  {e.chainId}:{e.agentId}
-                </a>
-              ) : (
-                <>
-                  {e.chainId}:{e.agentId}
-                </>
-              )}
-            </span>
-          );
-        })}
-      </dd>
+        <dt>Summary</dt>
+        <dd className="muted">{card.description}</dd>
 
-      <dt>PQ keys</dt>
-      <dd>
-        sig {card.pq.sig.alg} pub_hash <code>{card.pq.sig.pub_hash}</code>
-        <br />
-        kem {card.pq.kem.alg} kid <code>{card.pq.kem.kid}</code>
-      </dd>
+        <dt>ERC-8004</dt>
+        <dd>
+          {card.erc8004.length === 0 ? (
+            <span className="error">none registered — every paid request will be refused</span>
+          ) : (
+            card.erc8004.map((e) => {
+              const url = erc8004ExplorerUrl(e.chainId);
+              return (
+                <span key={e.chainId} className="badge ok">
+                  {url ? (
+                    <a href={url} target="_blank" rel="noopener noreferrer">
+                      {e.chainId}:{e.agentId}
+                    </a>
+                  ) : (
+                    <>
+                      {e.chainId}:{e.agentId}
+                    </>
+                  )}
+                </span>
+              );
+            })
+          )}
+        </dd>
 
-      <dt>Prices</dt>
-      <dd>
-        Hedera scan: {card.prices.hedera_scan} (1 vault = {card.prices.hedera_scan_examples["1"]}, 10 vaults = {card.prices.hedera_scan_examples["10"]})
-        <br />
-        Arc scan buckets: S {card.prices.arc_scan_buckets.s}, M {card.prices.arc_scan_buckets.m}, L {card.prices.arc_scan_buckets.l}
-        <br />
-        Table: {card.prices.table}
-      </dd>
+        <dt>Signing key</dt>
+        <dd>
+          <Id value={card.pq.sig.pub_hash} /> <span className="faint">{card.pq.sig.alg}</span>
+        </dd>
 
-      <dt>Docs</dt>
-      <dd>
-        <a href={card.docs}>{card.docs}</a>
-      </dd>
-    </dl>
+        <dt>KEM key</dt>
+        <dd>
+          <span className="mono">{card.pq.kem.kid}</span> <span className="faint">{card.pq.kem.alg}</span>
+        </dd>
+
+        <dt>Prices</dt>
+        <dd>
+          <span className="mono">scan {card.prices.hedera_scan}</span>
+          <br />
+          <span className="faint">
+            table {card.prices.table} · arc buckets s {card.prices.arc_scan_buckets.s} / m {card.prices.arc_scan_buckets.m} / l{" "}
+            {card.prices.arc_scan_buckets.l}
+          </span>
+        </dd>
+
+        <dt>Docs</dt>
+        <dd>
+          <a href={card.docs}>{card.docs}</a>
+        </dd>
+      </dl>
+    </div>
   );
 }

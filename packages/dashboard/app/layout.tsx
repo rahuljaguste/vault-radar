@@ -16,7 +16,8 @@ export default function RootLayout({ children }: { children: ReactNode }) {
           <Link href="/">VaultRadar</Link>
           <nav>
             <Link href="/">catalog &amp; runs</Link>
-            <Link href="/portfolio">scan your portfolio</Link>
+            <Link href="/universe">risk universe</Link>
+          <Link href="/portfolio">scan your portfolio</Link>
             <Link href="/verify">verify a receipt</Link>
             <Link href="/admin">service metrics</Link>
           </nav>
