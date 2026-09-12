@@ -33,3 +33,15 @@ export function formatFlag(f: Flag): string {
   if (!isRatio(f.name)) return `${flagLabel(f.name)}: ${f.value}${f.window === "now" ? "" : ` (window ${f.window})`}`;
   return `${flagLabel(f.name)} ${flagPercent(f.value).toFixed(1)}% below its ${flagPercent(f.threshold).toFixed(1)}% threshold (${f.window})`;
 }
+
+/**
+ * A flag short enough for a table cell: `share price drawdown 7d 9.8%`, or `stale data` for
+ * the flags that carry words rather than figures.
+ *
+ * The full sentence (`formatFlag`) is a whole line of prose — right for a card, too long for
+ * a column, and a cell that showed only `9.8%` would be a number with no object. So the
+ * name stays and the threshold drops; the cell carries a `title` with the full sentence.
+ */
+export function compactFlag(f: Flag): string {
+  return isRatio(f.name) ? `${flagLabel(f.name)} ${flagPercent(f.value).toFixed(1)}%` : flagLabel(f.name);
+}

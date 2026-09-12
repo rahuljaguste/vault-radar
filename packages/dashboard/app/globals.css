@@ -514,22 +514,82 @@ code {
   stroke-width: 1;
 }
 
-/* ------------------------------------------------------------------ universe */
+/* ------------------------------------------------------------------ vault ranking */
 
-/* The WebGL host. Marked aria-hidden because everything it draws is also in the table
-   beneath it; a screen reader should read the numbers, not the canvas. */
-.universe {
-  width: 100%;
-  border: 1px solid var(--border);
-  border-radius: var(--r);
-  background: var(--surface);
-  overflow: hidden;
+/* A disclosure per vault laid out on one grid, so the collapsed rows read as the columns the
+   header names without needing a table element — a table cannot hold an expanding panel
+   inside a row without a second `<tr>` per vault, which at a hundred vaults is a hundred
+   lines of nothing. Scrolls sideways rather than reflowing, because a column that reflows
+   stops lining up with its header. */
+.vaults {
+  display: block;
+  overflow-x: auto;
 }
 
-.universe canvas {
-  display: block;
-  width: 100% !important;
-  height: 100% !important;
+.vaults .headline,
+.vaults summary {
+  display: grid;
+  /* The price column takes the slack rather than the flags column. Most rows carry no flag,
+     so a flexible flags column is a wide empty gap with every sparkline squeezed into a
+     corner — and the sparkline is the one cell whose readability grows with its width. */
+  grid-template-columns: 9rem minmax(11rem, 16rem) 6rem minmax(7rem, 15rem) minmax(9rem, 1fr);
+  gap: var(--s3);
+  align-items: center;
+  min-width: 44rem;
+}
+
+.vaults .headline {
+  padding: var(--s2) var(--s3);
+  border-bottom: 1px solid var(--border-strong);
+  color: var(--dim);
+  font-size: var(--t-xs);
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+}
+
+.vaults summary {
+  padding: var(--s2) var(--s3);
+  border-bottom: 1px solid var(--border);
+}
+
+.vaults summary:hover {
+  background: var(--raised);
+}
+
+.vaults details[open] summary {
+  border-bottom: none;
+}
+
+/* A column of pills would set the row height from the longest flag name, so the cell is
+   allowed to run past its track and clip instead. The full sentence is a `title`, and the
+   panel below spells it out, so nothing is lost by clipping here. */
+.vaults .flagcell {
+  display: flex;
+  gap: var(--s1);
+  overflow: hidden;
+  white-space: nowrap;
+}
+
+.vaults .flagcell .pill {
+  margin-right: 0;
+  max-width: 100%;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.vaults .detail {
+  padding: var(--s2) var(--s3) var(--s4);
+  border-bottom: 1px solid var(--border);
+  background: var(--surface);
+}
+
+.vaults .detail .kv {
+  margin-top: var(--s3);
+}
+
+.vaults .flaglist {
+  margin: 0;
+  padding-left: 1.1em;
 }
 
 details summary {
