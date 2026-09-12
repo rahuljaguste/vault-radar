@@ -72,7 +72,7 @@ export function runsDir(): string {
  * documented dev command both run with `process.cwd()` at `packages/dashboard`, but the
  * repository's own `bun test` runs from the root, where a cwd-relative `public/` is not where
  * the files are — and the fixture would silently resolve to nothing there, which is how a
- * deployment could end up serving the recordings without the run `/flow` links to.
+ * deployment could end up serving the recordings without the run `/docs/flow` links to.
  */
 function publicPath(...rest: string[]): string {
   const fromCwd = path.resolve(process.cwd(), "public", ...rest);
@@ -102,7 +102,7 @@ function bundledRunsDir(): string {
  * What a deployment with no runs directory serves: every committed recording, and
  * `public/demo-run.json` beside them.
  *
- * Both, rather than one or the other. The fixture is deep-linked from `/flow` and from the
+ * Both, rather than one or the other. The fixture is deep-linked from `/docs/flow` and from the
  * runs table, so dropping it once recordings exist would 404 a link on a page a judge is
  * likely to click. And the fixture being the *only* fallback meant a hosted deployment could
  * show exactly one run, chosen when the fixture was written — so it could never show a scan

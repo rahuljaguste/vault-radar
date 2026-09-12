@@ -71,6 +71,9 @@ export default function FlowPage() {
           to stop the animation there.
         </p>
         <div className="row">
+          <Link className="cta" href="/docs">
+            All documentation
+          </Link>
           <Link className="cta" href="/runs/demo-run-1">
             See a real run
           </Link>

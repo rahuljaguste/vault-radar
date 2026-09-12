@@ -16,6 +16,18 @@ export default function DocsIndex() {
       </section>
 
       <section className="grid">
+        {/* Not in `DOCS`, because that registry is file-backed and this page is a walkthrough
+            rather than a document: it renders the animated payment flow, not markdown. It sits
+            first anyway, because it is the one thing here a newcomer should look at before the
+            spec or the plan. Labelled `walkthrough` rather than given a filename, so the lede's
+            claim that every document below is the file itself stays true. */}
+        <Link href="/docs/flow" className="card" style={{ textDecoration: "none" }}>
+          <h3>How one request flows</h3>
+          <p className="faint">
+            Eight steps of the x402 round trip, animated, with the checks each side performs between messages.
+          </p>
+          <p className="faint mono">walkthrough</p>
+        </Link>
         {DOCS.map((d) => (
           <Link key={d.slug} href={`/docs/${d.slug}`} className="card" style={{ textDecoration: "none" }}>
             <h3>{d.title}</h3>

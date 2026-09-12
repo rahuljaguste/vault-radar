@@ -31,7 +31,7 @@ test("a deployment with no runs directory serves every committed recording, not 
     const runs = await listRuns();
     const ids = runs.map((r) => r.id);
 
-    // `/flow` deep-links to `/runs/demo-run-1`, so the fixture has to keep resolving even
+    // `/docs/flow` deep-links to `/runs/demo-run-1`, so the fixture has to keep resolving even
     // though it is no longer the only thing served.
     expect(ids).toContain("demo-run-1");
     // And the recordings have to be there too, or this test would pass on the old behaviour.

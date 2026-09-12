@@ -33,7 +33,7 @@ export default async function HomePage() {
           <Link className="cta" href="/verify">
             Verify a receipt
           </Link>
-          <Link className="cta" href="/flow">
+          <Link className="cta" href="/docs/flow">
             How a request flows
           </Link>
           <Link className="cta" href="/admin">
