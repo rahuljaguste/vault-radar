@@ -663,6 +663,18 @@ table {
   font-size: var(--t-sm);
 }
 
+/* A table cannot shrink below the widest thing in it, so at phone width the page scrolled
+   sideways again: /admin reached 714px and the rendered README 617px inside a 390px
+   viewport, both over facilitator URLs and repo paths in `<code>`. Below this width the table
+   becomes its own scroll container — the box scrolls, the table keeps its natural width, and
+   the columns stay aligned with their headers. */
+@media (max-width: 720px) {
+  table {
+    display: block;
+    overflow-x: auto;
+  }
+}
+
 th {
   text-align: left;
   font-weight: 600;
