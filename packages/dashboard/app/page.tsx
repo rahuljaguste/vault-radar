@@ -178,7 +178,17 @@ function CardSummary({ card }: { card: AgentCard }) {
 
         <dt>Docs</dt>
         <dd>
-          <a href={card.docs}>{card.docs}</a>
+          <Link href="/docs">the documentation</Link>{" "}
+          <span className="faint">— spec, plan, verification log</span>
+        </dd>
+
+        {/* Two audiences, and this row was conflating them. The card's `docs` field is the
+            machine-facing guide a buying agent reads, and it is the only pointer to that file
+            — so the human link goes to the documentation site without dropping it. */}
+        <dt>Agent guide</dt>
+        <dd>
+          <a href={card.docs}>skill.md</a>{" "}
+          <span className="faint">— the file a buying agent reads, served by the service</span>
         </dd>
       </dl>
     </div>
