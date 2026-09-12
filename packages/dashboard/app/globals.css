@@ -185,6 +185,32 @@ main {
   gap: var(--s6);
 }
 
+/* Flexbox's floor: a flex item defaults to `min-width: auto`, so it refuses to shrink below
+   its content's min-content width. Without this a section cannot narrow at all, and
+   `overflow-wrap` below would have nothing to work with. */
+main > * {
+  min-width: 0;
+}
+
+/* What actually set the page's minimum width, measured rather than guessed.
+ *
+ * A 64-character key hash in a `<code>` and a mirror-node URL in a link are single tokens
+ * hundreds of pixels wide; they pushed /admin to 619px and the rendered README to 617px
+ * inside a 390px viewport, and neither was a table — the tables were already scrolling in
+ * their own boxes. `overflow-wrap: break-word` would not have helped: it allows a break when
+ * a word does not fit, but leaves the element's min-content width alone, which is the number
+ * the layout is honouring. `anywhere` lowers it.
+ */
+code,
+a,
+p,
+li,
+dd,
+td,
+summary {
+  overflow-wrap: anywhere;
+}
+
 /* Paragraphs get the same measure as the hero's lede, which already caps itself at 72ch.
  *
  * Uncapped, a paragraph in a 1040px column set at 13.5px monospace runs to about 118
