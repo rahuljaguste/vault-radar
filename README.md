@@ -131,6 +131,8 @@ Mirror node: <https://testnet.mirrornode.hedera.com/api/v1/topics/0.0.10483981/m
 
 ERC-8004 agent ids: Hedera chain 296 `112` (registration tx `0x0f23d2a0c2c3a820e69e4304027f5d442c6ae4a8cff1147a6ea8b4e5bda9ca3a`); Arc chain 5042002 `894342` (registration tx `0x0ebaa26fbf5c6db6f99eee116deccdef0aa766b7fad4d24bcb819e087b82ffc2`). Both were verified live: each registry returns exactly the key hash the agent card publishes.
 
+**What the anchor does not prove, and the pin that closes it.** The registry is permissionless — anyone can register an agent id — so an impostor who controls the service URL can register an id of their own, serve a card signed by their own key naming it, and satisfy every anchor check. The anchor binds a key to an agent id; only an expectation set outside the exchange binds an agent id to *this* service. So both consumers take one: `EXPECTED_ERC8004=296:112,5042002:894342` on the dashboard (read at runtime by `/verify` and by the paid-scan route, which refuses before paying) and `expected_erc8004` in the agent's policy. Unset, the checks still run and still prove the service is internally consistent — they just cannot prove it is the one you meant to call.
+
 **The boundary, stated plainly.** Quoting the design spec:
 
 > The ML-DSA key is anchored on-chain by an ECDSA-controlled account. A verifier that has fetched and pinned the key once can verify receipts indefinitely without trusting ECDSA again. The anchor protects discovery today; it does not stop a future quantum adversary from re-pointing the registry. x402 payment signatures and chain consensus remain classical. There is no forward secrecy against later compromise of the service's KEM seed.

@@ -32,7 +32,7 @@ import {
   saveRun,
   type Policy,
 } from "@vaultradar/agent";
-import { receiptHash } from "@vaultradar/core";
+import { parseIdentityPin, receiptHash } from "@vaultradar/core";
 import { RateLimiter, clientKey, scanLimiter } from "./ratelimit";
 import { repoRoot, runsDir as defaultRunsDir } from "./runs";
 import { SERVICE_FETCH_TIMEOUT_MS, getServiceUrl } from "./service";
@@ -344,7 +344,17 @@ export async function handleScan(req: Request, overrides: Partial<ScanDeps> = {}
       }
       return json({ error: `could not reach or verify the service: ${redact(e, secrets)}` }, 502);
     }
-    const refusal = identityRefusal(discovery);
+    // The operator's pinned identity, when set: the anchor proves the key is registered
+    // under *an* agent id, and only a pin proves the id is the one this dashboard expects.
+    // A malformed pin throws rather than being treated as "nothing pinned" — silently
+    // checking nothing is the one outcome worse than refusing everything.
+    let pins;
+    try {
+      pins = parseIdentityPin(deps.env.EXPECTED_ERC8004);
+    } catch (e) {
+      return json({ error: `EXPECTED_ERC8004 is malformed: ${e instanceof Error ? e.message : String(e)}` }, 500);
+    }
+    const refusal = identityRefusal(discovery, pins);
     if (refusal) {
       return json({ error: refusal }, 502);
     }

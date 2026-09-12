@@ -451,4 +451,31 @@ describe("identityRefusal", () => {
   test("one confirmed anchor is enough: [true, null] proceeds", () => {
     expect(identityRefusal(disc({ onChain: [anchor(true), anchor(null, "5042002")] }))).toBeNull();
   });
+
+  // The anchor binds a key to an agent id. It cannot bind an agent id to a service, because
+  // the registry is permissionless: an impostor who controls the URL can register an id of
+  // their own, serve a card signed by their own key naming it, and satisfy every check
+  // above. A pin is the only thing that closes that, and it is the operator's to set.
+  describe("with a pinned expected identity", () => {
+    const card = (ids: { chainId: string; agentId: string }[]) => disc({ card: { ...realDiscovery.card, erc8004: ids } });
+
+    test("a service claiming the pinned identity proceeds", () => {
+      const d = card([{ chainId: "296", agentId: "112" }]);
+      expect(identityRefusal(d, [{ chainId: "296", agentId: "112" }])).toBeNull();
+    });
+
+    test("a service claiming a different identity refuses, naming what it claimed and what was expected", () => {
+      const d = card([{ chainId: "5042002", agentId: "77" }]);
+      const reason = identityRefusal(d, [{ chainId: "296", agentId: "112" }]);
+      expect(reason).toContain("not any identity this policy expects");
+      expect(reason).toContain("5042002:77");
+      expect(reason).toContain("296:112");
+    });
+
+    test("no pin means the same checks as before, so an unrelated identity still passes", () => {
+      const d = card([{ chainId: "5042002", agentId: "77" }]);
+      expect(identityRefusal(d, [])).toBeNull();
+      expect(identityRefusal(d)).toBeNull();
+    });
+  });
 });

@@ -196,7 +196,7 @@ export function vaultradarTools(ctx: AgentContext, log: RunLog = new RunLog(ctx)
   /** Shared body for the two paid tools. */
   const buy = async (plan: PurchasePlan) => {
     const disc = await ctx.client.discover();
-    const refusal = identityRefusal(disc);
+    const refusal = identityRefusal(disc, ctx.policy.expected_erc8004);
     if (refusal) return err(refusal);
 
     const outcome = await executePurchase(plan, ctx.serviceUrl, purchaseDeps);

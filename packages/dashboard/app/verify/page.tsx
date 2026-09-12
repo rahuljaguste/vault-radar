@@ -2,7 +2,7 @@
 
 import { Buffer as PolyfillBuffer } from "buffer";
 import { useState } from "react";
-import { verifyReceipt, receiptHash, checkSig, fromB64, sha256Hex } from "@vaultradar/core";
+import { matchesIdentityPin, verifyReceipt, receiptHash, checkSig, fromB64, sha256Hex, type IdentityPin } from "@vaultradar/core";
 import type { Receipt, Sig } from "@vaultradar/core";
 import { checkAnchor, type AnchorState } from "@/lib/onchain";
 import type { AgentCard } from "@/lib/service";
@@ -33,6 +33,13 @@ export type Done = {
   anchors: Anchor[];
   /** Every identity the receipt names also appears on the card that published the key. */
   identitiesInCard: boolean;
+  /**
+   * The identities this dashboard expects the service to have, from the operator's
+   * configuration. Empty means nothing is pinned — see `isVerified`.
+   */
+  pins: IdentityPin[];
+  /** Whether the receipt's signed identities include one of `pins`. */
+  pinMatched: boolean;
   hash: string;
 };
 
@@ -64,7 +71,12 @@ export function isVerified(r: Done): boolean {
     r.keyMatchesCard &&
     r.identitiesInCard &&
     r.anchors.length > 0 &&
-    r.anchors.every((a) => a.state === "matches")
+    r.anchors.every((a) => a.state === "matches") &&
+    // The anchor binds a key to an agent id. Only the pin binds an agent id to a service:
+    // the registry is permissionless, so an impostor who controls this URL can register an
+    // id of their own and satisfy every other check here. With a pin set, "Verified" means
+    // the identity the operator expected, not merely one that is internally consistent.
+    (r.pins.length === 0 || r.pinMatched)
   );
 }
 
@@ -129,7 +141,24 @@ export default function VerifyPage() {
         }),
       );
 
-      setResult({ status: "done", signatureValid, cardSignatureValid, keyMatchesCard, identitiesInCard, anchors, hash: receiptHash(receipt) });
+      // The operator's pinned identity, if any. Fetched rather than inlined so a change does
+      // not need a rebuild, and read here rather than from the card or the receipt for the
+      // obvious reason: an expectation the verified party supplies is not an expectation.
+      let pins: IdentityPin[] = [];
+      try {
+        const res = await fetch("/api/expected-identity", { cache: "no-store" });
+        const body = (await res.json()) as { pins?: IdentityPin[]; error?: string };
+        if (!res.ok) throw new Error(body.error ?? `HTTP ${res.status}`);
+        pins = body.pins ?? [];
+      } catch (err) {
+        // Refuse rather than assume nothing is pinned: silently dropping a configured
+        // expectation would report a pass this page never actually checked.
+        setResult({ status: "error", message: `Could not read this dashboard's expected identity: ${(err as Error).message}` });
+        return;
+      }
+      const pinMatched = matchesIdentityPin(claimed, pins);
+
+      setResult({ status: "done", signatureValid, cardSignatureValid, keyMatchesCard, identitiesInCard, anchors, pins, pinMatched, hash: receiptHash(receipt) });
     } catch (err) {
       setResult({ status: "error", message: `Verification failed to run: ${(err as Error).message}` });
     }
@@ -142,8 +171,11 @@ export default function VerifyPage() {
         Paste a receipt&rsquo;s JSON below. Its ML-DSA-65 signature is checked in your browser against the service&rsquo;s
         published key, and that key is checked against the hash pinned on the ERC-8004 registry for every identity the
         receipt itself names — a receipt that names none cannot be verified, only read. The receipt hash is recomputed
-        too. The receipt is never sent anywhere: the only requests your browser makes are the one-time fetch of the agent
-        card and a read-only call to a public RPC endpoint for the on-chain key.
+        too. If this dashboard has an expected identity configured, that identity must be among the ones the receipt
+        names: the registry itself is open to anyone, so an on-chain anchor alone proves a key belongs to <em>an</em>
+        agent, not to the service you meant to reach. The receipt is never sent anywhere: the only requests your browser
+        makes are the one-time fetch of the agent card, a read-only call to a public RPC endpoint for the on-chain key,
+        and this dashboard's own pin.
       </p>
       <textarea
         value={text}
@@ -174,6 +206,11 @@ export function headline(r: Done): string {
     return "UNPROVEN: the signature is good, but the receipt claims no on-chain identity, so nothing anchors the key.";
   }
   if (r.anchors.some((a) => a.state === "mismatch")) return "NOT verified: the on-chain registry pins a different key.";
+  if (r.pins.length > 0 && !r.pinMatched) {
+    return `NOT verified: the service's on-chain identity is not the one this dashboard expects (expected ${r.pins
+      .map((p) => `${p.chainId}:${p.agentId}`)
+      .join(", ")}).`;
+  }
   return "UNPROVEN: the on-chain anchor could not be read, so the key binding is unconfirmed.";
 }
 
@@ -207,6 +244,23 @@ function Verdict({ result }: { result: Done }) {
                 <span className={a.state === "matches" ? "ok" : a.state === "mismatch" ? "error" : "warn"}>{a.state}</span>
               </span>
             ))
+          )}
+        </dd>
+        <dt>Expected identity</dt>
+        <dd>
+          {result.pins.length === 0 ? (
+            <span className="warn">
+              none configured, so the checks above establish that the service is internally consistent and that its key
+              is registered under <em>an</em> agent id — not that the id belongs to the service you meant to reach
+            </span>
+          ) : result.pinMatched ? (
+            <span className="ok">
+              matches <code>{result.pins.map((p) => `${p.chainId}:${p.agentId}`).join(", ")}</code>
+            </span>
+          ) : (
+            <span className="error">
+              not <code>{result.pins.map((p) => `${p.chainId}:${p.agentId}`).join(", ")}</code>
+            </span>
           )}
         </dd>
       </dl>

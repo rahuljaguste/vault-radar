@@ -67,8 +67,29 @@ const base: Done = {
   keyMatchesCard: true,
   identitiesInCard: true,
   anchors: [{ chainId: "296", agentId: "7", state: "matches" }],
+  pins: [],
+  pinMatched: true,
   hash: "c".repeat(64),
 };
+
+// The anchor binds a key to an agent id. Only a pin binds an agent id to a service, because
+// the ERC-8004 registry lets anyone register an id — an impostor who controls the URL can
+// satisfy every other check on this page. So a configured pin has to be able to refuse a
+// receipt that is otherwise perfect, and its absence must not read as a failure.
+test("a pinned identity is required when one is configured, and ignored when none is", () => {
+  const pinned: Done = { ...base, pins: [{ chainId: "296", agentId: "112" }], pinMatched: true };
+  expect(isVerified(pinned)).toBe(true);
+  expect(headline(pinned)).toBe("Verified.");
+
+  // Everything else passes; only the pinned identity is wrong.
+  const impostor: Done = { ...base, pins: [{ chainId: "296", agentId: "112" }], pinMatched: false };
+  expect(isVerified(impostor)).toBe(false);
+  expect(headline(impostor)).toContain("not the one this dashboard expects");
+  expect(headline(impostor)).toContain("296:112");
+
+  // No pin configured: the same receipt passes, and the row that renders this says so.
+  expect(isVerified(base)).toBe(true);
+});
 
 test("all five conditions together are what reads as verified", () => {
   expect(isVerified(base)).toBe(true);

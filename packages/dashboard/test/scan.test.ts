@@ -139,6 +139,9 @@ const BALANCED: Policy = {
   privacy: "balanced",
   rail_preference: "cheapest",
   max_age_seconds: MAX_AGE,
+  // What `loadPolicy` fills in for a file that omits the field, so a run written from this
+  // policy compares equal to it.
+  expected_erc8004: [],
 };
 
 /** Writes a policy file and returns its path, so the real `loadPolicy` reads it. */
@@ -591,6 +594,36 @@ test("502 when discovery never answers, and the held reservation is released", a
 
   // And the full allowance is available again to the next caller.
   expect((await handleScan(post([OK_VAULT]), deps({ ledger }))).status).toBe(200);
+});
+
+test("a service whose on-chain identity is not the pinned one is refused before paying", async () => {
+  // The anchor checks pass — the impostor's key is registered under the id its own card
+  // names — so only the pin distinguishes it from the service this dashboard expects.
+  const res = await handleScan(
+    post([OK_VAULT]),
+    deps({ env: {
+      AGENT_HEDERA_ACCOUNT_ID: "0.0.42",
+      AGENT_HEDERA_KEY: UNUSED_KEY,
+      SERVICE_URL: base,
+      EXPECTED_ERC8004: "296:112",
+    } }),
+  );
+  expect(res.status).toBe(502);
+  expect((await res.json()).error).toContain("not any identity this policy expects");
+});
+
+test("a malformed pin refuses the request rather than silently pinning nothing", async () => {
+  const res = await handleScan(
+    post([OK_VAULT]),
+    deps({ env: {
+      AGENT_HEDERA_ACCOUNT_ID: "0.0.42",
+      AGENT_HEDERA_KEY: UNUSED_KEY,
+      SERVICE_URL: base,
+      EXPECTED_ERC8004: "296",
+    } }),
+  );
+  expect(res.status).toBe(500);
+  expect((await res.json()).error).toContain("EXPECTED_ERC8004 is malformed");
 });
 
 test("502 when the paid request never answers, and the reservation is settled rather than held", async () => {

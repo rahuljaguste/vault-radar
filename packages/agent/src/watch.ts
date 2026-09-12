@@ -1,4 +1,4 @@
-import { TABLE_PRICE_USD, receiptHash, type Rail } from "@vaultradar/core";
+import { TABLE_PRICE_USD, formatPins, matchesIdentityPin, receiptHash, type IdentityPin, type Rail } from "@vaultradar/core";
 import { formatUsdc } from "./balances";
 import type { Discovery, PaidResult, VaultRadarClient } from "./client";
 import { applyAgeCheck, chooseRail, chooseTier, decide, type AgeCheck, type Policy } from "./policy";
@@ -253,7 +253,7 @@ function railSummary(p: Policy, quotes: Quotes, balances: Amounts, health: RailH
  * One confirmed anchor is enough (a service need not be registered on every chain it can
  * be paid on); a single contradicted anchor refuses regardless of how many others passed.
  */
-export function identityRefusal(disc: Discovery): string | null {
+export function identityRefusal(disc: Discovery, pins: IdentityPin[] = []): string | null {
   if (!disc.cardSignatureValid) return "the service's agent card signature did not verify — refusing to pay";
   if (!disc.keyBindingValid) {
     return "the service's agent card claims a key hash that is not the hash of the key it published — refusing to pay";
@@ -267,6 +267,14 @@ export function identityRefusal(disc: Discovery): string | null {
   }
   if (!disc.onChain.some(e => e.matches === true)) {
     return "the on-chain ERC-8004 registration could not be read for any identity the card lists, so the key is unverified — refusing to pay";
+  }
+  // The anchor proves the key is registered under *an* agent id, not that the id belongs to
+  // the service meant to be called — the registry is permissionless, so an impostor can
+  // register their own. When the operator has pinned the identity they expect, this is where
+  // that expectation is enforced.
+  if (!matchesIdentityPin(disc.card.erc8004, pins)) {
+    const claimed = disc.card.erc8004.map(i => `${i.chainId}:${i.agentId}`).join(", ") || "none";
+    return `the service's ERC-8004 identity (${claimed}) is not any identity this policy expects (${formatPins(pins)}) — refusing to pay`;
   }
   return null;
 }
@@ -571,7 +579,7 @@ export async function runWatch(args: WatchArgs, deps: WatchDeps): Promise<WatchO
 
   // The identity gate comes before any spend: paying a service whose signing key isn't
   // the one it registered on chain is exactly what the on-chain pin exists to prevent.
-  const refusal = identityRefusal(disc);
+  const refusal = identityRefusal(disc, policy.expected_erc8004);
   if (refusal) return finish(2, refusal);
 
   const outcome = await executePurchase(

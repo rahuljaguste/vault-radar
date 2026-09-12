@@ -16,6 +16,11 @@ export type Policy = {
   privacy: "strict" | "balanced" | "cheap";
   rail_preference: "cheapest" | "hedera" | "arc";
   max_age_seconds: number;
+  /**
+   * On-chain identities this policy expects the service to have. Absent or empty pins
+   * nothing; `loadPolicy` fills in `[]` for a file that omits it.
+   */
+  expected_erc8004?: { chainId: string; agentId: string }[];
 };
 
 /** A non-negative decimal amount written as a string, e.g. `"1.00"` or `"0.0015"`. */
@@ -30,6 +35,15 @@ export const PolicySchema = z.object({
   privacy: z.enum(["strict", "balanced", "cheap"]).default("balanced"),
   rail_preference: z.enum(["cheapest", "hedera", "arc"]).default("cheapest"),
   max_age_seconds: z.number().int().positive().default(900),
+  /**
+   * The on-chain identities this policy expects the service to have, as
+   * `{ chainId, agentId }`. Empty (the default) means the anchor checks run as before,
+   * which proves the key is registered under *an* agent id — not that the id is the one
+   * meant to be called, since the ERC-8004 registry is permissionless and an impostor can
+   * register their own. Set this to the ids you know out of band and a service claiming
+   * any other identity is refused before anything is paid.
+   */
+  expected_erc8004: z.array(z.object({ chainId: z.string().min(1), agentId: z.string().min(1) })).default([]),
 });
 
 /**

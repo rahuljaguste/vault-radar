@@ -289,6 +289,9 @@ test("loadPolicy validates, applies defaults, and reads the shipped example", ()
     privacy: "balanced",
     rail_preference: "cheapest",
     max_age_seconds: 900,
+    // Pins nothing unless the file says so: the anchor checks then establish that the key
+    // is registered under *an* agent id, and the pin is what would make it *this* service.
+    expected_erc8004: [],
   });
 
   const example = loadPolicy(join(import.meta.dir, "..", "policy.example.json"));
@@ -297,6 +300,7 @@ test("loadPolicy validates, applies defaults, and reads the shipped example", ()
     privacy: "balanced",
     rail_preference: "cheapest",
     max_age_seconds: 900,
+    expected_erc8004: [],
   });
 
   // The strict-tier example `scripts/demo.sh` step 4 runs with. It must load, and it must
@@ -308,6 +312,7 @@ test("loadPolicy validates, applies defaults, and reads the shipped example", ()
     privacy: "strict",
     rail_preference: "cheapest",
     max_age_seconds: 900,
+    expected_erc8004: [],
   });
   expect(chooseTier(strict)).toEqual({ tier: "table", seal: true });
 });

@@ -5,6 +5,7 @@ export * from "./pq/keys";
 export * from "./pq/sign";
 export * from "./pq/seal";
 export * from "./envelope";
+export * from "./identity";
 export * from "./receipts";
 export * from "./unify/types";
 export * from "./unify/freshness";
