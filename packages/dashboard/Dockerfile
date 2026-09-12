@@ -26,6 +26,9 @@ COPY packages/dashboard/package.json packages/dashboard/
 RUN bun install --frozen-lockfile
 
 COPY packages ./packages
+# The /docs pages render these files at request time, so the image has to carry them.
+COPY docs ./docs
+COPY README.md ./README.md
 
 ENV NODE_ENV=production
 WORKDIR /app/packages/dashboard

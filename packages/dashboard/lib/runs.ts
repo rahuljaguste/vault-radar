@@ -1,4 +1,4 @@
-import { promises as fs } from "node:fs";
+import { promises as fs, readFileSync } from "node:fs";
 import path from "node:path";
 import type { RunMatch, RunRecord } from "./types";
 
@@ -21,12 +21,36 @@ export type RunSummary = { id: string; startedAt: string; requestCount: number }
 export type { RunMatch } from "./types";
 
 /**
- * The monorepo root, two levels above `process.cwd()` when Next.js is started
- * from `packages/dashboard` (the documented way to run this app). Repo-relative
- * settings such as `POLICY_PATH` are resolved against it.
+ * The monorepo root. Repo-relative settings such as `POLICY_PATH` and the `/docs` pages'
+ * source files are resolved against it.
+ *
+ * Found rather than assumed. The documented way to run this app puts `process.cwd()` at
+ * `packages/dashboard`, two levels below the root — but the root's own `bun test` runs the
+ * dashboard's tests with the working directory at the repository root, where that arithmetic
+ * points one level *above* the repository and every repo-relative read fails. Walking up
+ * until a `package.json` with a `workspaces` field is found is correct from either place,
+ * and from `/app/packages/dashboard` in the container.
  */
 export function repoRoot(): string {
+  let dir = process.cwd();
+  for (let i = 0; i < 5; i++) {
+    if (isWorkspaceRoot(dir)) return dir;
+    const parent = path.dirname(dir);
+    if (parent === dir) break;
+    dir = parent;
+  }
+  // Nothing that looks like this monorepo above us: fall back to the documented layout rather
+  // than returning the filesystem root, so a caller still gets a plausible path to fail on.
   return path.resolve(process.cwd(), "..", "..");
+}
+
+function isWorkspaceRoot(dir: string): boolean {
+  try {
+    const pkg = JSON.parse(readFileSync(path.join(dir, "package.json"), "utf8")) as { workspaces?: unknown };
+    return Array.isArray(pkg.workspaces) && pkg.workspaces.length > 0;
+  } catch {
+    return false;
+  }
 }
 
 /**

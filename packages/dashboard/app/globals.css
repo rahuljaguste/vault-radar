@@ -579,6 +579,115 @@ th.num {
   text-align: right;
 }
 
+/* ------------------------------------------------------------------ rendered documents */
+
+/* Prose rendered from the repository's Markdown. The app is dense and monospace by design;
+   a document is not, so this scope loosens the line height and caps the measure, and gives
+   the elements Markdown actually emits the styling the rest of the site gets from classes. */
+.doc {
+  max-width: 78ch;
+  line-height: 1.7;
+  font-size: var(--t-base);
+}
+
+.doc > * + * {
+  margin-top: var(--s4);
+}
+
+.doc h1,
+.doc h2,
+.doc h3,
+.doc h4 {
+  margin-top: var(--s6);
+  padding-top: var(--s3);
+  border-top: 1px solid var(--border);
+}
+
+.doc h1:first-child,
+.doc h2:first-child {
+  margin-top: 0;
+  border-top: 0;
+  padding-top: 0;
+}
+
+.doc h2 {
+  font-size: var(--t-xl);
+}
+.doc h3 {
+  font-size: var(--t-lg);
+}
+.doc h4 {
+  font-size: var(--t-base);
+  color: var(--dim);
+}
+
+.doc p,
+.doc li {
+  color: var(--fg);
+}
+
+.doc ul,
+.doc ol {
+  padding-left: 1.4rem;
+}
+
+.doc li + li {
+  margin-top: var(--s1);
+}
+
+.doc li::marker {
+  color: var(--faint);
+}
+
+.doc blockquote {
+  margin: 0;
+  padding: var(--s2) var(--s4);
+  border-left: 3px solid var(--border-strong);
+  color: var(--dim);
+}
+
+.doc code {
+  /* Long identifiers inside prose wrap rather than pushing the page wide. */
+  white-space: pre-wrap;
+  word-break: break-word;
+}
+
+.doc pre {
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: var(--r);
+  padding: var(--s3) var(--s4);
+  overflow-x: auto;
+}
+
+.doc pre code {
+  background: none;
+  border: 0;
+  padding: 0;
+  font-size: var(--t-sm);
+  white-space: pre;
+}
+
+.doc table {
+  font-size: var(--t-sm);
+}
+
+.doc img {
+  max-width: 100%;
+  border: 1px solid var(--border);
+  border-radius: var(--r);
+}
+
+.doc hr {
+  border: 0;
+  border-top: 1px solid var(--border);
+  margin: var(--s5) 0;
+}
+
+.doc a {
+  text-decoration-color: var(--border-strong);
+}
+
 /* ------------------------------------------------------------------ forms */
 
 label {
