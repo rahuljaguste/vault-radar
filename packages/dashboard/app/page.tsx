@@ -28,6 +28,9 @@ export default async function HomePage() {
           <Link className="cta" href="/verify">
             Verify a receipt
           </Link>
+          <Link className="cta" href="/flow">
+            How a request flows
+          </Link>
           <Link className="cta" href="/admin">
             Operator metrics
           </Link>

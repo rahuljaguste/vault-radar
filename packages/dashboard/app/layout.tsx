@@ -17,6 +17,7 @@ export default function RootLayout({ children }: { children: ReactNode }) {
           <nav>
             <Link href="/">catalog &amp; runs</Link>
             <Link href="/universe">risk universe</Link>
+          <Link href="/flow">payment flow</Link>
           <Link href="/portfolio">scan your portfolio</Link>
             <Link href="/verify">verify a receipt</Link>
             <Link href="/admin">service metrics</Link>
