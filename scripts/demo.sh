@@ -7,7 +7,7 @@
 #   bash scripts/demo.sh
 #
 # Run against the deployed service:
-#   SERVICE_URL=https://vaultradar.fly.dev bash scripts/demo.sh
+#   SERVICE_URL=https://vaultradar-service-production.up.railway.app bash scripts/demo.sh
 #
 # Steps 3, 4 and 5 run the three paid entrypoints: `agent watch` under the balanced
 # policy (a sealed per-vault scan on Hedera), `agent watch` again under the strict
@@ -52,10 +52,10 @@ POLICY_STRICT="${POLICY_STRICT:-packages/agent/policy.strict.json}"
 
 # The receipt hash to look up in step 6. `agent watch` prints this; export it to
 # chain the steps together, otherwise step 6 shows the shape of the lookup only.
-RECEIPT_HASH="${RECEIPT_HASH:-<<FILL: receipt hash printed by agent watch>>}"
+RECEIPT_HASH="${RECEIPT_HASH:-50bddf81474ad98fca492c1f640a695ea525342dc4cef85c2f5ff0704ff50cbc}"
 
 # Filled by scripts/identity.ts (Task 18) and set in the service's environment.
-HCS_TOPIC_ID="${HEDERA_HCS_TOPIC_ID:-<<FILL: HCS topic id>>}"
+HCS_TOPIC_ID="${HEDERA_HCS_TOPIC_ID:-0.0.10483981}"
 
 BOLD=$'\033[1m'
 DIM=$'\033[2m'
@@ -163,6 +163,6 @@ heading "7. The public audit trail"
 echo "HCS topic:   $HCS_TOPIC_ID"
 echo "Mirror node: https://testnet.mirrornode.hedera.com/api/v1/topics/$HCS_TOPIC_ID/messages?limit=25&order=desc"
 echo "HashScan:    https://hashscan.io/testnet/topic/$HCS_TOPIC_ID"
-note "Dashboard: <<FILL: deployed dashboard URL>>"
+note "Dashboard: https://vaultradar-dashboard-production.up.railway.app"
 
 heading "Done"

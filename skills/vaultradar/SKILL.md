@@ -7,7 +7,7 @@ description: Buy cross-protocol vault risk data over x402 with sealed requests a
 
 VaultRadar sells per-request risk reports on ERC-4626 vaults, Messari yield-aggregator vaults, and Messari lending markets. You pay per request over x402, on Hedera testnet or Arc testnet. Requests and responses are sealed with a hybrid post-quantum KEM. Receipts and per-vault attestations are signed with ML-DSA-65.
 
-Service: `<<FILL: deployed service URL, e.g. https://vaultradar.fly.dev>>`
+Service: <https://vaultradar-service-production.up.railway.app>
 
 ## When to use this
 

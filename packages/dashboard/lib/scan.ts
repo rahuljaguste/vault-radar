@@ -56,6 +56,17 @@ export function defaultPolicyPath(): string {
 export const MAX_PRICE_USD = "0.10";
 
 /**
+ * How long the paid request itself may take before it is abandoned, as opposed to discovery.
+ *
+ * The service caps its own handler at 60 seconds, and the two facilitator round trips bracket
+ * that, so 120 seconds is the first figure that cannot fire while a legitimate scan is still
+ * running. It exists because `fetch` has no default timeout and the release path only runs
+ * when the promise settles: a service that answered discovery and then went silent held the
+ * caller's spend reservation, its hourly slot and a socket for as long as it chose.
+ */
+export const PAID_SCAN_TIMEOUT_MS = 120_000;
+
+/**
  * USD decimal strings compared as integer micro-USD, the convention
  * `packages/agent/src/watch.ts` uses for the same reason. With this service's
  * own single-vault price, `0.0015 * 3` in binary floats is
@@ -82,6 +93,19 @@ export type ScanDeps = {
    * caller in the app passes it. See `withTimeout`'s use at step 7 for why it exists.
    */
   discoveryTimeoutMs: number;
+  /**
+   * How long the paid request itself may take before it is abandoned. Tests shorten it; no
+   * caller in the app passes it.
+   *
+   * Bound, not merely guarded: the service caps its own handler at 60 seconds and the two
+   * facilitator round trips sit either side of that, so 120 seconds is the first figure that
+   * cannot fire while a legitimate scan is still running. Without it a service that answers
+   * discovery and then goes quiet holds this caller's spend reservation, its hourly slot and
+   * a socket for as long as it likes — `fetch` has no default timeout, and the release path
+   * only runs when the promise settles. Discovery had this bound already; the paid call, which
+   * is the one that spends money, did not.
+   */
+  scanTimeoutMs: number;
   env: Record<string, string | undefined>;
 };
 
@@ -99,6 +123,7 @@ function defaultDeps(): ScanDeps {
     // The same bound `lib/service.ts` puts on every page's read of this service, for the
     // same reason: `fetch` has no default timeout of its own.
     discoveryTimeoutMs: SERVICE_FETCH_TIMEOUT_MS,
+    scanTimeoutMs: PAID_SCAN_TIMEOUT_MS,
     env: process.env,
   };
 }
@@ -327,9 +352,14 @@ export async function handleScan(req: Request, overrides: Partial<ScanDeps> = {}
     // 8. Pay, sealed or clear exactly as the policy's privacy tier dictates.
     let result: Awaited<ReturnType<VaultRadarClient["scan"]>>;
     try {
-      result = await client.scan(parsed.vaults, "hedera", { seal: tier.seal });
+      result = await withTimeout(client.scan(parsed.vaults, "hedera", { seal: tier.seal }), deps.scanTimeoutMs);
     } catch (e) {
-      const message = redact(e, secrets);
+      // A timeout is not "nothing happened": the transfer may have been signed and settled
+      // before the service went quiet, which is why the reservation is settled below rather
+      // than released, and why the run is still recorded.
+      const message = e instanceof Error && e.message === "TIMED_OUT"
+        ? `the service did not answer the paid request within ${deps.scanTimeoutMs}ms`
+        : redact(e, secrets);
       console.error(`[api/scan] paid scan failed: ${message}`);
       // The payment may or may not have gone through — `client.scan` throws both for a
       // refused 402 (nothing spent) and for a failure after the transfer was signed. Settle

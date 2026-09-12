@@ -593,6 +593,34 @@ test("502 when discovery never answers, and the held reservation is released", a
   expect((await handleScan(post([OK_VAULT]), deps({ ledger }))).status).toBe(200);
 });
 
+test("502 when the paid request never answers, and the reservation is settled rather than held", async () => {
+  // Discovery answered; the payment round trip then went silent. Before the paid call had a
+  // bound, this held the reservation, the caller's hourly slot and a socket for as long as the
+  // service cared to keep the connection open — the release path only runs when the promise
+  // settles, and `fetch` has no timeout of its own.
+  const ledger = new SpendLedger({ DASHBOARD_SPEND_CAP_USD: "10.00", DASHBOARD_MAX_SCANS_PER_HOUR: "100" });
+  const started = Date.now();
+  const overrides = { payingFetch: (() => new Promise<Response>(() => {})) as unknown as typeof fetch };
+  const res = await handleScan(
+    post([OK_VAULT]),
+    deps({
+      ledger,
+      scanTimeoutMs: 250,
+      makeClient: (serviceUrl, hedera) =>
+        new VaultRadarClient({ serviceUrl, hedera, readPqHash: async () => keys.sig.pubHash, ...overrides }),
+    }),
+  );
+  expect(res.status).toBe(502);
+  expect(Date.now() - started).toBeLessThan(5_000);
+  expect((await res.json()).error).toContain("did not answer the paid request");
+  // Settled, not released: the payment may have gone through before the silence, and an
+  // unknown outcome that did not count would be an unmetered way to drain the wallet.
+  expect(ledger.snapshot()).toMatchObject({ scansLastHour: 1 });
+  expect(ledger.snapshot().spentMicroUsd).toBeGreaterThan(0);
+  // The attempt is still visible as a run, rather than vanishing with the connection.
+  expect(runFiles()).toHaveLength(1);
+});
+
 test("502 when the service cannot be reached at all", async () => {
   const unreachable = `http://127.0.0.1:${await freePort()}`;
   const res = await handleScan(post([OK_VAULT]), deps({ env: { AGENT_HEDERA_ACCOUNT_ID: "0.0.42", AGENT_HEDERA_KEY: UNUSED_KEY, SERVICE_URL: unreachable } }));
