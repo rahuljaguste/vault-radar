@@ -7,9 +7,14 @@ import { erc8004ExplorerUrl } from "@/lib/explorer";
 
 export default async function HomePage() {
   const [card, catalog, runs] = await Promise.all([fetchCard(), fetchCatalog(), listRuns()]);
-  // Counts of the registry's own statuses, not of `vaultCount`: that figure comes from a
-  // cache the service only warms when someone buys a scan, so on a freshly started service
-  // it reads zero for every protocol and would tell a first-time visitor the index is empty.
+  // Counts of the registry's own statuses, not of `vaultCount`. That figure is real but
+  // nearly always unknowable here: `LiveDataProvider.catalog()` reads it from a per-chain
+  // cache with a 60-second TTL that only a paid `scan`/`table` warms, so it is non-zero
+  // only inside the minute after somebody buys a scan on that chain and zero at every
+  // other moment. Rendering it would put a column of zeroes in front of every visitor,
+  // which reads as "this index is empty" — and a dash instead would be a column of dashes,
+  // because the window is a minute wide. The registry's statuses say the same thing without
+  // lying: they are what `scripts/verify-deployments.ts` actually observed.
   const byStatus = (want: string) => catalog?.protocols.filter((p) => p.status === want).length ?? 0;
 
   return (
@@ -81,7 +86,9 @@ export default async function HomePage() {
                   </span>
                 ),
               },
-              { key: "vaultCount", label: "Vaults" },
+              // No `vaultCount` column: see the note at the top of this component. It is
+              // zero except for the minute after a scan warms that chain's cache, so a
+              // "Vaults" column here is a column of zeroes that libels the index.
             ]}
             rows={catalog.protocols}
             rowKey={(row, i) => `${row.protocol}-${row.chain}-${i}`}
