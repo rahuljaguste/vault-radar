@@ -18,3 +18,5 @@ keys/
 /runs/
 substreams/**/target/
 packages/dashboard/.next/
+deck
+render-deck.mjs
