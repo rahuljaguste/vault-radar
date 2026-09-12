@@ -143,14 +143,24 @@ header nav {
   font-size: var(--t-sm);
 }
 
+/* The nav is a row of dim, regular-weight words with the underline stripped, which reads as
+   a caption rather than as navigation — "docs" is indistinguishable from a label, so the
+   write-up, the spec and the verification log behind it are effectively unfindable. The
+   convention already exists ten lines up: body links are underlined in `--border-strong` and
+   brighten on hover. The nav now follows it, which makes it legible as links at rest without
+   making it loud. */
 header nav a {
   color: var(--dim);
   font-weight: 400;
+  text-decoration: underline;
+  text-decoration-color: currentColor;
+  text-underline-offset: 3px;
 }
 
+/* `currentColor` on the underline means brightening the text brightens the underline with
+   it, so there is nothing else to set here. */
 header nav a:hover {
   color: var(--fg);
-  text-decoration: none;
 }
 
 main {
@@ -187,14 +197,22 @@ p {
   margin: 0;
 }
 
+/* The underline is the text's own colour, not `--border-strong`. That token is calibrated for
+   hairlines between surfaces, and in the dark scheme it resolves to #3a3a44 on a #0b0b0d
+   background: an underline that is present in the DOM and invisible on screen. It is how a
+   page full of links comes to look like a page with none — including every link inside the
+   documentation pages, and "docs" in the nav. `currentColor` is visible in both schemes by
+   construction, because it is whatever the text already is. */
 a {
   color: var(--fg);
   text-underline-offset: 3px;
-  text-decoration-color: var(--border-strong);
+  text-decoration-color: currentColor;
 }
 
+/* Thicker rather than brighter: the colour is already the text's, so there is nothing to
+   brighten, and thickness does not move anything on the page. */
 a:hover {
-  text-decoration-color: var(--fg);
+  text-decoration-thickness: 2px;
 }
 
 code {
@@ -744,8 +762,11 @@ th.num {
   margin: var(--s5) 0;
 }
 
+/* Same reason as the global `a` rule: `--border-strong` is a hairline colour, and in the dark
+   scheme it is invisible against the page. This rule exists to quiet the underline inside a
+   rendered document — it now only keeps the offset consistent. */
 .doc a {
-  text-decoration-color: var(--border-strong);
+  text-decoration-color: currentColor;
 }
 
 /* ------------------------------------------------------------------ forms */
