@@ -24,34 +24,36 @@ export default async function DocPage({ params }: { params: Promise<{ slug: stri
   const next = index < DOCS.length - 1 ? DOCS[index + 1] : null;
 
   return (
-    <>
-      <section className="hero">
-        <h1>{doc.title}</h1>
-        <div className="row">
-          <Link className="cta" href="/docs">
-            All documentation
-          </Link>
-          <span className="faint mono">{doc.file}</span>
-        </div>
-      </section>
+    // One column: the hero, the article and the prev/next nav share `.docpage`'s measure, so
+    // the rule under the heading stops where the prose does. See the rule's note in globals.css.
+    <div className="docpage">
+        <section className="hero">
+          <h1>{doc.title}</h1>
+          <div className="row">
+            <Link className="cta" href="/docs">
+              All documentation
+            </Link>
+            <span className="faint mono">{doc.file}</span>
+          </div>
+        </section>
 
-      {/* The HTML comes from a file in this repository, not from a request: the route takes a
-          slug, looks it up in a closed registry, and reads what that names. There is no path
-          or content here that a visitor can influence. */}
-      <article className="doc" dangerouslySetInnerHTML={{ __html: html }} />
+        {/* The HTML comes from a file in this repository, not from a request: the route takes a
+            slug, looks it up in a closed registry, and reads what that names. There is no path
+            or content here that a visitor can influence. */}
+        <article className="doc" dangerouslySetInnerHTML={{ __html: html }} />
 
-      <nav className="row between">
-        {prev ? (
-          <Link href={`/docs/${prev.slug}`}>← {prev.title}</Link>
-        ) : (
-          <span />
-        )}
-        {next ? (
-          <Link href={`/docs/${next.slug}`}>{next.title} →</Link>
-        ) : (
-          <span />
-        )}
-      </nav>
-    </>
+        <nav className="row between">
+          {prev ? (
+            <Link href={`/docs/${prev.slug}`}>← {prev.title}</Link>
+          ) : (
+            <span />
+          )}
+          {next ? (
+            <Link href={`/docs/${next.slug}`}>{next.title} →</Link>
+          ) : (
+            <span />
+          )}
+        </nav>
+    </div>
   );
 }

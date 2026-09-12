@@ -662,8 +662,25 @@ th.num {
 /* Prose rendered from the repository's Markdown. The app is dense and monospace by design;
    a document is not, so this scope loosens the line height and caps the measure, and gives
    the elements Markdown actually emits the styling the rest of the site gets from classes. */
-.doc {
+/* One column, and the wrapper owns the measure rather than the article.
+ *
+ * With `max-width` on `article.doc` alone, the page had two content widths: the hero's
+ * bottom rule and the prev/next nav spanned `main` (992px) while the prose was 634px. Every
+ * left edge agreed at 224px and the right edges disagreed by 358px, so the rule read as
+ * belonging to a wider page than the text beneath it.
+ *
+ * `display: flex` because `main` is a flex column with a `--s6` gap, and wrapping three
+ * children in one element would otherwise silently drop the spacing between them. */
+.docpage {
+  display: flex;
+  flex-direction: column;
+  gap: var(--s6);
+  width: 100%;
   max-width: 78ch;
+  margin-inline: auto;
+}
+
+.doc {
   line-height: 1.7;
   font-size: var(--t-base);
 }
