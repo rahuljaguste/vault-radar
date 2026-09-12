@@ -38,6 +38,7 @@ disagree with the project rather than the reverse, and this file is the record t
 | `task-N-brief.md` | What each implementer was told. These are the prompts: one per task, written to be self-contained, with the exact values, signatures and tests required. |
 | `task-N-report.md` | What each implementer did, what it deviated on and why, which tests it added, and the concerns it raised. |
 | `final-review-report.md` | The whole-branch review, run on the most capable model against the full diff. |
+| `final-fix-brief.md` | What that fix wave was told to do: every finding with its file, its failure scenario, the required fix and the required test. The most concrete example here of a prompt written to be checked against. |
 | `final-fix-report.md` | The single fix wave that answered it. |
 | `final-rereview-report.md` | The scoped re-review of that wave, finding by finding. |
 
