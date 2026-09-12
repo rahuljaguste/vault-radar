@@ -72,7 +72,7 @@ export function RiskUniverse({
 
         const scene = new THREE.Scene();
         const camera = new THREE.PerspectiveCamera(45, width / height, 0.1, 100);
-        camera.position.set(14, 10, 16);
+        camera.position.set(11, 8, 13);
 
         const controls = new OrbitControls(camera, renderer.domElement);
         controls.enableDamping = true;
@@ -93,7 +93,7 @@ export function RiskUniverse({
         }
 
         // One instanced mesh for every vault: hundreds of spheres, one draw call.
-        const geometry = new THREE.SphereGeometry(0.16, 16, 16);
+        const geometry = new THREE.SphereGeometry(0.22, 16, 16);
         const material = new THREE.MeshBasicMaterial({ vertexColors: false });
         const mesh = new THREE.InstancedMesh(geometry, material, Math.max(points.length, 1));
         // Held in a local as well as on the mesh: `instanceColor` is nullable on the type,
@@ -101,19 +101,26 @@ export function RiskUniverse({
         const colours = new THREE.InstancedBufferAttribute(new Float32Array(Math.max(points.length, 1) * 3), 3);
         mesh.instanceColor = colours;
 
-        // Each axis is scaled to its own extreme: the three are in different units and a
-        // shared scale would flatten whichever has the smaller spread. The two change axes
-        // are signed, so their range is symmetric about zero and a vault that fell sits on
-        // the opposite side of the axis from one that rose.
-        const extent = (vals: number[]) => Math.max(1e-6, ...vals.map((v) => Math.abs(v)));
+        // Each axis is scaled to its own spread rather than to its maximum. Scaling to the
+        // maximum is the obvious choice and it produces a single blob: one vault that moved
+        // ten times as much as the others compresses every other point into the origin. The
+        // 90th percentile of the absolute values is what the bulk of the data occupies, so
+        // that is the scale, and the few points beyond it clamp to the edge where they are
+        // still visible as outliers — which is the information the maximum was carrying.
+        const extent = (vals: number[]) => {
+          const sorted = [...vals].map((v) => Math.abs(v)).sort((a, b) => a - b);
+          const p90 = sorted[Math.min(sorted.length - 1, Math.floor(sorted.length * 0.9))] ?? 0;
+          return Math.max(1e-6, p90);
+        };
         const xExtent = extent(points.map((p) => p.change7d));
         const yExtent = extent(points.map((p) => p.change24h));
+        const clamp01 = (x: number) => Math.max(0, Math.min(1, x));
         const dummy = new THREE.Object3D();
         const colour = new THREE.Color();
         points.forEach((p, i) => {
           dummy.position.set(
-            ((p.change7d / xExtent) * 0.5 + 0.5) * 10,
-            ((p.change24h / yExtent) * 0.5 + 0.5) * 10,
+            clamp01((p.change7d / xExtent) * 0.5 + 0.5) * 10,
+            clamp01((p.change24h / yExtent) * 0.5 + 0.5) * 10,
             (p.score / 100) * 10,
           );
           dummy.updateMatrix();

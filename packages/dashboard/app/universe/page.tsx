@@ -24,16 +24,23 @@ export default async function UniversePage({ searchParams }: { searchParams: Pro
   const { run: wanted } = await searchParams;
   const summaries = await listRuns();
 
-  // Picking the biggest run rather than the newest: a 100-vault scan is worth looking at and
-  // a one-vault scan is not, and the newest run is usually the small one.
+  // Not simply the newest run (usually a one-vault scan) and not simply the biggest: a scan
+  // whose vaults all came back `unavailable` has plenty of verdicts and nothing to look at.
+  // Ranked by how many vaults were actually scored, newest first among equals, which picks
+  // the 100-vault scan over the single-vault ones and the fresh scan over the stale one.
   let runId = wanted ?? null;
   if (!runId) {
-    let best = 0;
+    let bestScored = -1;
     for (const s of summaries) {
       const r = await getRun(s.id);
-      const n = r?.requests.flatMap((q) => q.verdicts).length ?? 0;
-      if (n > best) {
-        best = n;
+      if (!r) continue;
+      const vs = r.requests.flatMap((q) => q.verdicts);
+      const scored = vs.filter((v) => v.verdict !== "unavailable" && (v.history?.length ?? 0) > 1).length;
+      // A run with nothing scored is still better than no run at all, so the floor is the
+      // total verdict count rather than zero.
+      const rank = scored > 0 ? scored * 1000 : vs.length;
+      if (rank > bestScored) {
+        bestScored = rank;
         runId = s.id;
       }
     }
