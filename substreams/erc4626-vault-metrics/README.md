@@ -210,8 +210,8 @@ substreams sink postgres ./erc4626-vault-metrics-v0.1.0.spkg \
 ```
 
 **Hosted alternative**: on [thegraph.market](https://thegraph.market), Hosted Sinks → New → point
-at the published package below → Postgres → paste the Neon connection string → deploy. This runs
-the same sink without a long-lived local/laptop process.
+at the published package below → Postgres → paste your Postgres connection string → deploy. This
+runs the same sink without a long-lived local/laptop process.
 
 ## Publishing to substreams.dev
 
@@ -220,4 +220,4 @@ substreams registry login
 substreams registry publish ./erc4626-vault-metrics-v0.1.0.spkg
 ```
 
-Published package: `<<FILL: substreams.dev package URL for erc4626-vault-metrics>>`
+Published package: [`erc4626-vault-metrics@v0.1.0`](https://substreams.dev/packages/erc4626-vault-metrics/v0.1.0)
