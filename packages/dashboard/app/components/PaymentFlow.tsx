@@ -25,7 +25,10 @@ export type Step = {
 export function PaymentFlow({
   nodes,
   steps,
-  height = 380,
+  // The arc sits on a shallow parabola and the camera is pitched well above it, so at 380px
+  // the scene occupied about eighty pixels of its own box and read as an empty panel with
+  // speckles. 240 leaves the arc the same size but stops reserving space it never used.
+  height = 240,
 }: {
   nodes: string[];
   steps: Step[];
