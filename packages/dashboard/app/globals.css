@@ -120,13 +120,25 @@ body {
 header {
   display: flex;
   align-items: baseline;
-  gap: var(--s5);
+  /* Wraps rather than shoving the page sideways. Seven nav links in one row measured 565px,
+     so `document.scrollWidth` exceeded the viewport on every page at phone width and the
+     whole site scrolled horizontally — the nav was the only cause. */
+  flex-wrap: wrap;
+  gap: var(--s3) var(--s5);
   padding: var(--s4) var(--s5);
   border-bottom: 1px solid var(--border);
   background: var(--surface);
   position: sticky;
   top: 0;
   z-index: 10;
+}
+
+/* Once the nav wraps it occupies several rows, and a sticky header holding four rows of
+   links over the content for the whole scroll costs more than the shortcut is worth. */
+@media (max-width: 720px) {
+  header {
+    position: static;
+  }
 }
 
 header a {
@@ -138,7 +150,8 @@ header a {
 
 header nav {
   display: flex;
-  gap: var(--s4);
+  flex-wrap: wrap;
+  gap: var(--s2) var(--s4);
   color: var(--dim);
   font-size: var(--t-sm);
 }
@@ -170,6 +183,17 @@ main {
   display: flex;
   flex-direction: column;
   gap: var(--s6);
+}
+
+/* Paragraphs get the same measure as the hero's lede, which already caps itself at 72ch.
+ *
+ * Uncapped, a paragraph in a 1040px column set at 13.5px monospace runs to about 118
+ * characters a line — and the pages with the longest prose, the ones explaining what a scan
+ * costs and what a receipt proves, were exactly the ones with no cap. `article.doc` is not a
+ * section, so the rendered documents keep their own 78ch column.
+ */
+main section > p {
+  max-width: 72ch;
 }
 
 /* ------------------------------------------------------------------ type */
@@ -449,6 +473,16 @@ code {
 
 /* ------------------------------------------------------------------ key/value lists */
 
+/* Every `<dl>` is a label/value grid, not only the ones carrying `.kv`.
+ *
+ * Styling this by class meant six `<dl>`s across `/admin` and `/portfolio` rendered as the
+ * browser's default — each label on its own line with the value indented beneath it, which
+ * reads as a broken list rather than as a table of two columns. It was the single largest
+ * reason those two pages looked unfinished, and it was a class someone had to remember.
+ * There is no `<dl>` in this app that wants the stacked form, so the default is the grid and
+ * the class is kept only for the places that already pass it.
+ */
+dl,
 .kv {
   display: grid;
   grid-template-columns: max-content 1fr;
@@ -457,10 +491,12 @@ code {
   font-size: var(--t-sm);
 }
 
+dl dt,
 .kv dt {
   color: var(--dim);
 }
 
+dl dd,
 .kv dd {
   margin: 0;
   min-width: 0;

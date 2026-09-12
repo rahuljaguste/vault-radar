@@ -5,6 +5,8 @@ import { useState } from "react";
 import { matchesIdentityPin, verifyReceipt, receiptHash, checkSig, fromB64, sha256Hex, type IdentityPin } from "@vaultradar/core";
 import type { Receipt, Sig } from "@vaultradar/core";
 import { checkAnchor, type AnchorState } from "@/lib/onchain";
+import { PageHeader } from "@/app/components/PageHeader";
+import { Id } from "@/app/components/Id";
 import type { AgentCard } from "@/lib/service";
 
 // `@vaultradar/core`'s base64 helpers use the Node.js `Buffer` global, which
@@ -83,6 +85,31 @@ export function isVerified(r: Done): boolean {
 export default function VerifyPage() {
   const [text, setText] = useState("");
   const [result, setResult] = useState<Result>({ status: "idle" });
+  const [loadingExample, setLoadingExample] = useState(false);
+  const [exampleError, setExampleError] = useState<string | null>(null);
+
+  /**
+   * Put a real receipt in the box.
+   *
+   * Without this the page had nothing to paste and so nothing to do: the whole point of it —
+   * that a receipt from the service verifies against the key pinned on chain — could only be
+   * seen by someone who already had a receipt from somewhere else. The file is a settled scan
+   * recorded from the deployed service, kept beside the recorded runs it came from.
+   */
+  async function loadExample() {
+    setLoadingExample(true);
+    setExampleError(null);
+    try {
+      const res = await fetch("/example-receipt.json", { cache: "no-store" });
+      if (!res.ok) throw new Error(`HTTP ${res.status}`);
+      setText(JSON.stringify(await res.json(), null, 2));
+      setResult({ status: "idle" });
+    } catch (e) {
+      setExampleError(`could not load the example receipt: ${e instanceof Error ? e.message : String(e)}`);
+    } finally {
+      setLoadingExample(false);
+    }
+  }
 
   async function onVerify() {
     setResult({ status: "checking" });
@@ -166,31 +193,68 @@ export default function VerifyPage() {
 
   return (
     <>
-      <h2>Verify a receipt</h2>
-      <p>
-        Paste a receipt&rsquo;s JSON below. Its ML-DSA-65 signature is checked in your browser against the service&rsquo;s
-        published key, and that key is checked against the hash pinned on the ERC-8004 registry for every identity the
-        receipt itself names — a receipt that names none cannot be verified, only read. The receipt hash is recomputed
-        too. If this dashboard has an expected identity configured, that identity must be among the ones the receipt
-        names: the registry itself is open to anyone, so an on-chain anchor alone proves a key belongs to <em>an</em>
-        agent, not to the service you meant to reach. The receipt is never sent anywhere: the only requests your browser
-        makes are the one-time fetch of the agent card, a read-only call to a public RPC endpoint for the on-chain key,
-        and this dashboard's own pin.
-      </p>
-      <textarea
-        value={text}
-        onChange={(e) => setText(e.target.value)}
-        rows={16}
-        placeholder='{"v":1,"service":{"erc8004":[...]},"request_hash":"...","...":"..."}'
+      <PageHeader
+        title="Verify a receipt"
+        lede="Paste a receipt's JSON to check its ML-DSA-65 signature against the key the service publishes, and that key against the hash pinned on chain. Nothing is sent anywhere."
       />
-      <div>
-        <button onClick={onVerify} disabled={text.trim().length === 0 || result.status === "checking"}>
-          Verify
-        </button>
-      </div>
-      {result.status === "checking" && <p>Checking&hellip;</p>}
-      {result.status === "error" && <p className="error">{result.message}</p>}
-      {result.status === "done" && <Verdict result={result} />}
+
+      <section className="stack">
+        <div className="row">
+          <button onClick={loadExample} disabled={loadingExample}>
+            {loadingExample ? "Loading…" : "Load an example receipt"}
+          </button>
+          <span className="faint">a real settled scan, 0.0015 USDC</span>
+        </div>
+        {exampleError && <p className="error">{exampleError}</p>}
+        <textarea
+          value={text}
+          onChange={(e) => setText(e.target.value)}
+          rows={14}
+          placeholder='{"v":1,"service":{"erc8004":[...]},"request_hash":"...","...":"..."}'
+        />
+        <div className="row">
+          <button onClick={onVerify} disabled={text.trim().length === 0 || result.status === "checking"}>
+            Verify
+          </button>
+        </div>
+        {result.status === "checking" && <p>Checking&hellip;</p>}
+        {result.status === "error" && <p className="error">{result.message}</p>}
+        {result.status === "done" && <Verdict result={result} />}
+      </section>
+
+      {/* What the check actually establishes is the substance of this page, but as one
+          hundred-and-seventy-word paragraph above the box it was the only thing a visitor
+          saw — and none of it answers "what do I do here". It belongs after the action, as
+          the five claims it is. */}
+      <section>
+        <details>
+          <summary className="faint">What this checks, and what it does not</summary>
+          <ul>
+            <li>
+              <strong>The signature.</strong> Checked in your browser against the ML-DSA-65 key the service publishes in
+              its agent card.
+            </li>
+            <li>
+              <strong>The key.</strong> That key&rsquo;s hash is compared against the value pinned on the ERC-8004 registry,
+              for every identity the receipt names. A receipt that names none cannot be verified, only read — and if this
+              dashboard has an expected identity configured, that identity has to be among the ones it names.
+            </li>
+            <li>
+              <strong>The hash.</strong> Recomputed from the receipt&rsquo;s own contents, so an edited receipt fails even
+              with a valid signature attached.
+            </li>
+            <li>
+              <strong>What the anchor does not prove.</strong> The registry is open to anyone, so an on-chain anchor alone
+              proves a key belongs to <em>an</em> agent, not to the service you meant to reach. That is what the pin is for.
+            </li>
+            <li>
+              <strong>Nothing leaves.</strong> The receipt is never sent anywhere. Your browser makes three requests: the
+              one-time fetch of the agent card, a read-only call to a public RPC endpoint for the on-chain key, and this
+              dashboard&rsquo;s own pin.
+            </li>
+          </ul>
+        </details>
+      </section>
     </>
   );
 }
@@ -219,7 +283,7 @@ function Verdict({ result }: { result: Done }) {
   return (
     <>
       <p className={verified ? "ok" : "error"}>
-        {headline(result)} Receipt hash: <code>{result.hash}</code>
+        {headline(result)} Receipt hash: <Id value={result.hash} head={12} tail={6} />
       </p>
       <dl>
         <dt>Receipt signature</dt>

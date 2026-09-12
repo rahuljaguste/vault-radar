@@ -1,4 +1,5 @@
 import { ScanForm } from "./ScanForm";
+import { PageHeader } from "@/app/components/PageHeader";
 import { listRuns } from "@/lib/runs";
 import { microToUsd, scanSpendLedger } from "@/lib/spend";
 
@@ -30,19 +31,17 @@ export default async function PortfolioPage() {
 
   return (
     <>
-      <section>
-        <h2>Scan your portfolio</h2>
-        <p>
-          Paste the vaults you hold. The dashboard buys a risk scan over x402, verifies the ML-DSA-65 receipt and every
-          per-vault attestation, applies the agent policy&apos;s own freshness bar to the signed timestamps, and shows one
-          action per vault with the evidence behind it.
-        </p>
-        <p className="muted">
-          The payer is the operator&apos;s funded agent account, not a wallet in your browser, so the settlement on the
-          explorer is the operator&apos;s. Requests are sealed with a hybrid post-quantum KEM before they leave this server,
-          so no intermediary on the path learns which vaults you asked about.
-        </p>
-      </section>
+      <PageHeader
+        title="Scan your portfolio"
+        lede={
+          <>
+            Paste the vaults you hold. The dashboard buys a risk scan over x402, verifies the ML-DSA-65 receipt and every
+            per-vault attestation, and shows one action per vault with the evidence behind it. The payer is the
+            operator&apos;s funded agent account, not a wallet in your browser, and requests are sealed before they leave
+            this server — so no intermediary on the path learns which vaults you asked about.
+          </>
+        }
+      />
 
       <section>
         <h2>Spending allowance</h2>

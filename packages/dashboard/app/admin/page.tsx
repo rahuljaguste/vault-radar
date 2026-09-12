@@ -1,5 +1,6 @@
 import type { ReactNode } from "react";
 import { Table } from "../components/Table";
+import { PageHeader } from "../components/PageHeader";
 import { AutoRefresh } from "./AutoRefresh";
 import { epochUtc } from "@/lib/format";
 import {
@@ -23,20 +24,23 @@ export default async function AdminPage() {
 
   return (
     <>
-      <section>
-        <h2>Service metrics</h2>
+      <PageHeader
+        title="Service metrics"
+        lede={
+          <>
+            Operator view of the running service, read from <code>GET /v1/admin/metrics</code>. Every counter below lives
+            in the service process and <strong>resets when the service restarts</strong>, so these are totals since{" "}
+            {result.state === "ok" ? <code>{epoch(result.metrics.startedAt)}</code> : "the last restart"}, not all-time
+            totals.
+          </>
+        }
+        actions={<AutoRefresh intervalMs={15_000} />}
+      />
+      {result.state === "ok" && (
         <p className="muted">
-          Operator view of the running service, read from <code>GET /v1/admin/metrics</code>. Every counter below lives in
-          the service process and <strong>resets when the service restarts</strong>, so these are totals since{" "}
-          {result.state === "ok" ? <code>{epoch(result.metrics.startedAt)}</code> : "the last restart"}, not all-time totals.
+          fetched at <code>{result.fetchedAt}</code> from <code>{adminMetricsUrl()}</code>
         </p>
-        <AutoRefresh intervalMs={15_000} />
-        {result.state === "ok" && (
-          <p className="muted">
-            fetched at <code>{result.fetchedAt}</code> from <code>{adminMetricsUrl()}</code>
-          </p>
-        )}
-      </section>
+      )}
 
       {result.state === "ok" ? <Metrics metrics={result.metrics} /> : <Unavailable result={result} />}
     </>
