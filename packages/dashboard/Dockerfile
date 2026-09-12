@@ -26,9 +26,12 @@ COPY packages/dashboard/package.json packages/dashboard/
 RUN bun install --frozen-lockfile
 
 COPY packages ./packages
-# The /docs pages render these files at request time, so the image has to carry them.
+# The /docs pages render these files, so the image has to carry every one the registry
+# names — including the licence, which the README links to. Missing one fails the build at the
+# prerender step rather than 404ing in production, which is how the omission was caught.
 COPY docs ./docs
 COPY README.md ./README.md
+COPY LICENSE ./LICENSE
 
 ENV NODE_ENV=production
 WORKDIR /app/packages/dashboard
