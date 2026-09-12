@@ -108,7 +108,7 @@ The refusal rule has two independent halves.
 
 The service refuses first. In `packages/core/src/risk.ts`, any vault whose sources are not all `fresh` gets a `stale_data` flag, a score of zero, and the verdict `unavailable`. No partial verdict is ever inferred from the data that did arrive. The evidence array still names the source, its block, and its age, so the refusal is auditable.
 
-The agent refuses independently. It checks each attestation's `timestamp` against its own `max_age_seconds` policy value on its own clock, regardless of what the service said about freshness. A rejected attestation becomes `insufficient data`, never a guess.
+The agent refuses independently. It checks each attestation's `timestamp` against its own `max_age_seconds` policy value on its own clock, regardless of what the service said about freshness. A rejected attestation becomes `insufficient data`, never a guess. The shipped policies set that bar to 2400s rather than something tighter, because an attestation from the Substreams source is stamped with the block the sink had reached, and a sink that indexes finalized blocks only is never fresher than Ethereum's finality lag — a 15-minute bar refuses every one of them, and the agent would pay for data it then could not act on.
 
 ## Privacy and post-quantum
 

@@ -299,7 +299,9 @@ test("loadPolicy validates, applies defaults, and reads the shipped example", ()
     budget: { usdc_hedera: "1.00", usdc_arc: "1.00" },
     privacy: "balanced",
     rail_preference: "cheapest",
-    max_age_seconds: 900,
+    // Generous enough for a source that indexes finalized blocks only: Ethereum's finality
+    // lag alone is 14-19 minutes, so a 15-minute bar refuses every on-chain attestation.
+    max_age_seconds: 2400,
     expected_erc8004: [],
   });
 
@@ -311,7 +313,7 @@ test("loadPolicy validates, applies defaults, and reads the shipped example", ()
     budget: { usdc_hedera: "1.00", usdc_arc: "1.00" },
     privacy: "strict",
     rail_preference: "cheapest",
-    max_age_seconds: 900,
+    max_age_seconds: 2400,
     expected_erc8004: [],
   });
   expect(chooseTier(strict)).toEqual({ tier: "table", seal: true });

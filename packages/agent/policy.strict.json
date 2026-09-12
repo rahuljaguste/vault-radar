@@ -1,6 +1,9 @@
 {
-  "budget": { "usdc_hedera": "1.00", "usdc_arc": "1.00" },
+  "budget": {
+    "usdc_hedera": "1.00",
+    "usdc_arc": "1.00"
+  },
   "privacy": "strict",
   "rail_preference": "cheapest",
-  "max_age_seconds": 900
+  "max_age_seconds": 2400
 }
