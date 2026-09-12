@@ -168,7 +168,7 @@ export function PaymentFlow({
       {failed ? (
         <p className="error">Could not start WebGL ({failed}). The same steps are below.</p>
       ) : (
-        <div className="universe" ref={host} style={{ height }} aria-hidden="true" />
+        <div className="scene" ref={host} style={{ height }} aria-hidden="true" />
       )}
 
       {/* The nodes are unlabelled spheres in the scene: text in WebGL is either a sprite that

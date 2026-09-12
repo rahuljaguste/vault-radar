@@ -594,6 +594,30 @@ dl dd,
   stroke-width: 1;
 }
 
+/* ------------------------------------------------------------------ flow scene */
+
+/* The three.js host on /docs/flow. Every rule here is load-bearing and was lost once
+   already: when this was called `.universe` and the risk-universe page was replaced by the
+   ranked table, the class went with it, leaving PaymentFlow rendering a container with no
+   border, no rounded corners, no surface, and — the one that matters — no `overflow: hidden`
+   and no forced canvas size. `renderer.setSize` runs once from `el.clientWidth || 800`, so a
+   canvas measured before layout settles is 800px wide and, unclipped, pushes the page wider
+   than the viewport. It is renamed for what it actually is: the flow page's scene, not the
+   universe's. */
+.scene {
+  width: 100%;
+  border: 1px solid var(--border);
+  border-radius: var(--r);
+  background: var(--surface);
+  overflow: hidden;
+}
+
+.scene canvas {
+  display: block;
+  width: 100% !important;
+  height: 100% !important;
+}
+
 /* ------------------------------------------------------------------ vault ranking */
 
 /* A disclosure per vault laid out on one grid, so the collapsed rows read as the columns the
@@ -619,7 +643,7 @@ dl dd,
 }
 
 .vaults .headline {
-  padding: var(--s2) var(--s3);
+  padding: var(--s2) var(--s3) var(--s2) calc(var(--s3) + 1.1rem);
   border-bottom: 1px solid var(--border-strong);
   color: var(--dim);
   font-size: var(--t-xs);
@@ -628,8 +652,26 @@ dl dd,
 }
 
 .vaults summary {
-  padding: var(--s2) var(--s3);
+  /* The left padding is the disclosure marker's room, because `display: grid` above means
+     there is no marker to make room for: `::marker` is generated only for `display:
+     list-item`, so every one of these rows lost its triangle and read as a static table row
+     — on the page whose lede says "Open a row for the flags behind the score". The chevron
+     below is a real element instead, absolutely positioned in this padding. */
+  position: relative;
+  padding: var(--s2) var(--s3) var(--s2) calc(var(--s3) + 1.1rem);
   border-bottom: 1px solid var(--border);
+}
+
+.vaults summary::before {
+  content: "▸";
+  position: absolute;
+  left: var(--s3);
+  color: var(--faint);
+  font-size: var(--t-xs);
+}
+
+.vaults details[open] > summary::before {
+  content: "▾";
 }
 
 .vaults summary:hover {
