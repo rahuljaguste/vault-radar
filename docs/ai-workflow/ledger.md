@@ -235,7 +235,15 @@ Browser-found fixes committed: epochUtc in packages/dashboard/lib/format.ts (six
 
 --- 2026-09-11 session (merge, credentials, deploy) ---
 Merge: the main checkout held a second, uncommitted hardening lineage (PgNonceStore, defensive BigInt mapping, HCS TTL, re-implementations of the same anchor/rail fixes). Preserved it on ws/maintree-hardening (3a5beb7, no attribution trailer per the user's newer instruction), then merged ws/hardening into main (80444ce) — clean, since main was exactly the merge base.
-Ruling: re-applied only the self-contained win from that lineage (toBigInt in map.ts, 2ad345d) and deferred PgNonceStore — it is async while the reviewed NonceStore interface is deliberately synchronous, so adopting it would refactor the pre-payment check path the final review certified, for a benefit that needs more than one service instance. Cost if wrong: no cross-instance replay protection; documented in that branch.
+Ruling: re-applied only the self-contained win from that lineage (toBigInt in map.ts, 2ad345d) and deferred PgNonceStore — it is async while the reviewed NonceStore interface is deliberately synchronous, so adopting it would refactor the pre-payment check path the final review certified, for a benefit that needs more than one service instance. Cost if wrong: no cross-instance replay protection while the service runs more than one
+instance. The branch that held it was later deleted as clutter — 144 files behind main and
+duplicating fifteen superseded fixes — so the design is recorded here instead: a NONCE_SEEN
+table keyed by nonce with an expiry, claimed by a single `INSERT … ON CONFLICT DO UPDATE …
+WHERE expires_at <= now` so the claim is atomic across instances, compared against the
+database's own clock rather than any one instance's, created by an explicit `init()` at boot so
+a misconfigured database fails there rather than on the first paid request, and given the same
+SQL connection the sink reader already uses. Adopting it means widening NonceStore to allow
+promises and awaiting it in the pre-payment path.
 Fixed en route: vi missing from main's node_modules (bun install); five provider tests assumed the unpinned registry (fixture URL hardcoded /subgraphs/id, catalog status "unverified", aave-v3/base now "down" and skipped by fetchStandardized) — 4cbd2a1; two unguarded sink reads 500ing requests against a database that exists but was never set up (faac7f7, d2eabab).
 Verification gate: ran with the Studio key — 14/15 pinned; 11 live, 1 stale, 3 down (convex-finance and aura-finance last indexed years ago; aave-v3/base has no allocations) — 3c4d966.
 Deploy (Railway, per the user's choice): project vaultradar with Postgres, vaultradar-service, vaultradar-dashboard, vaultradar-sink. Service and dashboard live and green: https://vaultradar-service-production.up.railway.app and https://vaultradar-dashboard-production.up.railway.app. Dockerfiles for both services + the sink, plus .dockerignore (689711a, 6814534, 04d5c28).
