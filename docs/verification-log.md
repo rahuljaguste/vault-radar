@@ -103,9 +103,6 @@ per-vault attestation inside it.
 The ninth. 2 USDC deposited into Circle Gateway, then a 0.003 USDC sealed scan. Gateway batches
 settlement, so a payment's own reference is a batch id rather than a transaction hash:
 
-2 USDC deposited into Circle Gateway, then a 0.003 USDC sealed scan. Gateway batches settlement,
-so a payment's own reference is a batch id rather than a transaction hash:
-
 ```
 approval tx  0xcb3e84eb2c788e46cb5ae5110a7b50fc4d8f85d84b2ebd398c50a6d50e54c949
 deposit tx   0xe253e739cd2ca42c11c841db8d6891470ee0d22bff5ba30acb75c453ce35ac64
