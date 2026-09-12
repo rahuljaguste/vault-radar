@@ -43,5 +43,9 @@ export function formatFlag(f: Flag): string {
  * name stays and the threshold drops; the cell carries a `title` with the full sentence.
  */
 export function compactFlag(f: Flag): string {
-  return isRatio(f.name) ? `${flagLabel(f.name)} ${flagPercent(f.value).toFixed(1)}%` : flagLabel(f.name);
+  if (!isRatio(f.name)) return flagLabel(f.name);
+  // A value that will not parse would otherwise print as a confident `0.0%` — identical, in a
+  // one-line cell, to a vault that genuinely saw no outflow. Show what was recorded.
+  if (!Number.isFinite(Number(f.value))) return `${flagLabel(f.name)} ${f.value}`;
+  return `${flagLabel(f.name)} ${flagPercent(f.value).toFixed(1)}%`;
 }

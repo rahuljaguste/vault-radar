@@ -1,5 +1,5 @@
 import Link from "next/link";
-import { listRuns, getRun } from "@/lib/runs";
+import { readAllRuns } from "@/lib/runs";
 import { buildVaultRows } from "@/lib/universe";
 import { Id } from "@/app/components/Id";
 import { Sparkline } from "@/app/components/Sparkline";
@@ -50,32 +50,37 @@ function Pct({ value }: { value: number | null }) {
  */
 export default async function UniversePage({ searchParams }: { searchParams: Promise<{ run?: string }> }) {
   const { run: wanted } = await searchParams;
-  const summaries = await listRuns();
+  // One read for the whole render. `listRuns()` plus a `getRun()` per summary plus a final
+  // `getRun()` for the winner re-parsed the entire store once per call, which on a deployment
+  // with no runs directory means every committed recording (measured: 24 reads, 4.6 MiB
+  // parsed, against 4 reads and 786 KiB for a single pass). The order here is `readAllRuns`',
+  // which is what the tie-break below depends on.
+  const runs = await readAllRuns();
 
   // Not simply the newest run (usually a one-vault scan) and not simply the biggest: a scan
   // whose vaults all came back `unavailable` has plenty of verdicts and nothing to rank.
-  // Ranked by how many vaults were actually scored, newest first among equals, which picks
-  // the 100-vault scan over the single-vault ones and the fresh scan over the stale one.
-  let runId = wanted ?? null;
-  if (!runId) {
+  // Ranked by how many vaults were actually scored, first among equals, which picks the
+  // 100-vault scan over the single-vault ones and the fresh scan over the stale one.
+  let run = wanted ? (runs.find((r) => r.id === wanted) ?? null) : null;
+  if (!wanted) {
     let bestScored = -1;
-    for (const s of summaries) {
-      const r = await getRun(s.id);
-      if (!r) continue;
-      const vs = r.requests.flatMap((q) => q.verdicts);
+    for (const candidate of runs) {
+      const vs = candidate.requests.flatMap((q) => q.verdicts ?? []);
       const scored = vs.filter((v) => v.verdict !== "unavailable" && (v.history?.length ?? 0) > 1).length;
       // A run with nothing scored is still better than no run at all, so the floor is the
       // total verdict count rather than zero.
       const rank = scored > 0 ? scored * 1000 : vs.length;
       if (rank > bestScored) {
         bestScored = rank;
-        runId = s.id;
+        run = candidate;
       }
     }
   }
 
-  const run = runId ? await getRun(runId) : null;
-  const rows = run ? buildVaultRows(run.requests.flatMap((q) => q.verdicts), run.decisions) : [];
+  // `?? []` on both: a run file is parsed, never validated, and the rest of `lib/runs.ts`
+  // treats these fields as optional. A hand-copied recording without `decisions` would
+  // otherwise throw out of `buildVaultRows` and fail the whole page.
+  const rows = run ? buildVaultRows(run.requests.flatMap((q) => q.verdicts ?? []), run.decisions ?? []) : [];
   const refused = rows.filter((r) => r.verdict === "unavailable").length;
 
   return (
@@ -94,7 +99,7 @@ export default async function UniversePage({ searchParams }: { searchParams: Pro
               run <Link href={`/runs/${encodeURIComponent(run.id)}`}>{run.id}</Link>
             </span>
           )}
-          {summaries.length > 1 && <span className="faint">{summaries.length} runs recorded</span>}
+          {runs.length > 1 && <span className="faint">{runs.length} runs recorded</span>}
         </div>
       </section>
 

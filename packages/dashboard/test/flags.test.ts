@@ -29,8 +29,10 @@ test("a percentage is not scaled twice", () => {
   expect(flagPercent("0.098392")).toBeCloseTo(9.8392, 6);
 });
 
-test("a flag value that is not a number does not render as NaN", () => {
+test("a flag value that is not a number is shown, not rounded to a confident zero", () => {
+  // The first version of this asserted `0.0%`, which is the same thing a vault with no
+  // outflow at all renders — a cell that states a figure it does not have.
   expect(compactFlag({ name: "tvl_outflow_24h", value: "unknown", threshold: "0.2", window: "24h" })).toBe(
-    "tvl outflow 24h 0.0%",
+    "tvl outflow 24h unknown",
   );
 });

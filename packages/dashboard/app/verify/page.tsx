@@ -15,7 +15,11 @@ if (typeof globalThis.Buffer === "undefined") {
   (globalThis as unknown as { Buffer: typeof PolyfillBuffer }).Buffer = PolyfillBuffer;
 }
 
-const SERVICE_URL = (process.env.NEXT_PUBLIC_SERVICE_URL ?? "http://localhost:8787").replace(/\/$/, "");
+// `||`, not `??`. A Docker build arg that is not passed arrives as the empty string, and
+// Next bakes `""` into the bundle because it is not null — so `??` would leave this as "",
+// every fetch would become a same-origin `/.well-known/agent.json`, and the page whose whole
+// job is to reach the service would quietly query itself and report a 404 from Next.
+const SERVICE_URL = (process.env.NEXT_PUBLIC_SERVICE_URL || "http://localhost:8787").replace(/\/$/, "");
 
 type Anchor = { chainId: string; agentId: string; state: AnchorState };
 

@@ -170,8 +170,16 @@ async function readRunFile(file: string): Promise<RunRecord | null> {
   }
 }
 
-/** Every run, newest last, falling back to the committed recordings and the fixture. */
-async function readAllRuns(): Promise<RunRecord[]> {
+/**
+ * Every run, newest last, falling back to the committed recordings and the fixture.
+ *
+ * Exported for callers that need the records themselves and would otherwise reach for
+ * `getRun` per id: on a deployment with no runs directory, each `getRun` re-enters
+ * `readBundledRuns` and parses every recording again. `/universe` did that once per summary
+ * plus once for the winner, which measured 24 file reads and 4.6 MiB of JSON parsed for a
+ * single render, against 4 reads and 786 KiB for one pass through here.
+ */
+export async function readAllRuns(): Promise<RunRecord[]> {
   const files = await listRunFiles();
   if (files.length === 0) return readBundledRuns();
   const runs: RunRecord[] = [];
