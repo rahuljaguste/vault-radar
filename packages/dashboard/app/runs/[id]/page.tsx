@@ -86,29 +86,7 @@ export default async function RunPage({ params }: { params: Promise<{ id: string
         {run.decisions.length === 0 ? (
           <p className="empty">No decisions recorded.</p>
         ) : (
-          <div className="grid">
-            {run.decisions.map((d, i) => (
-              <div className={`card verdict ${actionTone(d.action)}`} key={`${d.vaultId}-${i}`}>
-                <div className="row between">
-                  <Id value={d.vaultId} head={10} tail={4} />
-                  <span className={`badge ${actionTone(d.action)}`}>{d.action}</span>
-                </div>
-                <p>{d.reason}</p>
-                <p className="faint">
-                  {d.citations.source} · block {d.citations.block}
-                  {d.citations.txId && (
-                    <>
-                      {" · "}
-                      <a href={explorerTxUrl(railForReceipt(run, d.citations.receiptHash), d.citations.txId)}>transaction</a>
-                    </>
-                  )}
-                </p>
-                <p className="faint">
-                  receipt <Id value={d.citations.receiptHash} />
-                </p>
-              </div>
-            ))}
-          </div>
+          <DecisionGrid decisions={run.decisions} run={run} />
         )}
       </section>
     </>
@@ -126,6 +104,102 @@ function actionTone(action: string): "ok" | "watch" | "alert" | "unavailable" {
 /** Look up which rail a cited receipt was paid on, to pick the right explorer link. Defaults to hedera if not found. */
 function railForReceipt(run: RunRecord, receiptHash: string): "hedera" | "arc" {
   return run.requests.find((r) => r.receiptHash === receiptHash)?.rail ?? "hedera";
+}
+
+
+/** How many clean vaults to show before folding the rest away. */
+const CLEAN_PREVIEW = 6;
+
+/**
+ * The verdicts, worst first, with the unremarkable ones folded behind a summary.
+ *
+ * A hundred-vault scan is a hundred cards — nineteen thousand pixels of them — and the
+ * reader's question is "which of these needs me", not "list everything". Sorting by severity
+ * answers it in the first row, and the fold keeps the rest one click away rather than
+ * making the page a scroll. Nothing is hidden: the count is on the summary and the same
+ * vaults are all there.
+ */
+function VerdictGrid({ verdicts }: { verdicts: VerdictRow[] }) {
+  const rank: Record<VerdictRow["verdict"], number> = { alert: 0, watch: 1, unavailable: 2, ok: 3 };
+  const sorted = [...verdicts].sort((a, b) => rank[a.verdict] - rank[b.verdict] || b.score - a.score);
+  const notable = sorted.filter((v) => v.verdict !== "ok");
+  const clean = sorted.filter((v) => v.verdict === "ok");
+  const shown = clean.slice(0, CLEAN_PREVIEW);
+  const folded = clean.slice(shown.length);
+
+  return (
+    <div className="stack">
+      <div className="grid">
+        {[...notable, ...shown].map((v) => (
+          <VerdictCard key={v.vaultId} v={v} />
+        ))}
+      </div>
+      {folded.length > 0 && (
+        <details>
+          <summary className="faint">
+            {folded.length} more vault{folded.length === 1 ? "" : "s"} with nothing flagged
+          </summary>
+          <div className="grid">
+            {folded.map((v) => (
+              <VerdictCard key={v.vaultId} v={v} />
+            ))}
+          </div>
+        </details>
+      )}
+    </div>
+  );
+}
+
+
+/**
+ * The decisions, actions first and the holds folded — the same triage as the verdicts, for
+ * the same reason: a hundred-vault run produces ninety-eight "hold" cards whose only
+ * information is that nothing is wrong.
+ */
+function DecisionGrid({ decisions, run }: { decisions: RunRecord["decisions"]; run: RunRecord }) {
+  const holds = decisions.filter((d) => d.action === "hold");
+  const notable = decisions.filter((d) => d.action !== "hold");
+  const shown = holds.slice(0, CLEAN_PREVIEW);
+  const folded = holds.slice(shown.length);
+
+  const card = (d: RunRecord["decisions"][number], i: number) => (
+    <div className={`card verdict ${actionTone(d.action)}`} key={`${d.vaultId}-${i}`}>
+      <div className="row between">
+        <Id value={d.vaultId} head={10} tail={4} />
+        <span className={`badge ${actionTone(d.action)}`}>{d.action}</span>
+      </div>
+      <p>{d.reason}</p>
+      <p className="faint">
+        {d.citations.source} · block {d.citations.block}
+        {d.citations.txId && (
+          <>
+            {" · "}
+            <a href={explorerTxUrl(railForReceipt(run, d.citations.receiptHash), d.citations.txId)}>transaction</a>
+          </>
+        )}
+      </p>
+      <p className="faint">
+        receipt <Id value={d.citations.receiptHash} />
+      </p>
+    </div>
+  );
+
+  return (
+    <div className="stack">
+      <div className="grid">
+        {notable.map(card)}
+        {shown.map((d, i) => card(d, notable.length + i))}
+      </div>
+      {folded.length > 0 && (
+        <details>
+          <summary className="faint">
+            {folded.length} more vault{folded.length === 1 ? "" : "s"} to hold
+          </summary>
+          <div className="grid">{folded.map((d, i) => card(d, notable.length + shown.length + i))}</div>
+        </details>
+      )}
+    </div>
+  );
 }
 
 function RequestSection({ req, lookup }: { req: RequestRecord; lookup: ReceiptLookup | null }) {
@@ -170,11 +244,7 @@ function RequestSection({ req, lookup }: { req: RequestRecord; lookup: ReceiptLo
           No verdicts. This is a whole-protocol table pull {req.rejected.length > 0 && "whose every vault was refused as stale"}.
         </p>
       ) : (
-        <div className="grid">
-          {req.verdicts.map((v) => (
-            <VerdictCard key={v.vaultId} v={v} />
-          ))}
-        </div>
+        <VerdictGrid verdicts={req.verdicts} />
       )}
 
       {req.rejected.length > 0 && (
