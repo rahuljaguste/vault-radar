@@ -1,4 +1,4 @@
-# Task 1: Workspace scaffold — Report
+# Task 1: Workspace scaffold, Report
 
 ## Implementation Summary
 
@@ -79,14 +79,14 @@ Trailer: Claude-Session: https://claude.ai/code/session_01GP7VEZFF8kYLm28Syzbar8
 
 ## Self-Review Findings
 
-✅ **Completeness**: All required files created exactly as specified in brief; no deviations  
-✅ **File Structure**: One responsibility per file; modular organization follows pattern  
-✅ **TypeScript**: Config properly extends base; packages inherit shared settings  
-✅ **Test Quality**: Test output pristine; no warnings or noise; one passing test  
-✅ **Workspace Setup**: Bun correctly recognizes workspace with proper package linking  
-✅ **Naming**: Matches brief exactly (@vaultradar/core, CORE_VERSION, etc.)  
-✅ **Commit Format**: Includes required trailer; uses gpg-sign=false as specified  
-✅ **YAGNI**: No extra files or dependencies beyond brief requirements  
+**Completeness**: All required files created exactly as specified in brief; no deviations
+**File Structure**: One responsibility per file; modular organization follows pattern
+**TypeScript**: Config properly extends base; packages inherit shared settings
+**Test Quality**: Test output pristine; no warnings or noise; one passing test
+**Workspace Setup**: Bun correctly recognizes workspace with proper package linking
+**Naming**: Matches brief exactly (@vaultradar/core, CORE_VERSION, etc.)
+**Commit Format**: Includes required trailer; uses gpg-sign=false as specified
+**YAGNI**: No extra files or dependencies beyond brief requirements
 
 ## Concerns
 

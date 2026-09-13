@@ -5,7 +5,7 @@
 - Modify: `packages/service/src/app.ts`, `packages/service/src/rails/hedera.ts` (call `onSettled`)
 
 **Interfaces:**
-- Produces: `class HcsQueue { constructor(deps: { submit: (message: string) => Promise<{ sequence: string; consensusTimestamp: string }>; topicId: string }); enqueue(receipt: Receipt): void; lookup(receiptHash: string): Promise<LookupResult>; pending(): number }`; `LookupResult = { receipt_hash: string; topicId: string; sequence: string | null; consensus_timestamp: string | null; initial_transaction_id: string | null }`; `makeHederaSubmit(config): (message) => Promise<…>` using `@hashgraph/sdk` `TopicMessageSubmitTransaction`; `mirrorLookup(topicId, receiptHash)` scanning `https://testnet.mirrornode.hedera.com/api/v1/topics/{id}/messages?limit=100&order=desc` and reassembling chunks by `chunk_info.initial_transaction_id`.
+- Produces: `class HcsQueue { constructor(deps: { submit: (message: string) => Promise<{ sequence: string; consensusTimestamp: string }>; topicId: string }); enqueue(receipt: Receipt): void; lookup(receiptHash: string): Promise<LookupResult>; pending(): number }`; `LookupResult = { receipt_hash: string; topicId: string; sequence: string | null; consensus_timestamp: string | null; initial_transaction_id: string | null }`; `makeHederaSubmit(config): (message) => Promise<...>` using `@hashgraph/sdk` `TopicMessageSubmitTransaction`; `mirrorLookup(topicId, receiptHash)` scanning `https://testnet.mirrornode.hedera.com/api/v1/topics/{id}/messages?limit=100&order=desc` and reassembling chunks by `chunk_info.initial_transaction_id`.
 - Message format (spec §5.5): `{ v: 1, receipt_hash, sig: receipt.sig, issued_at }` as canonical JSON (about 4.6 KB → 5 chunks).
 
 - [ ] **Step 1: Failing test with a fake submit**
@@ -59,5 +59,5 @@ export function makeHederaSubmit(c: Config): Submit {
 
 Wire: `main.ts` constructs `HcsQueue` only when `HEDERA_HCS_TOPIC_ID` is set; `mountHederaRail(..., { onSettled: (receipt) => hcs.enqueue(receipt) })` and the Arc rail (Task 19) the same. `wellknown.ts` `/v1/receipts/:hash` delegates to `hcs.lookup`; when the in-memory map misses (after a restart) fall back to `mirrorLookup` which pages the mirror node and matches `receipt_hash` inside reassembled messages.
 
-- [ ] **Step 3: Run, expect pass. Commit** — `git add -A && git commit -m "feat(service): HCS commitment queue with retry and receipt lookup"`
+- [ ] **Step 3: Run, expect pass. Commit**, `git add -A && git commit -m "feat(service): HCS commitment queue with retry and receipt lookup"`
 

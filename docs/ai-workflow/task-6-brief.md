@@ -47,5 +47,5 @@ export function vaultFreshness(sources: Source[]): Freshness {
 }
 ```
 
-- [ ] **Step 4: Run, expect pass. Commit** — `git add -A && git commit -m "feat(core): unified vault types and freshness classification"`
+- [ ] **Step 4: Run, expect pass. Commit**, `git add -A && git commit -m "feat(core): unified vault types and freshness classification"`
 

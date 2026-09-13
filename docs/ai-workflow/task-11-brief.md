@@ -1,4 +1,4 @@
-### Task 11: Substreams module — scaffold and `map_vault_events`
+### Task 11: Substreams module, scaffold and `map_vault_events`
 
 **Files:**
 - Create: `substreams/erc4626-vault-metrics/{Cargo.toml,substreams.yaml,build.rs,rust-toolchain.toml,proto/vaultradar/v1/vault.proto,abi/erc4626.json,src/lib.rs,src/pb/mod.rs}`; `docs/one-prompt.md`
@@ -53,7 +53,7 @@ modules:
       type: proto:vaultradar.v1.VaultEvents
 ```
 
-`initialBlock`: set to (current Ethereum head − 200000) at the time you run this; for Base use a second manifest `substreams.base.yaml` with `network: base` and `initialBlock` = head − 1200000.
+`initialBlock`: set to (current Ethereum head - 200000) at the time you run this; for Base use a second manifest `substreams.base.yaml` with `network: base` and `initialBlock` = head - 1200000.
 
 `Cargo.toml`:
 
@@ -117,7 +117,7 @@ message NewDepositors { repeated string keys = 1; }
 
 - [ ] **Step 4: Generate protobuf bindings**
 
-Run: `substreams protogen substreams.yaml --exclude-paths="sf/substreams,google"` → writes `src/pb/…` including `erc4626.v1` (Pinax) and `vaultradar.v1`. Add `src/pb/mod.rs` as generated. Add `mod abi;` with `pub mod erc4626;` in `src/abi/mod.rs`.
+Run: `substreams protogen substreams.yaml --exclude-paths="sf/substreams,google"` → writes `src/pb/...` including `erc4626.v1` (Pinax) and `vaultradar.v1`. Add `src/pb/mod.rs` as generated. Add `mod abi;` with `pub mod erc4626;` in `src/abi/mod.rs`.
 
 - [ ] **Step 5: `map_vault_events`**
 
@@ -168,5 +168,5 @@ substreams run -e mainnet.eth.streamingfast.io:443 substreams.yaml map_vault_eve
 
 Expected: JSON output with events whose `implied_share_price` is near 1.0 for stable vaults. If the Pinax import fails to resolve, download the spkg to `deps/erc4626-v0.1.0.spkg` and reference it by relative path.
 
-- [ ] **Step 7: Commit** — `git add -A && git commit -m "feat(substreams): erc4626-vault-metrics scaffold with map_vault_events composed from Pinax erc4626"`
+- [ ] **Step 7: Commit**, `git add -A && git commit -m "feat(substreams): erc4626-vault-metrics scaffold with map_vault_events composed from Pinax erc4626"`
 

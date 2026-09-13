@@ -21,20 +21,20 @@ explains two commits in the history.
 
 ## Phase A: the two views and the pure modules behind them
 
-`lib/vaults.ts` — `parseVaultList(text)` returns a discriminated
+`lib/vaults.ts`, `parseVaultList(text)` returns a discriminated
 `{ ok: true, vaults } | { ok: false, error }` rather than throwing, so the route maps
 it straight to a 400 and the browser form can show the same message live. One
 `<chainId>:0x<40 hex>` per line, blank lines ignored, CRLF accepted, addresses
 lowercased, duplicates dropped keeping first position, capped at 100 (`MAX_VAULTS`,
 matching `MAX_SCAN` in `packages/core/src/pricing.ts`). Chain ids must be positive
-integers with no leading zero, because `01:0x…` and `1:0x…` name the same vault and
+integers with no leading zero, because `01:0x...` and `1:0x...` name the same vault and
 allowing both would defeat deduplication. Deduplication runs before the cap, so
 pasting the same vault twice is never what trips the limit. Errors name the line
 number, echo the line back truncated to 64 characters, and give the specific reason:
 a bare address reports the missing chain prefix, a truncated address reports the hex
 length it actually had, and so on. Pure, so it is safe in the client bundle.
 
-`lib/ratelimit.ts` — `RateLimiter(windowMs, now)` with an injectable clock, one call
+`lib/ratelimit.ts`, `RateLimiter(windowMs, now)` with an injectable clock, one call
 per key per 30 seconds, `retryAfterSeconds` rounded up and never zero. Expired keys
 are swept on every call so the map does not accumulate one entry per client forever.
 A refused call does not extend the window, so this is a rate and not a lockout.
@@ -44,7 +44,7 @@ is safer for the operator's wallet than limiting nobody. The module header state
 plainly that this is advisory (a direct caller can forge either header, and counters
 are per process) and points at the real spending cap.
 
-`lib/admin.ts` — the full spec §13.1 type with every numeric as a string, plus
+`lib/admin.ts`, the full spec §13.1 type with every numeric as a string, plus
 `fetchAdminMetrics()` returning `AdminResult`, a seven-state union rather than an
 exception: `ok`, `not-configured`, `unauthorized`, `not-implemented`, `bad-status`,
 `malformed`, `unreachable`. `not-configured` and `unauthorized` are separate because
@@ -58,7 +58,7 @@ request header, never appears in a URL or in any returned value, and has no
 A 5-second `AbortSignal.timeout` keeps an unreachable service from holding the render
 open.
 
-`app/admin/page.tsx` plus `app/admin/AutoRefresh.tsx` — a server component rendering
+`app/admin/page.tsx` plus `app/admin/AutoRefresh.tsx`, a server component rendering
 every §13.1 field (uptime, both rails with facilitator health, request and verdict
 counters, settlements and revenue per rail, the HCS queue, every standardized
 deployment with head lag and last error, per-chain head state, key hashes, and the
@@ -72,7 +72,7 @@ the token inside the server component and needs no new API route; it also has pa
 and refresh-now controls and a last-refresh clock set in an effect so there is no
 hydration mismatch.
 
-`app/portfolio/page.tsx` plus `app/portfolio/ScanForm.tsx` — the server component
+`app/portfolio/page.tsx` plus `app/portfolio/ScanForm.tsx`, the server component
 reads the agent-key environment and passes down only a boolean, never a value. The
 client form has the textarea, a live validated count using the same parser the route
 uses, "Scan now" (disabled while running, when the list is invalid, and when keys are
@@ -123,14 +123,14 @@ The team lead reported `packages/agent/src/policy.ts` and `watch.ts` on `main`
 minutes after I first reported. `git merge main` then brought agent Tasks 22-23
 with two conflicts:
 
-1. **`packages/agent/src/rails/hedera.ts`** — upstream had independently found
+1. **`packages/agent/src/rails/hedera.ts`**, upstream had independently found
    and fixed the same CAIP-2 network-id bug described below, and their version is
    better: a named `HEDERA_TESTNET_CAIP2` constant used for both the signer option
    and the scheme registration (so the two cannot drift), plus test coverage of
    signer construction. I took `main`'s version wholesale and dropped my parallel
    fix. Textbook duplicated work; the finding still stands, the fix was theirs to
    keep.
-2. **`.env.example`** — upstream rewrote the file into a terse
+2. **`.env.example`**, upstream rewrote the file into a terse
    one-line-per-variable style, discarding the verbose prose. I adopted their
    convention rather than reimposing my blocks: kept `ADMIN_TOKEN` and the
    dashboard section folded into that style, moved `SUBSTREAMS_API_TOKEN` up
@@ -307,7 +307,7 @@ stashed, so it arrived with the merge and is not mine. It does break the repo-ro
 see concerns.
 
 The dashboard build prints three "dynamic filesystem access" warnings from
-`lib/runs.ts`. They pre-date this task (Task 24's `path.resolve(process.cwd(), …)`
+`lib/runs.ts`. They pre-date this task (Task 24's `path.resolve(process.cwd(), ...)`
 plus `fs.readFile` produces them) and the build exits 0.
 
 Dashboard test counts by file: `vaults.test.ts` 14, `ratelimit.test.ts` 13,
@@ -384,10 +384,10 @@ Final route sweep with no service reachable and no keys: `/`, `/portfolio`,
 
 New, all under `/Users/rahuljaguste/pq/ethonline-20206/.worktrees/dashboard/packages/dashboard/`:
 
-- `lib/vaults.ts` — vault-list parsing
-- `lib/ratelimit.ts` — the paid-scan limiter and `clientKey`
-- `lib/admin.ts` — the §13.1 types and the seven-state metrics fetch
-- `lib/scan.ts` — the `POST /api/scan` handler with injectable dependencies
+- `lib/vaults.ts`, vault-list parsing
+- `lib/ratelimit.ts`, the paid-scan limiter and `clientKey`
+- `lib/admin.ts`, the §13.1 types and the seven-state metrics fetch
+- `lib/scan.ts`, the `POST /api/scan` handler with injectable dependencies
 - `app/portfolio/page.tsx`, `app/portfolio/ScanForm.tsx`
 - `app/admin/page.tsx`, `app/admin/AutoRefresh.tsx`
 - `app/api/scan/route.ts`
@@ -398,18 +398,18 @@ removed by `35c6efe` in favour of the agent's own helpers).
 
 Modified:
 
-- `packages/dashboard/lib/runs.ts` — `repoRoot()`, `runsDir()` honouring `RUNS_DIR`,
+- `packages/dashboard/lib/runs.ts`, `repoRoot()`, `runsDir()` honouring `RUNS_DIR`,
   the `getRun` fix, `findRunsForVaults`
-- `packages/dashboard/lib/types.ts` — `RunMatch`, declared here so the client
+- `packages/dashboard/lib/types.ts`, `RunMatch`, declared here so the client
   component can import it without pulling in `node:fs`
-- `packages/dashboard/app/api/runs/route.ts` — the `?vaults=` filter
-- `packages/dashboard/app/layout.tsx` — nav
-- `packages/dashboard/app/globals.css` — `--warn`, `.muted`, `.toolbar`, `label`
-- `packages/dashboard/public/demo-run.json` — vault-id format
-- `packages/dashboard/README.md` — boilerplate replaced
-- `packages/dashboard/package.json` — `@vaultradar/agent` dependency,
+- `packages/dashboard/app/api/runs/route.ts`, the `?vaults=` filter
+- `packages/dashboard/app/layout.tsx`, nav
+- `packages/dashboard/app/globals.css`, `--warn`, `.muted`, `.toolbar`, `label`
+- `packages/dashboard/public/demo-run.json`, vault-id format
+- `packages/dashboard/README.md`, boilerplate replaced
+- `packages/dashboard/package.json`, `@vaultradar/agent` dependency,
   `@vaultradar/service` devDependency for the test harness
-- `.env.example` — `ADMIN_TOKEN` and a dashboard section, folded into `main`'s terse
+- `.env.example`, `ADMIN_TOKEN` and a dashboard section, folded into `main`'s terse
   style during the second merge
 - `bun.lock`
 

@@ -107,5 +107,5 @@ export function buildAgentCard(c: Config, k: ServiceKeys) {
 
 `app.ts` builds the express app: `app.use(express.json({ limit: "256kb" }))` first, then wellknown, then (Task 16/19) rails when `rails.hedera`/`rails.arc` are true. `main.ts` loads config, keys, `LiveDataProvider` (Task 15), HCS queue (Task 17), and listens.
 
-- [ ] **Step 4: Run, expect pass. Commit** — `git add -A && git commit -m "feat(service): skeleton, seeded keys, signed agent card, UCP and ERC-8004 files, catalog"`
+- [ ] **Step 4: Run, expect pass. Commit**, `git add -A && git commit -m "feat(service): skeleton, seeded keys, signed agent card, UCP and ERC-8004 files, catalog"`
 

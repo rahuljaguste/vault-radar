@@ -1,4 +1,4 @@
-# Task 2: Canonical JSON and Hashing — Report
+# Task 2: Canonical JSON and Hashing, Report
 
 ## Summary
 
@@ -58,18 +58,18 @@ Ran 5 tests across 2 files. [217.00ms]
 
 ## Self-Review
 
-✅ **Completeness**: All required exports present and correctly named
-✅ **Tests**: All 4 specified tests pass; smoke test from Task 1 still passes
-✅ **Naming**: Matches interface exactly (canonicalize, canonicalBytes, sha256Hex, hashJson, etc.)
-✅ **YAGNI**: No extra code; implementation matches brief verbatim
-✅ **Test Coverage**: Tests verify:
+**Completeness**: All required exports present and correctly named
+**Tests**: All 4 specified tests pass; smoke test from Task 1 still passes
+**Naming**: Matches interface exactly (canonicalize, canonicalBytes, sha256Hex, hashJson, etc.)
+**YAGNI**: No extra code; implementation matches brief verbatim
+**Test Coverage**: Tests verify:
   - Key sorting and whitespace stripping
   - Non-integer rejection
   - Hash stability across key order
   - Hex output format (64 chars, 0-9a-f)
   - Undefined/null handling
-✅ **Output**: Pristine, no warnings or errors
-✅ **Code Quality**: Uses @noble/hashes as specified; no alternative imports
+**Output**: Pristine, no warnings or errors
+**Code Quality**: Uses @noble/hashes as specified; no alternative imports
 
 ## Concerns
 

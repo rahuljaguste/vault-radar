@@ -104,5 +104,5 @@ export function checkSig(obj: { sig?: Sig } & object, publicKey: Uint8Array): bo
 
 - [ ] **Step 4: Run, expect 4 pass.** If `ml_kem768_x25519.lengths.seed` is undefined at runtime, print `ml_kem768_x25519.lengths` once and hard-code the value it reports; remove the print.
 
-- [ ] **Step 5: Commit** — `git add -A && git commit -m "feat(core): seeded ML-DSA-65 and hybrid KEM keys, JSON signatures"`
+- [ ] **Step 5: Commit**, `git add -A && git commit -m "feat(core): seeded ML-DSA-65 and hybrid KEM keys, JSON signatures"`
 

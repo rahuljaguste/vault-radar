@@ -72,7 +72,7 @@ Put `Deployment` in `packages/core/src/standardized/types.ts` and load JSON in `
 
 - [ ] **Step 4: Failing mapper tests with fixtures**
 
-Create `test/fixtures/yield-vaults.json` with one vault (id `0xabc…`, `pricePerShare: "1.05"`, two hourly snapshots and two daily snapshots) and `_meta`; `lending-markets.json` similarly with `exchangeRate`. Test:
+Create `test/fixtures/yield-vaults.json` with one vault (id `0xabc...`, `pricePerShare: "1.05"`, two hourly snapshots and two daily snapshots) and `_meta`; `lending-markets.json` similarly with `exchangeRate`. Test:
 
 ```ts
 import { expect, test } from "bun:test";
@@ -161,7 +161,7 @@ writeFileSync("packages/core/src/standardized/deployments.json", JSON.stringify(
 console.log(`live: ${out.filter(x => x.status === "live").length} / ${out.length}`);
 ```
 
-Run: `GRAPH_STUDIO_API_KEY=… bun run verify-deployments`. Record the live count in `docs/verification-log.md` with the date. Note: `_meta.deployment` returns the `Qm…` deployment hash; subsequent queries pin it.
+Run: `GRAPH_STUDIO_API_KEY=... bun run verify-deployments`. Record the live count in `docs/verification-log.md` with the date. Note: `_meta.deployment` returns the `Qm...` deployment hash; subsequent queries pin it.
 
-- [ ] **Step 7: Run unit tests (offline), expect pass. Commit** — `git add -A && git commit -m "feat(core): Messari standardized query layer, mappers, deployment verification gate"`
+- [ ] **Step 7: Run unit tests (offline), expect pass. Commit**, `git add -A && git commit -m "feat(core): Messari standardized query layer, mappers, deployment verification gate"`
 

@@ -1,6 +1,6 @@
-# Final fix wave — report (branch `ws/hardening`, base `ae54a8d`)
+# Final fix wave, report (branch `ws/hardening`, base `ae54a8d`)
 
-Status: **DONE_WITH_CONCERNS**. Every item F1–F10 is implemented, committed and verified. The
+Status: **DONE_WITH_CONCERNS**. Every item F1-F10 is implemented, committed and verified. The
 concerns are two deliberate deviations (both widenings, both named below) and one pre-existing
 `next build` warning I did not touch.
 
@@ -35,7 +35,7 @@ Baseline at `ae54a8d` was 416 pass / 1 skip / 0 fail, so this wave adds 27 tests
 
 ---
 
-## F1 — the ERC-8004 anchor did not bind the key that signs (`438dc81`)
+## F1, the ERC-8004 anchor did not bind the key that signs (`438dc81`)
 
 All three sub-items in one commit, as the brief directed.
 
@@ -86,7 +86,7 @@ Tests added:
   (`does not match its on-chain ERC-8004 registration`), which is the intended consequence of
   using one rule in one place.
 
-## F2 — `discover()` in the dashboard scan route had no timeout (`5ebdc6c`)
+## F2, `discover()` in the dashboard scan route had no timeout (`5ebdc6c`)
 
 `ScanDeps` gains `discoveryTimeoutMs`, defaulting to `SERVICE_FETCH_TIMEOUT_MS` from
 `lib/service.ts`, and step 7 wraps `client.discover()` in a new `withTimeout` helper. A timeout
@@ -105,7 +105,7 @@ Test (`packages/dashboard/test/scan.test.ts`): a `fetchImpl` that never settles,
 injected 250 ms bound → 502 inside 5 s, no run file, ledger back to zero, and the next caller
 gets the full allowance. The shared test `deps()` uses 2 s so no other test can hang the suite.
 
-## F3 — the Arc quote-ceiling hook skipped a zero quote (`2422c2f`)
+## F3, the Arc quote-ceiling hook skipped a zero quote (`2422c2f`)
 
 `packages/agent/src/rails/arc.ts`: `if (quoteAtomic)` → `if (quoteAtomic != null)`. Verified
 `client.ts:358` always passes the quote, so the omitted-quote path is only reachable from a
@@ -115,14 +115,14 @@ Test (`packages/agent/test/client.test.ts`, extending the existing Arc ceiling t
 `"0"` and `""` against a demand of `"1"` both abort before signing, and a demand of `"0"`
 against a quote of `"0"` is still inside the band and signs.
 
-## F4 — the `quoteFor` comment drew the wrong conclusion (`ce7c113`)
+## F4, the `quoteFor` comment drew the wrong conclusion (`ce7c113`)
 
 Verified with `bun -e`: `0.06 * 11` is `0.6599999999999999`, which is **less** than `0.66`, and
 `0.03 * 3` is exactly `0.09`. The comment now states the inexactness without claiming a
 direction and names both failure modes; the `0.03 * 3` parenthetical is gone. Comment only, no
 test, as specified.
 
-## F5 — `tvl_outflow_24h` double-counted merged hourly + daily series (`43cd57f`)
+## F5, `tvl_outflow_24h` double-counted merged hourly + daily series (`43cd57f`)
 
 1. `HistoryPoint` (`packages/core/src/unify/types.ts`) gains a required
    `series: "hourly" | "daily" | "block"`, documented as to why it must survive the merge.
@@ -130,7 +130,7 @@ test, as specified.
    parameter on `yieldSeriesHistory` / `lendingSeriesHistory`) and `substreams/reader.ts`
    (`"block"`). The compiler found three test fixtures to update: `packages/core/test/risk.test.ts`,
    `packages/agent/test/harness.ts`, and `packages/dashboard/test/scan.test.ts` (that last one
-   is outside any tsc project, so I fixed it by inspection, not by compiler error — see the F10d
+   is outside any tsc project, so I fixed it by inspection, not by compiler error, see the F10d
    note). `packages/service/src/data/provider.ts` builds no `HistoryPoint` of its own and
    `packages/core/test/fixtures/*.json` are mapper *inputs*, so neither needed a change.
 3. `computeRisk` takes the 24 h flows from one series via a new `flows24h` helper: finest
@@ -138,14 +138,14 @@ test, as specified.
    discarded. Share-price windows are untouched, and the doc comment says why mixing is
    harmless there.
 
-Tests: `risk.test.ts` gains the real merged shape (24 hourly at −5000 plus a daily at −115000 on
+Tests: `risk.test.ts` gains the real merged shape (24 hourly at -5000 plus a daily at -115000 on
 a 1,000,000 balance → no flag, score 0, `ok`), a daily-only case asserting
 `value: "0.250000"` / `threshold: "0.200000"` / `window: "24h"` exactly, a finest-series-wins
 case, a block-series case that still sums, and a case proving an out-of-window hourly point
 cannot capture the series and hide an in-window daily one. `standardized-map.test.ts` asserts
 `["hourly","hourly","daily","daily"]` for both mappers; `reader.test.ts` asserts `"block"`.
 
-## F6 — the `/hedera/v1/scan-hbar` receipt misstated price and asset (`c6cad98`)
+## F6, the `/hedera/v1/scan-hbar` receipt misstated price and asset (`c6cad98`)
 
 1. `HandlerDeps` (`packages/service/src/handlers/scan.ts`) gains a required
    `price: (count) => { amount, asset }`, used for the receipt's `price.amount`/`price.asset`.
@@ -157,7 +157,7 @@ cannot capture the series and hide an in-window daily one. `standardized-map.tes
    price argument and supplies the three values the brief specified. Both rails' deps types now
    `Omit` `"price"` as well.
 3. `rails/arc.ts` mounts pass `{ ARC_BUCKET_PRICE[arcBucket(count)], "USDC" }` and
-   `{ TABLE_PRICE_USD, "USDC" }` — identical to what its receipts already carried, so Arc
+   `{ TABLE_PRICE_USD, "USDC" }`, identical to what its receipts already carried, so Arc
    receipt tests pass untouched.
 
 Four test `HandlerDeps` literals needed the new field: `packages/service/test/handlers.test.ts`
@@ -174,12 +174,12 @@ test, with a new `buildHbarPaymentSignatureHeader` that carries an hbar transfer
 settlement happened. The existing paid USDC scan test now also asserts
 `{ amount: hederaScanPriceAtomic(1), asset: TOKEN_ID, rail: "hedera" }`.
 
-## F7 — README and adjacent docs understated what shipped (`012399a`)
+## F7, README and adjacent docs understated what shipped (`012399a`)
 
 All in one commit, as directed. Every `<<FILL:>>` marker left in place.
 
 - `README.md:12`: `(in progress, see scope notes)` removed.
-- `README.md:152`: rewritten — `watch`, both policy files, and which demo steps drive them
+- `README.md:152`: rewritten, `watch`, both policy files, and which demo steps drive them
   (read `demo.sh`: step 3 balanced, step 4 strict).
 - `README.md:219`: the "In flight" bullet now says the HCS queue, `scripts/identity.ts`, the Arc
   rail and the agent policy/CLI are built and tested, and that the Fly deployment, the identity
@@ -201,12 +201,12 @@ All in one commit, as directed. Every `<<FILL:>>` marker left in place.
 - `packages/agent/src/policy.ts:91-93`: corrected. Verified the prices with `bun -e`: Arc is
   cheaper at 5 (0.003 vs 0.0035), 20 (0.01 vs 0.011) and 100 (0.05 vs 0.051). The comment now
   says ties are not confined to the table tier and names the three scan counts where the metered
-  price lands exactly on a bucket price — 4, 18 and 98, each verified to be an exact tie.
+  price lands exactly on a bucket price, 4, 18 and 98, each verified to be an exact tie.
 - `packages/dashboard/README.md`: a deploy-time note under `/admin`, precisely, that the page has
   no access control of its own (the token authenticates the server, per spec §13.1) and what the
   two options are.
 
-## F8 — the dashboard persisted decisions from an unverified receipt (`979ff06`)
+## F8, the dashboard persisted decisions from an unverified receipt (`979ff06`)
 
 `packages/dashboard/lib/scan.ts` step 10 now computes the failure reason before building
 anything, and on failure persists `buildFailedRecord` instead of `buildRecord`, then returns 502
@@ -222,7 +222,7 @@ Test: a `payingFetch` that returns the real service reply with one character of
 decision `insufficient data` with the reason, no `hold`/`withdraw`/`rebalance`, txId and a
 64-hex receipt hash present, and the allowance still consumed because the money moved.
 
-## F9 — `quote()` is local arithmetic, not a 402 probe (`d546c62`)
+## F9, `quote()` is local arithmetic, not a 402 probe (`d546c62`)
 
 Implemented as the controller ruled: no live probe.
 
@@ -237,7 +237,7 @@ Implemented as the controller ruled: no live probe.
 - Also added (one doc comment, not in the brief): `quote()`'s own comment in `client.ts` now
   points at the amendment, since that is the first place a reader of the code looks.
 
-## F10 — the review's Minor list
+## F10, the review's Minor list
 
 **a. Unknown protocol table request was charged for an empty body (`882f34a`).**
 `knownProtocol(protocol, chainId)` added to `packages/core/src/standardized/registry.ts`:
@@ -275,7 +275,7 @@ Flag it if you would rather the rule be exactly as written.
 `&& bun x tsc -p packages/dashboard/tsconfig.json --noEmit`. It passes with **no** tsconfig
 adjustment. Worth knowing for future reviews: that tsconfig excludes `test/` (anything importing
 `@vaultradar/service` must stay out of the dashboard's compile or `next build` fails), so this
-gate covers `app/` and `lib/` but not the dashboard's own tests — which is why F5's fixture
+gate covers `app/` and `lib/` but not the dashboard's own tests, which is why F5's fixture
 change in `packages/dashboard/test/scan.test.ts` had to be found by reading rather than by the
 compiler.
 
@@ -302,4 +302,4 @@ asserts nothing is logged; a new test covers the outage case and the redaction.
    the dispatch. It is a deploy-size concern, not a correctness one.
 4. **F1's `keyBindingValid` is in-memory only**, as directed, so a saved `RunRecord` cannot
    distinguish a run whose card failed key binding (no such run can pay, so nothing is lost
-   today — but a future reader of old runs has no field for it).
+   today, but a future reader of old runs has no field for it).

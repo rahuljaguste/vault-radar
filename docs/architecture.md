@@ -12,4 +12,4 @@ Both diagrams show the designed system. Pieces still in flight at the time of wr
 
 ![One paid request on the Hedera rail](payment-flow.png)
 
-The five phases read as horizontal bands; the numbered steps within each run left to right, the same seventeen messages as before. The dashed boxes are the checks each side performs between messages — on this rail they are the product, not garnish.
+The five phases read as horizontal bands; the numbered steps within each run left to right, the same seventeen messages as before. The dashed boxes are the checks each side performs between messages, on this rail they are the product, not garnish.

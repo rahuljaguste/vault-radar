@@ -41,5 +41,5 @@ export function hederaScanPriceUsd(count: number): string {
 export const arcBucket = (count: number): "s" | "m" | "l" => (count <= 5 ? "s" : count <= 20 ? "m" : "l");
 ```
 
-- [ ] **Step 3: Run, expect pass. Commit** — `git add -A && git commit -m "feat(core): metered pricing for Hedera and bucketed Arc routes"`
+- [ ] **Step 3: Run, expect pass. Commit**, `git add -A && git commit -m "feat(core): metered pricing for Hedera and bucketed Arc routes"`
 

@@ -28,7 +28,7 @@ test("undefined properties are dropped, null kept", () => {
 });
 ```
 
-- [ ] **Step 2: Run, expect failure** — `bun test packages/core/test/canonical.test.ts` → module not found.
+- [ ] **Step 2: Run, expect failure**, `bun test packages/core/test/canonical.test.ts` → module not found.
 
 - [ ] **Step 3: Implement**
 
@@ -77,7 +77,7 @@ export const sha256Hex = (b: Uint8Array): string => toHex(sha256(b));
 export const hashJson = (v: unknown): string => sha256Hex(canonicalBytes(v));
 ```
 
-- [ ] **Step 4: Run, expect pass** — `bun test packages/core/test/canonical.test.ts` → 4 pass.
+- [ ] **Step 4: Run, expect pass**, `bun test packages/core/test/canonical.test.ts` → 4 pass.
 
-- [ ] **Step 5: Commit** — `git add -A && git commit -m "feat(core): canonical JSON and sha256 hashing"`
+- [ ] **Step 5: Commit**, `git add -A && git commit -m "feat(core): canonical JSON and sha256 hashing"`
 

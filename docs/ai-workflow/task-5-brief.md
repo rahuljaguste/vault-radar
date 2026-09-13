@@ -143,5 +143,5 @@ export const buildAttestation = (a: Omit<Attestation, "v" | "sig">, keys: Keys):
 export const verifyAttestation = (a: Attestation, pk: Uint8Array) => checkSig(a, pk);
 ```
 
-- [ ] **Step 6: Run, expect all pass. Commit** — `git add -A && git commit -m "feat(core): sealed request envelope with replay checks; PQ-signed receipts and attestations"`
+- [ ] **Step 6: Run, expect all pass. Commit**, `git add -A && git commit -m "feat(core): sealed request envelope with replay checks; PQ-signed receipts and attestations"`
 

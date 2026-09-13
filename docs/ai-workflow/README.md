@@ -1,4 +1,4 @@
-# How VaultRadar was built — artifacts and attribution
+# How VaultRadar was built, artifacts and attribution
 
 This directory is the working record of the workflow that produced VaultRadar, kept because
 the submission rules require spec files, prompts and planning artifacts to ship with the code,
@@ -34,7 +34,7 @@ disagree with the project rather than the reverse, and this file is the record t
 | File | What it is |
 |---|---|
 | `direction.md` | The human's prompts in sequence, and what each one produced. The shortest honest account of where the direction came from. |
-| `ledger.md` | The decision log, in order. Every ruling the controller made when the plan met reality, each with the reason and what it would cost if wrong — including the scope cuts (the Hedera harness PR, HCS-14 UAID, Falcon, upstream x402 to The Graph) and the calls made under time pressure. Start here. |
+| `ledger.md` | The decision log, in order. Every ruling the controller made when the plan met reality, each with the reason and what it would cost if wrong, including the scope cuts (the Hedera harness PR, HCS-14 UAID, Falcon, upstream x402 to The Graph) and the calls made under time pressure. Start here. |
 | `task-N-brief.md` | What each implementer was told. These are the prompts: one per task, written to be self-contained, with the exact values, signatures and tests required. |
 | `task-N-report.md` | What each implementer did, what it deviated on and why, which tests it added, and the concerns it raised. |
 | `final-review-report.md` | The whole-branch review, run on the most capable model against the full diff. |
@@ -52,7 +52,7 @@ deliberately not run, with the reasoning and the exact prompt recorded.
 ## What the process caught, since that is the point of showing it
 
 The review structure was not ceremony. The whole-branch review found that the on-chain key
-anchor — the check that is supposed to stop a substituted agent card — compared the registry's
+anchor, the check that is supposed to stop a substituted agent card, compared the registry's
 hash against a value the card itself asserted rather than the hash of the key that signed, and
 that a card listing no identity skipped the check entirely. Both are now closed, with the
 adversarial cases as tests.
@@ -61,6 +61,6 @@ The last bug of the project was not found by any of that. `checkSealedRequestPay
 the sealed request's payer against the rail's payer case-sensitively; viem hands the client a
 checksummed address and Circle's Gateway reports the payer in lower case, so **every** Arc
 payment failed after settlement on a rail with no refund path. It surfaced by running one real
-payment against the deployed service and printing what the rail actually put on the request —
+payment against the deployed service and printing what the rail actually put on the request,
 both sides were correct in isolation, which is why 464 unit tests never saw it. The number of
 files in this directory is the honest measure of how much got fixed along the way.

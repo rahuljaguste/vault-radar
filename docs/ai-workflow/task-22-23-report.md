@@ -19,7 +19,7 @@ bun x tsc -p packages/core/tsconfig.json --noEmit     → clean (exit 0)
 
 Note on brief paths, same as Task 21: the briefs were not at the path in the task
 message. `.superpowers/sdd/` is per-checkout and gitignored; the top-level checkout only
-carries briefs 1–17. I worked from
+carries briefs 1-17. I worked from
 `.worktrees/core/.superpowers/sdd/2026-09-09-vaultradar/task-22-brief.md` and
 `task-23-brief.md`, which are the real ones.
 
@@ -31,25 +31,25 @@ carries briefs 1–17. I worked from
 
 `packages/agent/src/policy.ts`, exporting every symbol in the brief's Interfaces block:
 
-- **`Policy`** — exactly the brief's four fields, `budget` in USD decimal strings so it
+- **`Policy`**, exactly the brief's four fields, `budget` in USD decimal strings so it
   compares directly against the quotes `VaultRadarClient.quote()` returns.
-- **`PolicySchema` / `loadPolicy(path)`** — zod-validated. Defaults applied for
+- **`PolicySchema` / `loadPolicy(path)`**, zod-validated. Defaults applied for
   `privacy` (`balanced`), `rail_preference` (`cheapest`) and `max_age_seconds` (900).
   `budget` has **no** default: an unstated spending cap must never be inferred. Errors
-  name the offending field (`policy at <path> is invalid — privacy: Invalid enum value…`)
+  name the offending field (`policy at <path> is invalid, privacy: Invalid enum value...`)
   because a misread policy that silently spends real USDC is far worse than a failed run.
-- **`chooseRail`** — a rail is usable only with (1) a non-null quote, (2) a healthy
+- **`chooseRail`**, a rail is usable only with (1) a non-null quote, (2) a healthy
   facilitator, (3) `balance >= quote`, and (4) `budget >= quote`. `cheapest` takes the
   lowest usable quote, tie-breaking to hedera via a stable sort over a hedera-first map.
   A named preference returns `{ rail, reason: "preferred_rail" }` when usable, else falls
   back to the other rail with `reason: "preferred_rail_unusable"`, else
   `{ rail: null, reason: "no_usable_rail" }`.
-- **`chooseTier`** — `strict → { tier: "table", seal: true }`,
+- **`chooseTier`**, `strict → { tier: "table", seal: true }`,
   `balanced → { tier: "scan", seal: true }`, `cheap → { tier: "scan", seal: false }`.
-- **`applyAgeCheck`** — `now - Number(a.timestamp) > max_age_seconds` exactly as
+- **`applyAgeCheck`**, `now - Number(a.timestamp) > max_age_seconds` exactly as
   specified, against the signed attestation timestamps rather than the service's own
   `freshness` field.
-- **`decide`** — `alert → withdraw`, `watch → rebalance`, `ok → hold`, `unavailable` or a
+- **`decide`**, `alert → withdraw`, `watch → rebalance`, `ok → hold`, `unavailable` or a
   rejected attestation → `insufficient data`. Citations come from the report's first
   evidence entry, falling back to the attestation, plus `result.txId` and
   `receiptHash(result.receipt)`. The `reason` is one sentence naming the flags.
@@ -73,7 +73,7 @@ carries briefs 1–17. I worked from
    numbers") does not survive acting on it. Separate test; reason says "no attestation".
 
 3. **An unparseable attestation timestamp is treated as epoch-dated**, so
-   `ageSeconds = now` — finite (the run-file contract types `ageSeconds` as a plain
+   `ageSeconds = now`, finite (the run-file contract types `ageSeconds` as a plain
    number, and `NaN` serialises to `null`) and unambiguously past any sane max age. The
    alternative, `NaN > max === false`, would have let a malformed timestamp read as
    fresh. Separate test.
@@ -142,7 +142,7 @@ hash can contain any short digit run by chance. They now match standalone tokens
 ### SDK version and API used
 
 `@anthropic-ai/claude-agent-sdk@0.3.267` (`claudeCodeVersion` 2.1.267), read from the
-installed `node_modules/@anthropic-ai/claude-agent-sdk/sdk.d.ts` — the bundled
+installed `node_modules/@anthropic-ai/claude-agent-sdk/sdk.d.ts`, the bundled
 `claude-api` skill explicitly does not cover the Agent SDK, so the installed types are
 the authority here. API used:
 
@@ -154,18 +154,18 @@ the authority here. API used:
   money-spending agent has no file, shell or web access), `settingSources: []` (ignores
   any `CLAUDE.md` or local settings in the tree), `cwd`.
 
-**The installed zod 3 is compatible — no bump needed.** Task 21's report flagged a peer
+**The installed zod 3 is compatible, no bump needed.** Task 21's report flagged a peer
 warning (`zod@3.25.76` vs the SDK's `zod@^4.0.0` peer). Reading the SDK's types,
 `AnyZodRawShape = ZodRawShape | ZodRawShape_2` with `import type { ZodRawShape } from 'zod/v3'`
 and `'zod/v4'`, and the comment "Supports both Zod 3 and Zod 4 schemas". zod 3.25.76 ships
 both subpaths. I confirmed it at runtime, not just by reading: a throwaway probe built a
-`tool()` with a zod 3 schema, passed it to `createSdkMcpServer`, and called the handler —
+`tool()` with a zod 3 schema, passed it to `createSdkMcpServer`, and called the handler,
 all worked, with `@modelcontextprotocol/sdk` (also an uninstalled peer) absent, since
 `sdk.mjs` never requires it and `skipLibCheck` covers the type-only import.
 
 ### What I implemented
 
-**`src/balances.ts`** — probes, all with `fetchImpl` injection.
+**`src/balances.ts`**, probes, all with `fetchImpl` injection.
 
 - `hederaUsdcBalance(accountId)` → mirror node `GET /api/v1/accounts/{id}/tokens?token.id=0.0.429274`,
   `tokens[0].balance`, converted by `formatUsdc` using string arithmetic rather than
@@ -184,7 +184,7 @@ all worked, with `@modelcontextprotocol/sdk` (also an uninstalled peer) absent, 
   routing every purchase to Hedera. I used GET rather than the brief's HEAD, because
   `/supported` is a JSON endpoint and HEAD is not guaranteed to be routed.
 
-**`src/watch.ts`** — the purchase pipeline.
+**`src/watch.ts`**, the purchase pipeline.
 
 - `identityRefusal(disc)` gates spend on the card signature and the on-chain ERC-8004 key
   pin. A `matches: null` entry (no RPC for that chain) is reported as unverified, not
@@ -196,26 +196,26 @@ all worked, with `@modelcontextprotocol/sdk` (also an uninstalled peer) absent, 
   when payment already happened) rather than throwing for policy or verification
   outcomes. Factoring this out rather than duplicating it is deliberate: the verification
   gate is safety-critical and must not exist in two copies.
-- `quoteFor(client, tier, count)` — `client.quote()` prices a scan only, so the table tier
+- `quoteFor(client, tier, count)`, `client.quote()` prices a scan only, so the table tier
   maps non-null scan quotes (the client's way of saying "this rail is configured") to
   `TABLE_PRICE_USD`. Without this, a `strict` policy would have chosen its rail against
   scan prices and then bought a table.
-- `narrowResult(result, ids)` — the strict tier buys a whole protocol table (so the service
+- `narrowResult(result, ids)`, the strict tier buys a whole protocol table (so the service
   never learns which vault is of interest) and filters locally. `receiptValid` /
   `attestationsValid` pass through unchanged, because they were computed over the full
   body that was actually signed.
-- `pollHcs` — up to 3 attempts, 3 s gaps, never throws. An unreachable lookup is "no
+- `pollHcs`, up to 3 attempts, 3 s gaps, never throws. An unreachable lookup is "no
   sequence yet", which must not invalidate a purchase that already succeeded.
-- `formatDecisions` — two fixed-width tables (verdict/score/action/flags, then
+- `formatDecisions`, two fixed-width tables (verdict/score/action/flags, then
   block/source/tx id/receipt/HCS sequence per vault), per-vault reason lines, and a footer
   with the full receipt hash, HCS topic and sequence, payment tx and the verification
-  result. The second table shortens the vault id (`1:0xaaaaaa…aaaa`) because the full
+  result. The second table shortens the vault id (`1:0xaaaaaa...aaaa`) because the full
   45-char id in both tables pushed the line past 180 columns.
 - `runWatch(args, deps)` returns `{ exitCode, run, runPath, message }` instead of calling
   `process.exit`, so the whole pipeline is testable in-process; `cli.ts` exits on the
   returned code.
 
-**`src/tools.ts`** — `SYSTEM_PROMPT` (verbatim, asserted character-for-character by a
+**`src/tools.ts`**, `SYSTEM_PROMPT` (verbatim, asserted character-for-character by a
 test), `MCP_SERVER_NAME`, `TOOL_NAMES`, `ALLOWED_TOOLS`
 (`mcp__vaultradar__vaultradar_*`), `AgentContext`, `RunLog`, `vaultradarTools(ctx, log)`,
 `createVaultRadarMcpServer(ctx, log)`. The five tools are `vaultradar_discover`,
@@ -225,7 +225,7 @@ in and JSON out, so the model cannot talk the agent past its own policy. `vaultr
 returns `{ decisions, reports, receipt_hash, tx_id, rail, tier, sealed, rejected }` plus
 `price_usd`, `hcs`, `verified` and `run_path`.
 
-**`src/cli.ts`** — `parseArgs` (exported and tested), `watch`, `chat`, and a usage block.
+**`src/cli.ts`**, `parseArgs` (exported and tested), `watch`, `chat`, and a usage block.
 `watch` needs no `ANTHROPIC_API_KEY` and never loads the Agent SDK (the import in
 `chatCommand` is dynamic). `chat` requires the key and supports `/wallets`, `/balance`,
 `/policy`, `/run`, `/help`, `/exit`.
@@ -238,7 +238,7 @@ returns `{ decisions, reports, receipt_hash, tx_id, rail, tier, sealed, rejected
    `@x402/hedera@2.25.0` asserts that option against exactly `"hedera:mainnet"` /
    `"hedera:testnet"` (`assertSupportedHederaNetwork`, and `config.network ?? HEDERA_TESTNET_CAIP2`
    in `createClientHederaSigner`). Every non-test Hedera payment failed at signer
-   construction — invisible to the Task 21 suite because every test there injects
+   construction, invisible to the Task 21 suite because every test there injects
    `payingFetch`. Fixed to the CAIP-2 id, now a named export
    (`HEDERA_TESTNET_CAIP2`) shared with the `x402Client().register(...)` call so the two
    cannot drift. Covered by `test/cli.test.ts`, and I verified the test is load-bearing by
@@ -251,13 +251,13 @@ returns `{ decisions, reports, receipt_hash, tx_id, rail, tier, sealed, rejected
    wrote a run with zero requests whenever a model asked for a scan it could not afford.
    Now an outcome with no `request` opens no run. This differs from `runWatch` on purpose
    and both sites carry a comment saying so: a `watch` invocation is one shot whose whole
-   outcome — including "I declined to pay, here is why" — is worth a run file, whereas a
+   outcome, including "I declined to pay, here is why", is worth a run file, whereas a
    chat session should not leave an empty run behind for each refusal.
 
 ### TDD evidence, Task 23
 
 `test/watch.test.ts` was written before `src/watch.ts` existed (first run: module not
-found). It drives `runWatch` end to end against the in-process service from Task 15/21 —
+found). It drives `runWatch` end to end against the in-process service from Task 15/21,
 real handlers, real ML-KEM sealing, real ML-DSA-65 receipts and attestations over
 loopback, with a stub provider, raw Hedera routes carrying a fixed payer and tx id,
 `payingFetch: fetch`, an injected `readPqHash`, injected balances/health, and an HCS
@@ -334,7 +334,7 @@ VAULT               BLOCK       SOURCE                              TX ID       
 
 Every CLI error path was exercised as a process: missing `--vaults`, missing policy, a
 malformed vault id, `--rail solana`, no wallet configured, and `chat` without
-`ANTHROPIC_API_KEY`. `bun run agent …` passes arguments through correctly.
+`ANTHROPIC_API_KEY`. `bun run agent ...` passes arguments through correctly.
 
 ### Files, Task 23
 
@@ -368,7 +368,7 @@ Root `package.json` already had `"agent": "bun run packages/agent/src/cli.ts"`; 
   `arcAddress(r.wallets.arc.privateKey)`, which derives the public address. `RunRecord` has
   no key-shaped field. Two tests assert the printed output and the written run file never
   contain the test key.
-- **`watch` output cites block, source, tx id, receipt hash and HCS sequence per vault** —
+- **`watch` output cites block, source, tx id, receipt hash and HCS sequence per vault**,
   see the captured output above, and asserted line by line in `watch.test.ts`.
 - **Tests are real.** Every paid path runs against the in-process Express service with the
   real handlers and real post-quantum crypto over loopback. The only stubs are the data
@@ -378,7 +378,7 @@ Root `package.json` already had `"agent": "bun run packages/agent/src/cli.ts"`; 
 
 ## Concerns
 
-1. **The live check is blocked** — `vaultradar.fly.dev` is not deployed, so the brief's
+1. **The live check is blocked**, `vaultradar.fly.dev` is not deployed, so the brief's
    Step 3 (one paid request on the real service, `privacy: "strict"` showing a table
    purchase, a stale vault showing `insufficient data`) has not been run against anything
    but loopback. The stale and strict paths are covered by tests; the real x402 payment on
@@ -392,12 +392,12 @@ Root `package.json` already had `"agent": "bun run packages/agent/src/cli.ts"`; 
    specified; flagging it rather than silently changing the formula.
 4. **`--protocol` defaults to `erc4626` for the strict tier.** A vault id carries a chain
    and an address but not a protocol, so a table purchase needs one from somewhere. The
-   generic ERC-4626 table is the right default for any `<chainId>:0x…` id, but a Morpho or
+   generic ERC-4626 table is the right default for any `<chainId>:0x...` id, but a Morpho or
    Aave vault bought under `privacy: "strict"` needs `--protocol` passed explicitly or it
    will not appear in the narrowed result.
 5. **`chat` is untested**, as scoped. It is thin (argument resolution, the slash commands,
    and a `query()` loop), but the SDK loop itself has only ever been type-checked, not
-   run — I have no `ANTHROPIC_API_KEY` here and would not spend on one unasked.
+   run, I have no `ANTHROPIC_API_KEY` here and would not spend on one unasked.
 6. **`executePurchase` re-reads balances and health on every call**, so a chat session that
    scans five times makes five mirror-node and facilitator round trips. Correct but
    chatty; no caching, since a stale balance is worse than a slow one.
@@ -406,7 +406,7 @@ Root `package.json` already had `"agent": "bun run packages/agent/src/cli.ts"`; 
 
 ## Fix round 1
 
-Commit: `b6ce4c1` — "fix(agent): reject future-dated attestations, fall back to the
+Commit: `b6ce4c1`, "fix(agent): reject future-dated attestations, fall back to the
 receipt tx id, and buy one table per chain"
 
 ```
@@ -417,7 +417,7 @@ bun x tsc -p packages/service/tsconfig.json --noEmit  → clean (exit 0)
 bun x tsc -p packages/core/tsconfig.json --noEmit     → clean (exit 0)
 ```
 
-### Finding 1 — `applyAgeCheck` accepted a future-dated attestation as arbitrarily fresh
+### Finding 1, `applyAgeCheck` accepted a future-dated attestation as arbitrarily fresh
 
 `packages/agent/src/policy.ts`. Added `export const CLOCK_SKEW_S = 120` and changed the
 bar to reject in both directions:
@@ -434,8 +434,8 @@ The rejection records the real, possibly negative `ageSeconds`, so the run file 
 which direction it failed in. 120 s is not arbitrary: it matches `TS_WINDOW_S` in
 `@vaultradar/core`, the window the service already allows on sealed-request timestamps, so
 the agent and the service agree on what counts as clock skew rather than each inventing a
-number. `decide()` now reports a future-dated attestation as such —
-`"Attestation is dated 121s in the future, beyond the 120s clock-skew allowance"` — instead
+number. `decide()` now reports a future-dated attestation as such,
+`"Attestation is dated 121s in the future, beyond the 120s clock-skew allowance"`, instead
 of the nonsensical `"-121s old"` a shared message would have produced.
 
 Covering test: `"an attestation dated further into the future than the clock-skew allowance
@@ -448,7 +448,7 @@ reason-wording check:
 | `now + 60` | accepted, decision is `withdraw` |
 | `now - (max_age_seconds + 1)` | rejected, `ageSeconds: 901`, reason says "901s old" |
 
-### Finding 2 — `decide()`'s citation `txId` had no fallback to the receipt
+### Finding 2, `decide()`'s citation `txId` had no fallback to the receipt
 
 `packages/agent/src/policy.ts`, in `decide()`'s `citations`:
 
@@ -471,10 +471,10 @@ citation. They now assert the receipt's tx id, with a comment explaining why the
 id is absent in-harness; `watch.test.ts` additionally asserts `req.txId` really is null, so
 the fallback is visibly a fallback rather than the two values coincidentally matching.
 
-### Minor (a) — a strict-tier plan spanning several chains dropped every chain but the first
+### Minor (a), a strict-tier plan spanning several chains dropped every chain but the first
 
 This was the largest change. A table is per protocol *per chain*, so `executePurchase` now
-buys one table per distinct chain in the vault list, in first-seen order, sequentially —
+buys one table per distinct chain in the vault list, in first-seen order, sequentially,
 each iteration is a real payment, and it stops at the first verification failure rather
 than continuing to spend against a service that just failed a check.
 
@@ -493,7 +493,7 @@ Three things followed from that, and two of them are substantive:
    uncovered vault, reason `"This vault was not present in the fetched table(s), so nothing
    about it was bought."`. Silently returning nothing would have read as "no risk found"
    when the truth is "never looked at". Each cites the receipt of the table bought *for
-   that vault's own chain* — which is the document that proves it wasn't in there — so
+   that vault's own chain*, which is the document that proves it wasn't in there, so
    `Purchase` gained a `chainId: string | null` field (null for a scan). Keying off the
    chain the table was bought for, rather than off the vaults it returned, is what makes an
    empty table still citable.
@@ -510,7 +510,7 @@ Three things followed from that, and two of them are substantive:
    own `citations.receiptHash`.
 
 Covering test: `"strict privacy across two chains buys one table per chain and reports the
-uncovered vault"` in `test/watch.test.ts`, with `--vaults 1:0xaa…,137:0xdd…`. I made the
+uncovered vault"` in `test/watch.test.ts`, with `--vaults 1:0xaa...,137:0xdd...`. I made the
 harness's `table()` chain-aware (it serves chain 1 only, and any other chain legitimately
 comes back empty) because the old stub ignored its `chainId` argument, which would have let
 the second purchase return chain-1 vaults again and masked the whole bug. The test asserts
@@ -519,7 +519,7 @@ vault's `insufficient data` decision citing request 2's receipt hash with an emp
 the covered vault still citing request 1's; exactly two decisions; and the printed
 `"payment 1 of 2"` / `"payment 2 of 2"` / `"in 2 payments"` / `"$0.06"`.
 
-### Minor (b) — `.env.example`
+### Minor (b), `.env.example`
 
 Added `SERVICE_URL=http://localhost:8787` (it was documented in the CLI usage block but
 genuinely missing from the file).
@@ -528,8 +528,8 @@ genuinely missing from the file).
 
 Widened the printed `VAULT` column from 45 to 52. A 7-digit chain id (Arc testnet is
 5042002) plus a 42-character address is 50 characters, so the old width silently truncated
-the one column a reader has to be able to copy verbatim — visible in the multi-chain run as
-`137:0xdddd…dddd…`.
+the one column a reader has to be able to copy verbatim, visible in the multi-chain run as
+`137:0xdddd...dddd...`.
 
 ### Regression verification
 
@@ -575,18 +575,18 @@ VAULT               BLOCK       SOURCE                              TX ID       
 
 ### Files changed in this round
 
-- `packages/agent/src/policy.ts` — `CLOCK_SKEW_S`, the two-sided age bound, the future-date
+- `packages/agent/src/policy.ts`, `CLOCK_SKEW_S`, the two-sided age bound, the future-date
   reason wording, the citation `txId` fallback
-- `packages/agent/src/watch.ts` — `Purchase`, plural `PurchaseOutcome`, `planChains`,
-  `missingVaultDecisions`, the fan-out in `executePurchase`, `quoteFor(…, requests)`,
+- `packages/agent/src/watch.ts`, `Purchase`, plural `PurchaseOutcome`, `planChains`,
+  `missingVaultDecisions`, the fan-out in `executePurchase`, `quoteFor(..., requests)`,
   `formatDecisions(purchases, decisions)`, `runWatch`'s plural handling, the wider column
-- `packages/agent/src/tools.ts` — `RunLog.append` and `buy()` on the plural shape,
+- `packages/agent/src/tools.ts`, `RunLog.append` and `buy()` on the plural shape,
   `payments` array, `totalUsd`
-- `packages/agent/test/policy.test.ts` — two new tests, `fakeResult({ receiptTxId })`
-- `packages/agent/test/watch.test.ts` — two new tests, updated `txId` assertion
-- `packages/agent/test/tools.test.ts` — updated `txId` assertion
-- `packages/agent/test/harness.ts` — chain-aware `table()`
-- `.env.example` — `SERVICE_URL`
+- `packages/agent/test/policy.test.ts`, two new tests, `fakeResult({ receiptTxId })`
+- `packages/agent/test/watch.test.ts`, two new tests, updated `txId` assertion
+- `packages/agent/test/tools.test.ts`, updated `txId` assertion
+- `packages/agent/test/harness.ts`, chain-aware `table()`
+- `.env.example`, `SERVICE_URL`
 
 ### Concerns after this round
 
@@ -613,7 +613,7 @@ VAULT               BLOCK       SOURCE                              TX ID       
 
 ## Fix round 2
 
-Commit: `7998216` — "fix(agent): keep verified decisions when a later chain fails, and
+Commit: `7998216`, "fix(agent): keep verified decisions when a later chain fails, and
 harden the on-chain key-hash decode"
 
 ```
@@ -624,7 +624,7 @@ bun x tsc -p packages/service/tsconfig.json --noEmit  → clean (exit 0)
 bun x tsc -p packages/core/tsconfig.json --noEmit     → clean (exit 0)
 ```
 
-### Finding — a later chain's failure discarded the earlier chain's verified decisions
+### Finding, a later chain's failure discarded the earlier chain's verified decisions
 
 The regression was real and exactly as described. The `ok: false` variant of
 `PurchaseOutcome` had no `decisions` field, so the loop's accumulated `decisions` went out
@@ -642,17 +642,17 @@ Fix, in `packages/agent/src/watch.ts`:
   and appends a clause to the reason: `"; N decision(s) from M earlier verified
   purchase(s) still stand"`. The plural reason was also reworded, since
   `"2 purchases are recorded but no action was taken on it"` read badly; it is now
-  `"verification failed (receipt) on payment 2 of 2 — all 2 purchases are recorded, but
-  nothing was derived from the failed one; 1 decision(s) … still stand"`.
+  `"verification failed (receipt) on payment 2 of 2, all 2 purchases are recorded, but
+  nothing was derived from the failed one; 1 decision(s) ... still stand"`.
 - `runWatch` sets `run.decisions = outcome.decisions` and calls
   `formatDecisions(outcome.purchases, outcome.decisions)` on the failure path, so the rows
-  print. **Exit code and reason unchanged at 2** — the run did not complete.
+  print. **Exit code and reason unchanged at 2**, the run did not complete.
 - `RunLog.append` now persists `outcome.decisions` on both branches, not only on success.
   Without this the chat path would still have lost them.
 - `tools.ts`'s failure branch returns them: `err()` gained an `extra` argument, and the
   per-payment view was factored into `paymentsOf(purchases)` so both branches report it.
-  The result stays `isError: true` — a model must not read a partial failure as a clean
-  purchase — but now carries `decisions`, `reports`, `payments` and `run_path`.
+  The result stays `isError: true`, a model must not read a partial failure as a clean
+  purchase, but now carries `decisions`, `reports`, `payments` and `run_path`.
   `reportSummary`'s parameter widened from `Extract<PurchaseOutcome, { ok: true }>` to
   `{ purchases; decisions }` so it serves both.
 
@@ -682,22 +682,22 @@ that passes the first response through untouched and rewrites the second receipt
 `request_hash` (signature still valid, commitment no longer covering the request):
 
 - `"a later chain failing verification does not throw away the earlier chain's verified
-  decisions"` — exit 2, reason matches `verification failed (receipt)` and contains
+  decisions"`, exit 2, reason matches `verification failed (receipt)` and contains
   `"still stand"`; the run file holds both requests and chain 1's `withdraw` citing
   request 1's receipt hash; no decision cites request 2's hash; the off-chain vault gets
   no decision; the printed text contains the vault id, `withdraw` and `receipt FAILED`.
-- `"a failure on the very first purchase carries no decisions"` — the boundary case: one
+- `"a failure on the very first purchase carries no decisions"`, the boundary case: one
   request recorded, `decisions: []`, and the reason does *not* say "still stand".
 - `"a later chain's verification failure still returns the earlier chain's verified
-  decisions"` (tools) — `isError: true` with `decisions` length 1, `payments` length 2 with
+  decisions"` (tools), `isError: true` with `decisions` length 1, `payments` length 2 with
   the second marked `verified.receipt: false`, and the run file holding both payments and
   the one decision.
 
-### Folded-in (a) — strict UTF-8 and hash-shape validation in `erc8004.ts`
+### Folded-in (a), strict UTF-8 and hash-shape validation in `erc8004.ts`
 
 `readPqHashOnChain` decoded with `hexToString(raw).trim()` and accepted any non-empty
 string. Non-UTF-8 metadata bytes became U+FFFD replacement characters, which were then
-compared against the card's `pq.sig.pub_hash` and reported as `matches: false` — an actual
+compared against the card's `pq.sig.pub_hash` and reported as `matches: false`, an actual
 mismatch, which `runWatch` treats as grounds to refuse payment and which reads to an
 operator as an attack, when the truth is a malformed registration.
 
@@ -717,7 +717,7 @@ export function decodePqHash(raw: `0x${string}`): string | null {
 ```
 
 `readPqHashOnChain` calls it, so there is one copy of the rule. Splitting it out is what
-makes the strictness testable at all — the original is unreachable without an RPC endpoint,
+makes the strictness testable at all, the original is unreachable without an RPC endpoint,
 which is why the weak decode survived the first two rounds. `null` means "could not
 verify" (`matches: null`), which is the right classification for bytes the agent cannot
 interpret, and is deliberately distinct from a genuine mismatch.
@@ -729,13 +729,13 @@ byte appended to a valid hash); and six valid-UTF-8-but-not-a-hash shapes (62 an
 characters, uppercase, non-hex, prose, empty string, and empty metadata `0x`). Reverting to
 the old decode fails it with `Received: "�"`, which is precisely the reported hazard.
 
-### Folded-in (b) — `vaultradar_quote` priced one table regardless of chain spread
+### Folded-in (b), `vaultradar_quote` priced one table regardless of chain spread
 
 The tool's input was only `count`, so it could not know the chain spread at all. I added an
 optional `vaults` array rather than replacing `count` (the brief's Interfaces block names
 `count`, and a model may legitimately want a rough price before it has ids). With `vaults`,
-the quote uses `planChains(...)` — the same helper `executePurchase` uses, so the preview
-and the purchase cannot disagree — and reports `tables` and `chains`. Without them, the
+the quote uses `planChains(...)`, the same helper `executePurchase` uses, so the preview
+and the purchase cannot disagree, and reports `tables` and `chains`. Without them, the
 result carries a `note`: *"This policy buys a table per chain; without the vault ids the
 quote assumes one chain. Pass `vaults` for an exact price."* Saying so is the point;
 quietly quoting one table was the bug.
@@ -754,7 +754,7 @@ Each of the three changes reverted in isolation, tests re-run, then restored:
 |---|---|
 | failure branch back to `decisions: []` | both carried-decisions tests failed (watch and tools) |
 | `decodePqHash` back to non-fatal `hexToString` | strictness test failed with `Received: "�"` |
-| `quoteFor(…)` without `requests` in the quote tool | strict-tier quote test failed |
+| `quoteFor(...)` without `requests` in the quote tool | strict-tier quote test failed |
 
 ### Live re-check
 
@@ -789,15 +789,15 @@ The verified `withdraw` survives with full citations, the failed payment is visi
 
 ### Files changed in this round
 
-- `packages/agent/src/watch.ts` — `decisions` on the `ok: false` variant, populated at the
+- `packages/agent/src/watch.ts`, `decisions` on the `ok: false` variant, populated at the
   in-loop failure return, reworded plural reason, `runWatch` printing and persisting them
-- `packages/agent/src/tools.ts` — `err(message, extra)`, `paymentsOf()`, widened
+- `packages/agent/src/tools.ts`, `err(message, extra)`, `paymentsOf()`, widened
   `reportSummary`, failure branch returning decisions/reports/payments,
   `RunLog.append` persisting on both branches, `vaultradar_quote` taking `vaults`
-- `packages/agent/src/erc8004.ts` — `decodePqHash` with `fatal: true` and `PUB_HASH_RE`
-- `packages/agent/test/watch.test.ts` — two new tests
-- `packages/agent/test/tools.test.ts` — two new tests
-- `packages/agent/test/cli.test.ts` — one new test
+- `packages/agent/src/erc8004.ts`, `decodePqHash` with `fatal: true` and `PUB_HASH_RE`
+- `packages/agent/test/watch.test.ts`, two new tests
+- `packages/agent/test/tools.test.ts`, two new tests
+- `packages/agent/test/cli.test.ts`, one new test
 
 ### Concerns after this round
 
@@ -825,11 +825,11 @@ The verified `withdraw` survives with full citations, the failed payment is visi
 
 ## Typecheck fix
 
-Commit: `774931a` — "fix(agent): type the HCS stub against the service's real lookup
+Commit: `774931a`, "fix(agent): type the HCS stub against the service's real lookup
 contract, and read the sequence as a string"
 
-Merged `main` (39c4db9) into `ws/agent` first. It fast-forwarded — main already contained
-Tasks 22–23 and both fix rounds — so there was nothing to resolve, and `.env.example` did
+Merged `main` (39c4db9) into `ws/agent` first. It fast-forwarded, main already contained
+Tasks 22-23 and both fix rounds, so there was nothing to resolve, and `.env.example` did
 not conflict. `bun install` picked up the `@x402/fetch` dependency main added to the
 service; without it the root typecheck fails earlier, in `packages/service`, before it ever
 reaches the agent.
@@ -855,7 +855,7 @@ following properties from type 'HcsQueue': done, q, running, retryMs, and 5 more
 Main replaced the service's narrow `HcsLookup` interface with the concrete `HcsQueue` class
 (new `packages/service/src/hcs.ts`) and pointed `BuildAppDeps.hcs` and `WellKnownDeps.hcs`
 at the class. `HcsQueue` has private fields, so no object literal can satisfy it
-structurally — only an instance can. The harness's `{ lookup }` stub, written against the
+structurally, only an instance can. The harness's `{ lookup }` stub, written against the
 old interface, became unassignable.
 
 ### Fix: the service declares the surface it uses
@@ -876,7 +876,7 @@ compiler now checks that claim. `BuildAppDeps.hcs` and `WellKnownDeps.hcs` are
 `packages/service/src/index.ts` so a test can build a typed stand-in. Four service files
 touched, all type-level.
 
-### What the type error was hiding — the substantive half
+### What the type error was hiding, the substantive half
 
 Typing the stub against `LookupResult` immediately failed on a second count, because
 `LookupResult.sequence` is **`string | null`**, not a number. My `pollHcs` had:
@@ -886,7 +886,7 @@ sequence: typeof body.sequence === "number" ? body.sequence : null
 ```
 
 So against the real service every receipt would have read as `sequence: null`, and `watch`
-would have printed `HCS SEQ  pending` forever — for a sequence the service had already
+would have printed `HCS SEQ  pending` forever, for a sequence the service had already
 committed. The "HCS sequence per vault" citation the brief requires would never have
 appeared outside my own tests. The stub's numeric `1234` had made the tests agree with the
 agent instead of with the service; this is exactly the drift the loose `hcs` type allowed.
@@ -905,32 +905,32 @@ Received: "…  hcs           topic 0.0.99 sequence pending …"
 Fix in `packages/agent/src/watch.ts`:
 
 - `HcsRecord.sequence` is now `string | null`. An HCS sequence number is an int64, so it
-  does not survive a round trip through a JS number — which is why the service sends a
+  does not survive a round trip through a JS number, which is why the service sends a
   string. **`packages/dashboard/lib/service.ts` already had `sequence: string | null`**, so
   the agent was the only one of the three packages with it wrong; this aligns them.
 - `pollHcs` accepts a string (non-empty) and also coerces a number rather than discarding
   it, so an older or future service shape still yields a usable citation instead of a silent
   "pending".
-- The harness fake returns the full `LookupResult` — `sequence` as a string plus
-  `consensus_timestamp` and `initial_transaction_id` — so the compiler holds it to the real
+- The harness fake returns the full `LookupResult`, `sequence` as a string plus
+  `consensus_timestamp` and `initial_transaction_id`, so the compiler holds it to the real
   contract from here on. `TEST_HCS_SEQUENCE` is `"1234"`.
 
 Two assertions added to the `pollHcs` test: an int64-max sequence
 (`"9223372036854775807"`) survives intact, which is the whole reason the service sends a
 string; and a numeric `77` still produces `"77"` rather than null.
 
-The `/v1/receipts/:hash` round trip is exercised for real in these tests — `pollHcs` calls
-the in-process service over HTTP — so the JSON encoding of `sequence` is now genuinely
+The `/v1/receipts/:hash` round trip is exercised for real in these tests, `pollHcs` calls
+the in-process service over HTTP, so the JSON encoding of `sequence` is now genuinely
 covered rather than assumed.
 
 ### Files changed
 
-- `packages/service/src/hcs.ts` — `HcsSink` interface, `HcsQueue implements HcsSink`
-- `packages/service/src/app.ts`, `src/wellknown.ts` — depend on `HcsSink | null`
-- `packages/service/src/index.ts` — re-export `HcsSink`, `LookupResult`
-- `packages/agent/src/watch.ts` — `HcsRecord.sequence: string | null`, `pollHcs` parsing
-- `packages/agent/test/harness.ts` — typed `HcsSink` fake returning a full `LookupResult`
-- `packages/agent/test/watch.test.ts` — string sequence, int64-max and numeric-fallback
+- `packages/service/src/hcs.ts`, `HcsSink` interface, `HcsQueue implements HcsSink`
+- `packages/service/src/app.ts`, `src/wellknown.ts`, depend on `HcsSink | null`
+- `packages/service/src/index.ts`, re-export `HcsSink`, `LookupResult`
+- `packages/agent/src/watch.ts`, `HcsRecord.sequence: string | null`, `pollHcs` parsing
+- `packages/agent/test/harness.ts`, typed `HcsSink` fake returning a full `LookupResult`
+- `packages/agent/test/watch.test.ts`, string sequence, int64-max and numeric-fallback
   assertions
 
 ### Concerns

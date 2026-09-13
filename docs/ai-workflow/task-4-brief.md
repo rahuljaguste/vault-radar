@@ -74,5 +74,5 @@ export function isSealed(x: unknown): x is Sealed {
 
 - [ ] **Step 4: Run, expect 4 pass.**
 
-- [ ] **Step 5: Commit** — `git add -A && git commit -m "feat(core): hybrid PQ sealing with AES-256-GCM"`
+- [ ] **Step 5: Commit**, `git add -A && git commit -m "feat(core): hybrid PQ sealing with AES-256-GCM"`
 

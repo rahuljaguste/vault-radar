@@ -1,4 +1,4 @@
-### Task 12: Substreams module — stores, eth_call refresh, `map_vault_metrics`
+### Task 12: Substreams module, stores, eth_call refresh, `map_vault_metrics`
 
 **Files:**
 - Modify: `substreams/erc4626-vault-metrics/{substreams.yaml,src/lib.rs}`
@@ -128,5 +128,5 @@ Compile errors around store trait names are expected on first build: consult `su
 
 `substreams run -e mainnet.eth.streamingfast.io:443 substreams.yaml map_vault_metrics -s <initialBlock> -t +400` → metrics with `share_price_source: "call"` appearing for vaults touched after 300 blocks.
 
-- [ ] **Step 4: Commit** — `git add -A && git commit -m "feat(substreams): vault stores, eth_call share-price refresh, map_vault_metrics"`
+- [ ] **Step 4: Commit**, `git add -A && git commit -m "feat(substreams): vault stores, eth_call share-price refresh, map_vault_metrics"`
 

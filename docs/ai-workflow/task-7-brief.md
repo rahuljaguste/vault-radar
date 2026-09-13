@@ -5,7 +5,7 @@
 
 **Interfaces:**
 - Produces: `type Flag = { name: "share_price_drawdown_1h" | "share_price_drawdown_24h" | "share_price_drawdown_7d" | "tvl_outflow_24h" | "deposit_limit_reached" | "stale_data"; value: string; threshold: string; window: string }`; `type Verdict = "ok" | "watch" | "alert" | "unavailable"`; `type RiskReport = { vaultId: string; flags: Flag[]; score: number; verdict: Verdict; evidence: { source: string; block: string; timestamp: string; ageSeconds: string }[] }`; `computeRisk(v: UnifiedVault, nowTs: number): RiskReport`.
-- Rules (spec §5.3): drawdown = (latest − earliest-within-window)/earliest-within-window, negative means drop; thresholds 0.005/0.02/0.05; weights 30/25/20; the 1 h flag only evaluates if a history point at least 1 h and at most 2 h old exists, otherwise skipped; outflow = −(sum of netFlowAssets over 24 h)/current balance where available, else from tvl history; threshold 0.20, weight 25; deposit limit weight 10; score capped 100; `ok` < 20, `watch` 20–49, `alert` ≥ 50; any source not `fresh` → `stale_data` flag and verdict `unavailable`.
+- Rules (spec §5.3): drawdown = (latest - earliest-within-window)/earliest-within-window, negative means drop; thresholds 0.005/0.02/0.05; weights 30/25/20; the 1 h flag only evaluates if a history point at least 1 h and at most 2 h old exists, otherwise skipped; outflow = -(sum of netFlowAssets over 24 h)/current balance where available, else from tvl history; threshold 0.20, weight 25; deposit limit weight 10; score capped 100; `ok` < 20, `watch` 20-49, `alert` ≥ 50; any source not `fresh` → `stale_data` flag and verdict `unavailable`.
 
 - [ ] **Step 1: Failing tests**
 
@@ -99,5 +99,5 @@ export function computeRisk(v: UnifiedVault, nowTs: number): RiskReport {
 }
 ```
 
-- [ ] **Step 4: Run, expect 6 pass. Commit** — `git add -A && git commit -m "feat(core): risk engine with unavailable-on-stale rule"`
+- [ ] **Step 4: Run, expect 6 pass. Commit**, `git add -A && git commit -m "feat(core): risk engine with unavailable-on-stale rule"`
 

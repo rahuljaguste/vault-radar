@@ -63,7 +63,7 @@ The `price` function receiving `HTTPRequestContext` is confirmed in the type fac
 
 - [ ] **Step 2: Payment tx id after settlement**
 
-Register an after-settle hook for the HCS commitment (Task 17 consumes it): `server.onAfterSettle?.(ctx => …)` if present on `x402ResourceServer` in 2.25.0; otherwise wrap `res.json` in `app.use` before the payment middleware to read the `PAYMENT-RESPONSE` header the middleware sets on the response (`res.getHeader("payment-response")`), decode with `decodePaymentResponseHeader` from `@x402/core/http`, and call `deps.onSettled?.(res.locals.receipt, settled.transaction)`. Implement the `res.json` wrapper path; it needs no hook API.
+Register an after-settle hook for the HCS commitment (Task 17 consumes it): `server.onAfterSettle?.(ctx => ...)` if present on `x402ResourceServer` in 2.25.0; otherwise wrap `res.json` in `app.use` before the payment middleware to read the `PAYMENT-RESPONSE` header the middleware sets on the response (`res.getHeader("payment-response")`), decode with `decodePaymentResponseHeader` from `@x402/core/http`, and call `deps.onSettled?.(res.locals.receipt, settled.transaction)`. Implement the `res.json` wrapper path; it needs no hook API.
 
 - [ ] **Step 3: hello-x402 client script (day-one de-risk)**
 
@@ -88,7 +88,7 @@ console.log("opened:", JSON.stringify(open(j.sealed, replySecret)).slice(0, 300)
 
 Prerequisites (spec §12): both accounts associated with `0.0.429274` (`TokenAssociateTransaction` via a tiny `scripts/associate.ts`, or through the Hedera portal), agent account holds testnet USDC from `faucet.circle.com`. Run the service with `HEDERA_*` set, then:
 
-`SERVICE_URL=http://localhost:8787 AGENT_HEDERA_ACCOUNT_ID=0.0.x AGENT_HEDERA_KEY=… bun run packages/service/scripts/hello-x402.ts`
+`SERVICE_URL=http://localhost:8787 AGENT_HEDERA_ACCOUNT_ID=0.0.x AGENT_HEDERA_KEY=... bun run packages/service/scripts/hello-x402.ts`
 
 Expected: `status 200`, a `payment-response` with a Hedera transaction id, `receipt ok: true`. Open HashScan testnet, search the transaction id, confirm the USDC transfer. Paste the HashScan URL into `docs/verification-log.md`.
 
@@ -96,5 +96,5 @@ Expected: `status 200`, a `payment-response` with a Hedera transaction id, `rece
 
 `hedera-rail.live.test.ts`: skipped unless `LIVE=1`; spins up the app with real config and `LiveDataProvider`, runs the same flow as the script, asserts 200 and a verified receipt.
 
-- [ ] **Step 5: Commit** — `git add -A && git commit -m "feat(service): Hedera x402 rail via Blocky402 with metered pricing and payer capture; hello-x402 client"`
+- [ ] **Step 5: Commit**, `git add -A && git commit -m "feat(service): Hedera x402 rail via Blocky402 with metered pricing and payer capture; hello-x402 client"`
 

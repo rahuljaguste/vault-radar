@@ -84,5 +84,5 @@ export function makeScanHandler(d: HandlerDeps) {
 
 - [ ] **Step 3: Implement `data/provider.ts`** with `LiveDataProvider`: `catalog()` from the registry (`status`, count of cached vaults per deployment, refreshed every 5 minutes) plus `erc4626Chains` from `sql ? ["1", "8453"] : []`; `scan(ids)`: group ids by chain; for each chain run `fetchStandardized` over live deployments of that chain (cache results 60 s) and filter by id, plus `readErc4626Vaults(sql, chainId, addresses)`; merge by id preferring the entry with a `fresh` source and concatenating `sources`; `table(protocol, chainId)`: if `protocol === "erc4626"` → `readErc4626Vaults(sql, chainId, null)`, else all vaults from the matching deployments. Chain head: `createPublicClient({ transport: http(rpcUrl) }).getBlock()` → `Number(block.timestamp)`, cached 15 s; on failure use `now` and mark heads as failed so freshness becomes `stale` (pass `headTs = Number.MAX_SAFE_INTEGER` to force stale).
 
-- [ ] **Step 4: Run tests, expect pass. Commit** — `git add -A && git commit -m "feat(service): sealed scan/table handlers, attestations, receipts, live data provider"`
+- [ ] **Step 4: Run tests, expect pass. Commit**, `git add -A && git commit -m "feat(service): sealed scan/table handlers, attestations, receipts, live data provider"`
 

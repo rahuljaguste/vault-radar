@@ -11,16 +11,16 @@ chart, and `vault_meta` is a one-row-per-vault lookup for the vault's underlying
 
 For every block, for every ERC-4626 vault that had a `Deposit` or `Withdraw` event:
 
-- **`share_price`** — assets per share, as an 18-decimal fixed-point decimal string. Sourced from
+- **`share_price`**, assets per share, as an 18-decimal fixed-point decimal string. Sourced from
   the block's own event data (`implied_share_price = assets / shares` on the log) by default, or
   from a direct `totalAssets()`/`totalSupply()` eth_call when one was made this block (see
   "Share price refresh" below). `share_price_source` records which (`"event"` or `"call"`).
-- **`total_assets` / `total_supply`** — only populated on a `share_price_source: "call"` row; `NULL`
+- **`total_assets` / `total_supply`**, only populated on a `share_price_source: "call"` row; `NULL`
   otherwise, since an event alone doesn't carry the vault's aggregate totals.
-- **`net_deposited_assets`** — cumulative deposits minus withdrawals for the vault, all-time.
-- **`net_flow_assets`** — deposits minus withdrawals within this block only.
-- **`depositor_count`** — count of distinct addresses that have ever deposited into the vault.
-- **`last_event_block`** — the block being reported (redundant with `vault_metrics.block`, kept for
+- **`net_deposited_assets`**, cumulative deposits minus withdrawals for the vault, all-time.
+- **`net_flow_assets`**, deposits minus withdrawals within this block only.
+- **`depositor_count`**, count of distinct addresses that have ever deposited into the vault.
+- **`last_event_block`**, the block being reported (redundant with `vault_metrics.block`, kept for
   parity with `vault_latest`, which has no other way to expose it once newer blocks arrive).
 
 ### Share price refresh
@@ -46,7 +46,7 @@ event data alone.
 Composed on top of Pinax's public `erc4626` package
 ([`erc4626-v0.1.0.spkg`](https://github.com/pinax-network/substreams-evm)), which already extracts
 raw `Deposit`/`Withdraw` events from every contract on the chain matching the ERC-4626 event
-signatures — this package does no log-scanning of its own; `map_vault_events` is a thin transform
+signatures, this package does no log-scanning of its own; `map_vault_events` is a thin transform
 over Pinax's `map_events` output (renaming/normalizing fields, computing `implied_share_price`,
 tagging each event with its vault address).
 
@@ -105,21 +105,21 @@ graph TD;
 See `schema.sql`. Three tables, all keyed by `(chain_id, vault[, block])` so mainnet and Base (or
 any other EVM chain this is deployed against) can share one Postgres database:
 
-- **`vault_metrics`** — append-only history, one row per `(chain_id, vault, block)` touched.
-- **`vault_latest`** — one row per `(chain_id, vault)`, upserted (`db_out` uses `upsert_row`, which
+- **`vault_metrics`**, append-only history, one row per `(chain_id, vault, block)` touched.
+- **`vault_latest`**, one row per `(chain_id, vault)`, upserted (`db_out` uses `upsert_row`, which
   the sink turns into `INSERT ... ON CONFLICT (chain_id, vault) DO UPDATE`) to the most recent
   snapshot. Query this for "current" dashboard state.
-- **`vault_meta`** — one row per `(chain_id, vault)`, inserted once when the vault's metadata is
+- **`vault_meta`**, one row per `(chain_id, vault)`, inserted once when the vault's metadata is
   first cached (never updated afterward).
 
 `total_assets`/`total_supply` are `NULL` on any row whose `share_price_source` is `"event"` rather
-than `"call"` — `db_out` skips the SQL column write entirely for an empty value rather than writing
+than `"call"`, `db_out` skips the SQL column write entirely for an empty value rather than writing
 an empty string, so these columns are genuinely `NULL`, not `''`.
 
 ## `chain_id` / multi-chain
 
 `db_out` takes `chain_id` as a Substreams runtime parameter (`params: string`), not a constant, so
-the same compiled WASM module works for every chain — only the manifest's `params.db_out` value
+the same compiled WASM module works for every chain, only the manifest's `params.db_out` value
 and `network`/`initialBlock` differ between `substreams.yaml` (mainnet, `chain_id = "1"`) and
 `substreams.base.yaml` (Base, `chain_id = "8453"`). Sinking both into the same Postgres database is
 intentional and expected: every table's primary key includes `chain_id`.
@@ -127,13 +127,13 @@ intentional and expected: every table's primary key includes `chain_id`.
 ## `initialBlock` policy
 
 Each manifest's `map_vault_events.initialBlock` is chosen relative to each network's head at the
-time this package was built, not a fixed historical constant — re-derive it before a fresh deploy
+time this package was built, not a fixed historical constant, re-derive it before a fresh deploy
 rather than reusing these numbers verbatim:
 
 - **Mainnet**: `25742000` (chain head `25942379` at build time, minus 200,000 blocks, rounded down
   to the nearest 1,000).
-- **Base**: `49899000` (chain head `51099244` at build time, minus 1,200,000 blocks — Base's ~2s
-  block time means the same wall-clock lookback needs a larger block-count offset — rounded down
+- **Base**: `49899000` (chain head `51099244` at build time, minus 1,200,000 blocks, Base's ~2s
+  block time means the same wall-clock lookback needs a larger block-count offset, rounded down
   to the nearest 1,000).
 
 Every other module either inherits its effective start block from this dependency (has no
@@ -174,7 +174,7 @@ substreams-sink-sql run "$DATABASE_URL" ./erc4626-vault-metrics-v0.1.0.spkg \
   --cursors-table cursors_1 --final-blocks-only
 ```
 
-**Run the Base sink** (same database, different package/endpoint/param — both chains' rows
+**Run the Base sink** (same database, different package/endpoint/param, both chains' rows
 coexist because every table's primary key includes `chain_id`):
 
 ```bash
@@ -193,8 +193,8 @@ psql "$DATABASE_URL" -c "SELECT chain_id, count(*) FROM vault_latest GROUP BY 1"
 ```
 
 **Cursor table**: the sink stores its progress in a table named by `--cursors-table`, defaulting to
-`cursors` (columns: `id` text primary key — the output module's hash, one row per sink/module
-pinned to this database — `cursor` text, `block_num` bigint, `block_id` text). Do not take the
+`cursors` (columns: `id` text primary key, the output module's hash, one row per sink/module
+pinned to this database, `cursor` text, `block_num` bigint, `block_id` text). Do not take the
 default here. `packages/core/src/substreams/reader.ts` reads sink progress from `cursors_<chainId>`,
 one table per chain, so that a lookup for one chain can never match another chain's row. Pass
 `--cursors-table cursors_1` and `--cursors-table cursors_8453` to both `setup` and `run`, as above.

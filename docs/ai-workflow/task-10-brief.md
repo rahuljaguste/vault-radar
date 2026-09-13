@@ -61,5 +61,5 @@ export async function readErc4626Vaults(q: SqlQuery, chainId: string, vaults: st
 
 The cursor table name and columns come from `substreams-sink-sql` (`cursors` with `id`, `cursor`, `block_num`, `block_id`); confirm after Task 13 with `\d cursors` and adjust the query if the sink version differs.
 
-- [ ] **Step 3: Run, expect pass. Export everything from `packages/core/src/index.ts`. Commit** — `git add -A && git commit -m "feat(core): Substreams sink reader with cursor-based freshness"`
+- [ ] **Step 3: Run, expect pass. Export everything from `packages/core/src/index.ts`. Commit**, `git add -A && git commit -m "feat(core): Substreams sink reader with cursor-based freshness"`
 

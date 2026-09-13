@@ -1,4 +1,4 @@
-### Task 13: Substreams module — SQL sink, Neon, publish
+### Task 13: Substreams module, SQL sink, Neon, publish
 
 **Files:**
 - Create: `substreams/erc4626-vault-metrics/schema.sql`, `substreams/erc4626-vault-metrics/README.md`
@@ -86,5 +86,5 @@ Hosted sink (preferred if it works within 30 minutes): on thegraph.market, Hoste
 
 `substreams registry login` (GitHub) then `substreams registry publish ./erc4626-vault-metrics-v0.1.0.spkg`. Record the substreams.dev URL in `substreams/erc4626-vault-metrics/README.md` with: what the package does, module graph, how it composes Pinax `erc4626`, how to sink it, and the `initialBlock` policy.
 
-- [ ] **Step 5: Commit** — `git add -A && git commit -m "feat(substreams): SQL sink, Neon deployment, package published to substreams.dev"`
+- [ ] **Step 5: Commit**, `git add -A && git commit -m "feat(substreams): SQL sink, Neon deployment, package published to substreams.dev"`
 

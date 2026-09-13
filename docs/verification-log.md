@@ -9,7 +9,7 @@ script, because HashScan and Arcscan are client-rendered apps that answer 404 to
 Service: <https://vaultradar-service-production.up.railway.app> ·
 Dashboard: <https://vaultradar-dashboard-production.up.railway.app>
 
-## Deployed subgraphs — the verification gate
+## Deployed subgraphs, the verification gate
 
 `bun run verify-deployments` queries each registered deployment's `_meta` and pins what it
 finds. Run against the live gateway:
@@ -49,13 +49,13 @@ chain 296     : matches
 chain 5042002 : matches
 ```
 
-The agent's own `discover()` — the code path that decides whether to pay — reports
+The agent's own `discover()`, the code path that decides whether to pay, reports
 `cardSignatureValid: true`, `keyBindingValid: true`, and both identities matching.
 
 ## Settled payments
 
 Nine paid requests have settled: eight on Hedera, one on Arc. Every row below was read back
-rather than copied from the run records — the transactions from the Hedera mirror node, the
+rather than copied from the run records, the transactions from the Hedera mirror node, the
 receipt hashes from the deployed service, which still serves each one.
 
 All eight Hedera transactions are `SUCCESS`, all eight move HTS USDC `0.0.429274` from payer

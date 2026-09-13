@@ -1,4 +1,4 @@
-# VaultRadar — design spec
+# VaultRadar, design spec
 
 Date: 2026-09-05 (revised after independent review the same day). Event: ETHOnline 2026 (ETHGlobal), Start Fresh pool. Submission deadline: Sunday 2026-09-13, 12:00 EDT. Solo builder plus Claude Code.
 
@@ -12,12 +12,12 @@ Three partner picks (ETHGlobal caps a submission at three partners; all of a par
 
 | Partner / track | Must-show |
 |---|---|
-| The Graph — Composable / Standardized | One query template executed across N Messari deployments (yield-aggregator and lending schemas), pinned by deployment ID. A new ERC-4626 Substreams module composed from the Pinax `erc4626` package, running on two chains through The Graph Market. README section "what the standards made easier". |
-| The Graph — AI Use Case (From Scratch) | Agent reasons over live Graph data and makes decisions; independently refuses stale data. x402 pay-per-query (agent pays service; optional: service pays The Graph gateway via x402 on Base). One-prompt Substreams generation using the Substreams Skills, recorded honestly (see 5.2). |
-| Hedera — AI & Agentic Payments | Live x402-gated service on Hedera testnet settled through Blocky402. At least one real paid request end to end in the video. Extras: metered per-call pricing, HTS USDC settlement, ERC-8004 identity with the PQ key anchored on-chain, UCP discovery profile, HCS audit trail of commitments. |
-| Hedera — Improve the Harness | Open PR to `hedera-dev/hedera-harness` adding a Tier 3.5 `x402Probe` chain validator, branched from open PR #15 (ephemeral-signer HTS association). Tests, docs section, before/after evidence, 15-second clip inside the main video. |
-| Arc — Agentic Economy | Agent built on Circle's Claude Agent SDK starter kit, pays via Gateway nanopayments on Arc testnet, decision logic tied to real signals (price, balances, attestation age, privacy policy). Working frontend showing a live Arc payment, plus architecture diagram. |
-| Arc — Launch and Push to Mainnet | Same integration with a documented mainnet config path ready by 2026-09-30 (Arc mainnet opens 2026-09-16). |
+| The Graph, Composable / Standardized | One query template executed across N Messari deployments (yield-aggregator and lending schemas), pinned by deployment ID. A new ERC-4626 Substreams module composed from the Pinax `erc4626` package, running on two chains through The Graph Market. README section "what the standards made easier". |
+| The Graph, AI Use Case (From Scratch) | Agent reasons over live Graph data and makes decisions; independently refuses stale data. x402 pay-per-query (agent pays service; optional: service pays The Graph gateway via x402 on Base). One-prompt Substreams generation using the Substreams Skills, recorded honestly (see 5.2). |
+| Hedera, AI & Agentic Payments | Live x402-gated service on Hedera testnet settled through Blocky402. At least one real paid request end to end in the video. Extras: metered per-call pricing, HTS USDC settlement, ERC-8004 identity with the PQ key anchored on-chain, UCP discovery profile, HCS audit trail of commitments. |
+| Hedera, Improve the Harness | Open PR to `hedera-dev/hedera-harness` adding a Tier 3.5 `x402Probe` chain validator, branched from open PR #15 (ephemeral-signer HTS association). Tests, docs section, before/after evidence, 15-second clip inside the main video. |
+| Arc, Agentic Economy | Agent built on Circle's Claude Agent SDK starter kit, pays via Gateway nanopayments on Arc testnet, decision logic tied to real signals (price, balances, attestation age, privacy policy). Working frontend showing a live Arc payment, plus architecture diagram. |
+| Arc, Launch and Push to Mainnet | Same integration with a documented mainnet config path ready by 2026-09-30 (Arc mainnet opens 2026-09-16). |
 
 Finalist criteria (Technicality, Originality, Practicality, Usability, WOW): the sealed-channel and PQ-receipt layer is the WOW; the standards leverage is the practicality.
 
@@ -80,7 +80,7 @@ vaultradar/
 
 ### 5.1 Standardized data layer (`packages/core/standardized`)
 
-- **Deployment registry** `deployments.json`: curated Messari deployments with `{ protocol, chain, schema: "yield-aggregator" | "lending", subgraphId, deploymentId, status, headLagSeconds, verifiedAt }`. Queries always use the pinned `deploymentId` via `https://gateway.thegraph.com/api/deployments/id/<Qm…>` so a subgraph re-point cannot silently change the data. Initial candidates: Aave v3 (Ethereum, Base), Compound v3 (Ethereum), Spark (Ethereum), Morpho-Aave v3 (Ethereum), Euler (Ethereum), Yearn v2 (Ethereum, Arbitrum), Convex, Aura, Arrakis, Gamma.
+- **Deployment registry** `deployments.json`: curated Messari deployments with `{ protocol, chain, schema: "yield-aggregator" | "lending", subgraphId, deploymentId, status, headLagSeconds, verifiedAt }`. Queries always use the pinned `deploymentId` via `https://gateway.thegraph.com/api/deployments/id/<Qm...>` so a subgraph re-point cannot silently change the data. Initial candidates: Aave v3 (Ethereum, Base), Compound v3 (Ethereum), Spark (Ethereum), Morpho-Aave v3 (Ethereum), Euler (Ethereum), Yearn v2 (Ethereum, Arbitrum), Convex, Aura, Arrakis, Gamma.
 - **Verification gate** (`scripts/verify-deployments.ts`, run on Sept 5 and before every demo): queries `_meta { block { number timestamp } hasIndexingErrors }` on each and writes `headLagSeconds` and `status`: `live` when lag is at most 60 minutes, `stale` when larger, `down` when the query fails or reports indexing errors. Stale and down deployments stay in the registry on purpose; the stale-refusal demo uses them. If fewer than three deployments are `live` on Sept 5, the Composable story rests on the Substreams pipeline on two chains plus the standardized query across whatever is live, and success criterion 3 is amended accordingly in the README.
 - **Query templates**, one per schema family, parameterized only by pagination: `yield.vaults` (Vault, last 24 VaultHourlySnapshot, last 8 VaultDailySnapshot) and `lending.markets` (Market, last 24 MarketHourlySnapshot, last 8 MarketDailySnapshot). Both include `_meta`. Exact field names are confirmed by schema introspection in the first implementation task; required fields are share price or exchange rate, TVL USD, input and output token, input token balance, output token supply, deposit limit (yield only), daily deposit and withdraw USD (lending), snapshot timestamps and block numbers.
 - **Gateway client**: bearer Studio API key. Optional mode `UPSTREAM_X402=1` uses `@graphprotocol/client-x402` against the gateway's x402 endpoints, paying USDC on Base ($0.01 per query); used only for the "no API keys anywhere" demo segment.
@@ -94,7 +94,7 @@ vaultradar/
   - `store_vault_meta` (set-if-not-exists, keyed by vault): on first sight of a vault, `eth_call` `asset()`, then `decimals()` and `symbol()` on the asset, and `decimals()` on the vault; stores `{ asset, asset_symbol, asset_decimals, share_decimals }`.
   - `store_depositor_seen` (set-if-not-exists, keyed `vault:owner`) and `map_new_depositors` (reads that store's deltas, emits one record per CREATE) feeding `store_depositor_count` (add, keyed by vault). Two chained stores because a store module cannot read its own deltas.
   - `store_vault_flows` (add, keyed by vault): cumulative assets deposited, assets withdrawn, shares minted, shares burned; plus `store_last_call_block` (set, keyed by vault).
-  - `map_vault_metrics`: for vaults touched in the block, emits `VaultMetrics { chain_id, vault, block, timestamp, share_price, share_price_source: "event" | "call", total_assets, total_supply, net_deposited_assets, net_flow_assets, depositor_count, last_event_block }`. When a vault is touched and `block − last_call_block ≥ 300`, an `eth_call` batch to `totalAssets()` and `totalSupply()` refreshes exact `share_price = totalAssets / totalSupply` (decimals-aware) and updates the store; otherwise `total_assets` and `total_supply` are null and `share_price` is event-implied. `net_deposited_assets` is cumulative deposits minus withdrawals and is never presented as TVL.
+  - `map_vault_metrics`: for vaults touched in the block, emits `VaultMetrics { chain_id, vault, block, timestamp, share_price, share_price_source: "event" | "call", total_assets, total_supply, net_deposited_assets, net_flow_assets, depositor_count, last_event_block }`. When a vault is touched and `block - last_call_block ≥ 300`, an `eth_call` batch to `totalAssets()` and `totalSupply()` refreshes exact `share_price = totalAssets / totalSupply` (decimals-aware) and updates the store; otherwise `total_assets` and `total_supply` are null and `share_price` is event-implied. `net_deposited_assets` is cumulative deposits minus withdrawals and is never presented as TVL.
   - `db_out`: `DatabaseChanges` for `substreams-sink-sql` with `schema.sql` defining `vault_metrics` (primary key `chain_id, vault, block`), `vault_latest` (primary key `chain_id, vault`), and `vault_meta`.
 - Deployment: The Graph Market hosted sink to a Neon Postgres for Ethereum mainnet and Base. Fallback: `substreams-sink-sql` run on the service host against the same Market endpoint. Package published to substreams.dev as `erc4626-vault-metrics` by Sept 7, because the hosted sink may require a published package.
 - Sink freshness comes from the sink's cursor block (stored in the sink's cursor table), not from a vault's `last_event_block`, so quiet vaults are not misreported as stale.
@@ -106,10 +106,10 @@ vaultradar/
 - Freshness: `fresh` if the source's reference block is at most 60 minutes behind chain head for Messari and 5 minutes for Substreams; `stale` otherwise; `unavailable` if the query failed or `_meta.hasIndexingErrors` is true. The Messari reference block is `_meta.block`; the Substreams reference block is the sink cursor. Chain head comes from the JSON-RPC provider per chain, cached 15 seconds; RPC failure marks every source on that chain `stale`.
 - Risk flags and per-schema definitions:
   - `share_price_drawdown_1h`, `_24h`, `_7d`: relative drop in share price (yield `pricePerShare`, lending `exchangeRate`, erc4626 `share_price`) over the window, thresholds 0.5 %, 2 %, 5 %. The 1 h flag requires hourly data (hourly snapshots or Substreams history); without it the flag is skipped, not guessed.
-  - `tvl_outflow_24h`: yield uses the 24 h change in `inputTokenBalance` relative to the current balance; lending uses `dailyWithdrawUSD − dailyDepositUSD` relative to `totalDepositBalanceUSD`; erc4626 uses `net_flow_assets` over 24 h relative to `total_assets` (skipped when `total_assets` is null). Threshold 20 %.
+  - `tvl_outflow_24h`: yield uses the 24 h change in `inputTokenBalance` relative to the current balance; lending uses `dailyWithdrawUSD - dailyDepositUSD` relative to `totalDepositBalanceUSD`; erc4626 uses `net_flow_assets` over 24 h relative to `total_assets` (skipped when `total_assets` is null). Threshold 20 %.
   - `deposit_limit_reached`: yield only, `inputTokenBalance ≥ depositLimit` when a limit is set.
   - `stale_data`: any source not `fresh`.
-- Score: drawdown 1 h 30, 24 h 25, 7 d 20; outflow 25; deposit limit 10; sum capped at 100. Verdict: `ok` below 20, `watch` 20–49, `alert` 50 and above. Hard rule: if any source needed for a flag is `stale` or `unavailable`, the verdict is `unavailable` and evidence names the source and its age. No verdict is ever inferred from partial data.
+- Score: drawdown 1 h 30, 24 h 25, 7 d 20; outflow 25; deposit limit 10; sum capped at 100. Verdict: `ok` below 20, `watch` 20-49, `alert` 50 and above. Hard rule: if any source needed for a flag is `stale` or `unavailable`, the verdict is `unavailable` and evidence names the source and its age. No verdict is ever inferred from partial data.
 - `RiskReport { vaultId, flags: [{ name, value, threshold, window }], score, verdict, evidence: [{ source, block, timestamp, ageSeconds }] }`.
 
 ### 5.4 PQ, sealing, and receipt layer (`packages/core/pq`)
@@ -130,9 +130,9 @@ vaultradar/
 
 - Express on bun, Node 22 compatible. `express.json()` runs before every payment middleware so the x402 v2 request adapter's `getBody()` can validate envelopes in the price function.
 - Public unpaid routes (CORS `*` on these only): `GET /.well-known/agent.json` (agent card with endpoints, prices, rails, PQ public keys and hashes, ERC-8004 ids, UAID when present; `sig` inside the JSON body), `GET /.well-known/ucp` (UCP profile listing services and two x402 payment handlers), `GET /.well-known/erc8004.json` (registration file), `GET /v1/catalog`, `GET /v1/receipts/:hash` returning `{ receipt_hash, topicId, sequence | null, consensus_timestamp | null, initial_transaction_id | null }`.
-- Paid routes are registered by full path (`"POST /hedera/v1/scan"`, `"POST /arc/v1/scan/s"`, …) because the x402 adapter matches on the request path; handlers are shared functions.
+- Paid routes are registered by full path (`"POST /hedera/v1/scan"`, `"POST /arc/v1/scan/s"`, ...) because the x402 adapter matches on the request path; handlers are shared functions.
   - Hedera `POST /hedera/v1/scan`: price `$0.001 + $0.0005 × count` from the x402 v2 per-request price function reading `X-VR-Count`; the function also validates envelope structure. Asset HTS USDC `0.0.429274`. A `POST /hedera/v1/scan-hbar` variant prices in tinybars for the harness validator.
-  - Arc `POST /arc/v1/scan/s|m|l` for counts 1–5, 6–20, 21–100 at `$0.003`, `$0.01`, `$0.05`, because Circle's middleware is static per route.
+  - Arc `POST /arc/v1/scan/s|m|l` for counts 1-5, 6-20, 21-100 at `$0.003`, `$0.01`, `$0.05`, because Circle's middleware is static per route.
   - `POST /{hedera,arc}/v1/table`: body `{ protocol, chainId }` (sealed or clear), flat `$0.06` on both rails, a deliberate privacy premium so `table` is never cheaper than a sealed `scan`. Returns every vault of that protocol. (Amended 2026-09-10: the original `$0.03` was below the `$0.051` a metered scan of the maximum 100 vaults costs, inverting the premium above 58 vaults; `$0.06` restores the stated invariant at every count.)
 - x402 v2 order of operations: the middleware verifies the payment before the handler and settles only after a 2xx. Consequence: 4xx from the handler costs the payer nothing, and the signed Hedera transfer's validity window bounds handler time, so upstream work is capped at 60 seconds and returns 504 (unsettled) beyond that.
 - Hedera rail: `@x402/express`, `@x402/core`, `@x402/hedera` pinned to one 2.x version; facilitator `https://api.testnet.blocky402.com`. Arc rail: `@circle-fin/x402-batching` `createGatewayMiddleware` against Circle's testnet Gateway facilitator, network `eip155:5042002`.
@@ -145,11 +145,11 @@ vaultradar/
 
 - Derived from `circlefin/agent-stack-starter-kits` Claude Agent SDK variant (public starter kit). Model: latest Claude via the Anthropic API.
 - Wallets: Hedera testnet ECDSA account (`@x402/fetch` + `@x402/hedera` signer) and Arc testnet key with a Gateway deposit (`GatewayClient`); the Circle CLI handles Arc wallet setup and balance checks.
-- Tools: `discover(url)` (fetch the card, verify its ML-DSA signature, read `pq.sig.pubhash` from ERC-8004 metadata on Hedera and Arc RPC, compare), `quote(request)` (unpaid 402 probe per rail), `pay_and_scan(request, policy)` (choose rail by `rail_preference` and balances, choose tier by `privacy`, seal with a fresh `reply_pk`, pay, open the response, verify the receipt and attestations, persist to `runs/<id>.json`), `verify_receipt`, `explain`. (Amended 2026-09-10: `quote` is local arithmetic over the pricing constants shared with the service, not a 402 probe — it makes no request. The probe's purpose was to learn what the service would actually demand, and that is instead enforced at the moment it is demanded: the per-rail ceilings refuse a 402 more than one percent over the quote before anything is signed, and `checkSettledPrice` holds the receipt's stated price to the same band afterwards. A probe would also be a second round trip whose answer the real 402 could contradict anyway.)
+- Tools: `discover(url)` (fetch the card, verify its ML-DSA signature, read `pq.sig.pubhash` from ERC-8004 metadata on Hedera and Arc RPC, compare), `quote(request)` (unpaid 402 probe per rail), `pay_and_scan(request, policy)` (choose rail by `rail_preference` and balances, choose tier by `privacy`, seal with a fresh `reply_pk`, pay, open the response, verify the receipt and attestations, persist to `runs/<id>.json`), `verify_receipt`, `explain`. (Amended 2026-09-10: `quote` is local arithmetic over the pricing constants shared with the service, not a 402 probe, it makes no request. The probe's purpose was to learn what the service would actually demand, and that is instead enforced at the moment it is demanded: the per-rail ceilings refuse a 402 more than one percent over the quote before anything is signed, and `checkSettledPrice` holds the receipt's stated price to the same band afterwards. A probe would also be a second round trip whose answer the real 402 could contradict anyway.)
 - Policy file `policy.json`: `{ budget: { hbar, usdc_hedera, usdc_arc }, privacy: "strict" | "balanced" | "cheap", rail_preference: "cheapest" | "hedera" | "arc", max_age_seconds }`. `strict` always buys `table`; `balanced` seals `scan`; `cheap` allows clear `scan`.
 - Independent freshness: the agent rejects any attestation whose `timestamp` is older than `max_age_seconds` by its own clock, regardless of the service's `freshness` field, and records the rejection as `insufficient data`.
 - Behavior: given a watchlist or wallet, budget the session, buy data, reason over `RiskReport`s, and output a decision per vault (`hold`, `withdraw`, `rebalance`, `insufficient data`) with citations: block numbers, deployment or package refs, payment tx ids, receipt hash, HCS sequence. Any `unavailable` verdict or rejected attestation yields `insufficient data`, never a guess.
-- Interfaces: CLI (`bun run agent watch --vaults … --policy policy.json`) and an interactive chat mode. Optional tool: the official Subgraph MCP for ad-hoc deployment discovery.
+- Interfaces: CLI (`bun run agent watch --vaults ... --policy policy.json`) and an interactive chat mode. Optional tool: the official Subgraph MCP for ad-hoc deployment discovery.
 
 ### 5.7 Dashboard (`packages/dashboard`)
 
@@ -178,9 +178,9 @@ The Arc path differs in steps 3 to 7: Gateway middleware, EIP-3009 authorization
 - Sink cursor more than 5 minutes behind head: Substreams source `stale`; same rule.
   **Amended 2026-09-12: the figure is 20 minutes, not 5.** The sink indexes finalized
   blocks only, so the newest block it can ever write trails the head by Ethereum's finality
-  lag — 64 to 95 blocks, 13 to 19 minutes. Five minutes was therefore unsatisfiable in
+  lag, 64 to 95 blocks, 13 to 19 minutes. Five minutes was therefore unsatisfiable in
   practice: the sink ran correctly and every vault it backed still read `stale`, which the
-  service reports as `unavailable` — "no data" for data that is final and right. Twenty
+  service reports as `unavailable`, "no data" for data that is final and right. Twenty
   minutes (raised to 30 after measuring the running sink at an 80-150 block band) clears the lag while still bounding staleness, and it stays below the
   agent's own default `max_age_seconds` of 900s for the common case.
 - Envelope malformed at quote time: 400 before payment. Envelope fails `ts`, nonce, payer or count checks after verify: 422, no settlement, nothing charged.
@@ -205,7 +205,7 @@ The Arc path differs in steps 3 to 7: Gateway middleware, EIP-3009 authorization
 5. Sealed request and sealed response round trip, ML-DSA-65 receipt verification, and on-chain key binding demonstrated.
 6. Agent decision with citations, and a demonstrated refusal on a stale deployment using the agent's own age check.
 7. Harness PR opened.
-8. README with architecture diagram, payment flow, "what the standards made easier", the boundary statement, run instructions; `LICENSE` (MIT); `.env.example`; `SKILL.md`; 2–4 minute video with no AI voiceover; continuous commit history from 2026-09-04.
+8. README with architecture diagram, payment flow, "what the standards made easier", the boundary statement, run instructions; `LICENSE` (MIT); `.env.example`; `SKILL.md`; 2-4 minute video with no AI voiceover; continuous commit history from 2026-09-04.
 
 ## 10. Schedule, day-one de-risking, cut order
 

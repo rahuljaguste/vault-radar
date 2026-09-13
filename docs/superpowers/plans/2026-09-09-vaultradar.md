@@ -17,7 +17,7 @@
 - Pin `@x402/express`, `@x402/core`, `@x402/hedera`, `@x402/fetch` to exactly `2.25.0`; `@circle-fin/x402-batching` to `3.4.0`; `@noble/post-quantum` to `0.7.1`.
 - All numerics that enter hashes or signatures are decimal strings. Canonical JSON = sorted keys, no whitespace, UTF-8.
 - Freshness thresholds: Messari 3600 seconds, Substreams 300 seconds. Envelope timestamp window: 120 seconds. Nonce memory: 600 seconds. Handler cap: 60 seconds.
-- Prices: Hedera scan `$0.001 + $0.0005 × count`; Arc scan buckets `s` (1–5) `$0.003`, `m` (6–20) `$0.01`, `l` (21–100) `$0.05`; `table` `$0.03` on both rails.
+- Prices: Hedera scan `$0.001 + $0.0005 × count`; Arc scan buckets `s` (1-5) `$0.003`, `m` (6-20) `$0.01`, `l` (21-100) `$0.05`; `table` `$0.03` on both rails.
 - Hedera testnet USDC is HTS token `0.0.429274` (6 decimals). Blocky402 testnet facilitator: `https://api.testnet.blocky402.com`. Circle Gateway testnet facilitator: `https://gateway-api-testnet.circle.com`. Arc testnet: `eip155:5042002`, RPC `https://rpc.testnet.arc.io`. Hedera testnet JSON-RPC: `https://testnet.hashio.io/api` (chain 296). ERC-8004 IdentityRegistry on both testnets: `0x8004A818BFB912233c491871b3d84c89A494BD9e`.
 - Never log decrypted request bodies. Secrets only via environment variables listed in `.env.example`.
 - Cut order if behind schedule (spec §10): HCS-14 UAID and Falcon are already cut; then the harness PR (already cut for the compressed window); then dashboard extras; then the Arc rail only if Task 19's live check fails by Thursday 2026-09-10 evening. Never cut `table`, receipts, sealing.
@@ -95,14 +95,14 @@ scripts/demo.sh
 
 Run in parallel where the dependency graph allows:
 
-- **W1 core** (Tasks 1–10): sequential, no network. Start immediately.
-- **W2 substreams** (Tasks 11–13): independent of W1 after Task 1. Needs The Graph Market token and Neon URL.
-- **W3 service** (Tasks 14–20): needs Tasks 2–10.
-- **W4 agent** (Tasks 21–23): needs Tasks 2–8; live tests need Task 16/19 deployed.
+- **W1 core** (Tasks 1-10): sequential, no network. Start immediately.
+- **W2 substreams** (Tasks 11-13): independent of W1 after Task 1. Needs The Graph Market token and Neon URL.
+- **W3 service** (Tasks 14-20): needs Tasks 2-10.
+- **W4 agent** (Tasks 21-23): needs Tasks 2-8; live tests need Task 16/19 deployed.
 - **W5 dashboard** (Task 24): needs Task 14 shape; can start from fixtures.
-- **W6 docs/video** (Tasks 25–26): last.
+- **W6 docs/video** (Tasks 25-26): last.
 
-Day plan: Sept 9 → Tasks 1–10 and 11, plus `hello-x402` (Task 16 client half) as soon as the Hedera accounts exist. Sept 10 → Tasks 12–17, 21–22, Task 19 live check (go/no-go on Arc). Sept 11 → Tasks 18, 20, 23, 24, 25. Sept 12 → integration on live testnets, Task 26 video, submit.
+Day plan: Sept 9 → Tasks 1-10 and 11, plus `hello-x402` (Task 16 client half) as soon as the Hedera accounts exist. Sept 10 → Tasks 12-17, 21-22, Task 19 live check (go/no-go on Arc). Sept 11 → Tasks 18, 20, 23, 24, 25. Sept 12 → integration on live testnets, Task 26 video, submit.
 
 ---
 
@@ -232,7 +232,7 @@ test("undefined properties are dropped, null kept", () => {
 });
 ```
 
-- [ ] **Step 2: Run, expect failure** — `bun test packages/core/test/canonical.test.ts` → module not found.
+- [ ] **Step 2: Run, expect failure**, `bun test packages/core/test/canonical.test.ts` → module not found.
 
 - [ ] **Step 3: Implement**
 
@@ -281,9 +281,9 @@ export const sha256Hex = (b: Uint8Array): string => toHex(sha256(b));
 export const hashJson = (v: unknown): string => sha256Hex(canonicalBytes(v));
 ```
 
-- [ ] **Step 4: Run, expect pass** — `bun test packages/core/test/canonical.test.ts` → 4 pass.
+- [ ] **Step 4: Run, expect pass**, `bun test packages/core/test/canonical.test.ts` → 4 pass.
 
-- [ ] **Step 5: Commit** — `git add -A && git commit -m "feat(core): canonical JSON and sha256 hashing"`
+- [ ] **Step 5: Commit**, `git add -A && git commit -m "feat(core): canonical JSON and sha256 hashing"`
 
 ### Task 3: PQ keys from seeds and ML-DSA-65 signatures
 
@@ -391,7 +391,7 @@ export function checkSig(obj: { sig?: Sig } & object, publicKey: Uint8Array): bo
 
 - [ ] **Step 4: Run, expect 4 pass.** If `ml_kem768_x25519.lengths.seed` is undefined at runtime, print `ml_kem768_x25519.lengths` once and hard-code the value it reports; remove the print.
 
-- [ ] **Step 5: Commit** — `git add -A && git commit -m "feat(core): seeded ML-DSA-65 and hybrid KEM keys, JSON signatures"`
+- [ ] **Step 5: Commit**, `git add -A && git commit -m "feat(core): seeded ML-DSA-65 and hybrid KEM keys, JSON signatures"`
 
 ### Task 4: Seal and open (hybrid KEM + HKDF + AES-256-GCM)
 
@@ -469,7 +469,7 @@ export function isSealed(x: unknown): x is Sealed {
 
 - [ ] **Step 4: Run, expect 4 pass.**
 
-- [ ] **Step 5: Commit** — `git add -A && git commit -m "feat(core): hybrid PQ sealing with AES-256-GCM"`
+- [ ] **Step 5: Commit**, `git add -A && git commit -m "feat(core): hybrid PQ sealing with AES-256-GCM"`
 
 ### Task 5: Request envelope, replay checks, receipts, attestations
 
@@ -616,7 +616,7 @@ export const buildAttestation = (a: Omit<Attestation, "v" | "sig">, keys: Keys):
 export const verifyAttestation = (a: Attestation, pk: Uint8Array) => checkSig(a, pk);
 ```
 
-- [ ] **Step 6: Run, expect all pass. Commit** — `git add -A && git commit -m "feat(core): sealed request envelope with replay checks; PQ-signed receipts and attestations"`
+- [ ] **Step 6: Run, expect all pass. Commit**, `git add -A && git commit -m "feat(core): sealed request envelope with replay checks; PQ-signed receipts and attestations"`
 
 ### Task 6: Unified vault types and freshness
 
@@ -667,7 +667,7 @@ export function vaultFreshness(sources: Source[]): Freshness {
 }
 ```
 
-- [ ] **Step 4: Run, expect pass. Commit** — `git add -A && git commit -m "feat(core): unified vault types and freshness classification"`
+- [ ] **Step 4: Run, expect pass. Commit**, `git add -A && git commit -m "feat(core): unified vault types and freshness classification"`
 
 ### Task 7: Risk engine
 
@@ -676,7 +676,7 @@ export function vaultFreshness(sources: Source[]): Freshness {
 
 **Interfaces:**
 - Produces: `type Flag = { name: "share_price_drawdown_1h" | "share_price_drawdown_24h" | "share_price_drawdown_7d" | "tvl_outflow_24h" | "deposit_limit_reached" | "stale_data"; value: string; threshold: string; window: string }`; `type Verdict = "ok" | "watch" | "alert" | "unavailable"`; `type RiskReport = { vaultId: string; flags: Flag[]; score: number; verdict: Verdict; evidence: { source: string; block: string; timestamp: string; ageSeconds: string }[] }`; `computeRisk(v: UnifiedVault, nowTs: number): RiskReport`.
-- Rules (spec §5.3): drawdown = (latest − earliest-within-window)/earliest-within-window, negative means drop; thresholds 0.005/0.02/0.05; weights 30/25/20; the 1 h flag only evaluates if a history point at least 1 h and at most 2 h old exists, otherwise skipped; outflow = −(sum of netFlowAssets over 24 h)/current balance where available, else from tvl history; threshold 0.20, weight 25; deposit limit weight 10; score capped 100; `ok` < 20, `watch` 20–49, `alert` ≥ 50; any source not `fresh` → `stale_data` flag and verdict `unavailable`.
+- Rules (spec §5.3): drawdown = (latest - earliest-within-window)/earliest-within-window, negative means drop; thresholds 0.005/0.02/0.05; weights 30/25/20; the 1 h flag only evaluates if a history point at least 1 h and at most 2 h old exists, otherwise skipped; outflow = -(sum of netFlowAssets over 24 h)/current balance where available, else from tvl history; threshold 0.20, weight 25; deposit limit weight 10; score capped 100; `ok` < 20, `watch` 20-49, `alert` ≥ 50; any source not `fresh` → `stale_data` flag and verdict `unavailable`.
 
 - [ ] **Step 1: Failing tests**
 
@@ -770,7 +770,7 @@ export function computeRisk(v: UnifiedVault, nowTs: number): RiskReport {
 }
 ```
 
-- [ ] **Step 4: Run, expect 6 pass. Commit** — `git add -A && git commit -m "feat(core): risk engine with unavailable-on-stale rule"`
+- [ ] **Step 4: Run, expect 6 pass. Commit**, `git add -A && git commit -m "feat(core): risk engine with unavailable-on-stale rule"`
 
 ### Task 8: Pricing
 
@@ -815,7 +815,7 @@ export function hederaScanPriceUsd(count: number): string {
 export const arcBucket = (count: number): "s" | "m" | "l" => (count <= 5 ? "s" : count <= 20 ? "m" : "l");
 ```
 
-- [ ] **Step 3: Run, expect pass. Commit** — `git add -A && git commit -m "feat(core): metered pricing for Hedera and bucketed Arc routes"`
+- [ ] **Step 3: Run, expect pass. Commit**, `git add -A && git commit -m "feat(core): metered pricing for Hedera and bucketed Arc routes"`
 
 ### Task 9: Standardized subgraph layer and deployment verification gate
 
@@ -891,7 +891,7 @@ Put `Deployment` in `packages/core/src/standardized/types.ts` and load JSON in `
 
 - [ ] **Step 4: Failing mapper tests with fixtures**
 
-Create `test/fixtures/yield-vaults.json` with one vault (id `0xabc…`, `pricePerShare: "1.05"`, two hourly snapshots and two daily snapshots) and `_meta`; `lending-markets.json` similarly with `exchangeRate`. Test:
+Create `test/fixtures/yield-vaults.json` with one vault (id `0xabc...`, `pricePerShare: "1.05"`, two hourly snapshots and two daily snapshots) and `_meta`; `lending-markets.json` similarly with `exchangeRate`. Test:
 
 ```ts
 import { expect, test } from "bun:test";
@@ -980,9 +980,9 @@ writeFileSync("packages/core/src/standardized/deployments.json", JSON.stringify(
 console.log(`live: ${out.filter(x => x.status === "live").length} / ${out.length}`);
 ```
 
-Run: `GRAPH_STUDIO_API_KEY=… bun run verify-deployments`. Record the live count in `docs/verification-log.md` with the date. Note: `_meta.deployment` returns the `Qm…` deployment hash; subsequent queries pin it.
+Run: `GRAPH_STUDIO_API_KEY=... bun run verify-deployments`. Record the live count in `docs/verification-log.md` with the date. Note: `_meta.deployment` returns the `Qm...` deployment hash; subsequent queries pin it.
 
-- [ ] **Step 7: Run unit tests (offline), expect pass. Commit** — `git add -A && git commit -m "feat(core): Messari standardized query layer, mappers, deployment verification gate"`
+- [ ] **Step 7: Run unit tests (offline), expect pass. Commit**, `git add -A && git commit -m "feat(core): Messari standardized query layer, mappers, deployment verification gate"`
 
 ### Task 10: Substreams sink reader
 
@@ -1047,9 +1047,9 @@ export async function readErc4626Vaults(q: SqlQuery, chainId: string, vaults: st
 
 The cursor table name and columns come from `substreams-sink-sql` (`cursors` with `id`, `cursor`, `block_num`, `block_id`); confirm after Task 13 with `\d cursors` and adjust the query if the sink version differs.
 
-- [ ] **Step 3: Run, expect pass. Export everything from `packages/core/src/index.ts`. Commit** — `git add -A && git commit -m "feat(core): Substreams sink reader with cursor-based freshness"`
+- [ ] **Step 3: Run, expect pass. Export everything from `packages/core/src/index.ts`. Commit**, `git add -A && git commit -m "feat(core): Substreams sink reader with cursor-based freshness"`
 
-### Task 11: Substreams module — scaffold and `map_vault_events`
+### Task 11: Substreams module, scaffold and `map_vault_events`
 
 **Files:**
 - Create: `substreams/erc4626-vault-metrics/{Cargo.toml,substreams.yaml,build.rs,rust-toolchain.toml,proto/vaultradar/v1/vault.proto,abi/erc4626.json,src/lib.rs,src/pb/mod.rs}`; `docs/one-prompt.md`
@@ -1104,7 +1104,7 @@ modules:
       type: proto:vaultradar.v1.VaultEvents
 ```
 
-`initialBlock`: set to (current Ethereum head − 200000) at the time you run this; for Base use a second manifest `substreams.base.yaml` with `network: base` and `initialBlock` = head − 1200000.
+`initialBlock`: set to (current Ethereum head - 200000) at the time you run this; for Base use a second manifest `substreams.base.yaml` with `network: base` and `initialBlock` = head - 1200000.
 
 `Cargo.toml`:
 
@@ -1168,7 +1168,7 @@ message NewDepositors { repeated string keys = 1; }
 
 - [ ] **Step 4: Generate protobuf bindings**
 
-Run: `substreams protogen substreams.yaml --exclude-paths="sf/substreams,google"` → writes `src/pb/…` including `erc4626.v1` (Pinax) and `vaultradar.v1`. Add `src/pb/mod.rs` as generated. Add `mod abi;` with `pub mod erc4626;` in `src/abi/mod.rs`.
+Run: `substreams protogen substreams.yaml --exclude-paths="sf/substreams,google"` → writes `src/pb/...` including `erc4626.v1` (Pinax) and `vaultradar.v1`. Add `src/pb/mod.rs` as generated. Add `mod abi;` with `pub mod erc4626;` in `src/abi/mod.rs`.
 
 - [ ] **Step 5: `map_vault_events`**
 
@@ -1219,9 +1219,9 @@ substreams run -e mainnet.eth.streamingfast.io:443 substreams.yaml map_vault_eve
 
 Expected: JSON output with events whose `implied_share_price` is near 1.0 for stable vaults. If the Pinax import fails to resolve, download the spkg to `deps/erc4626-v0.1.0.spkg` and reference it by relative path.
 
-- [ ] **Step 7: Commit** — `git add -A && git commit -m "feat(substreams): erc4626-vault-metrics scaffold with map_vault_events composed from Pinax erc4626"`
+- [ ] **Step 7: Commit**, `git add -A && git commit -m "feat(substreams): erc4626-vault-metrics scaffold with map_vault_events composed from Pinax erc4626"`
 
-### Task 12: Substreams module — stores, eth_call refresh, `map_vault_metrics`
+### Task 12: Substreams module, stores, eth_call refresh, `map_vault_metrics`
 
 **Files:**
 - Modify: `substreams/erc4626-vault-metrics/{substreams.yaml,src/lib.rs}`
@@ -1351,9 +1351,9 @@ Compile errors around store trait names are expected on first build: consult `su
 
 `substreams run -e mainnet.eth.streamingfast.io:443 substreams.yaml map_vault_metrics -s <initialBlock> -t +400` → metrics with `share_price_source: "call"` appearing for vaults touched after 300 blocks.
 
-- [ ] **Step 4: Commit** — `git add -A && git commit -m "feat(substreams): vault stores, eth_call share-price refresh, map_vault_metrics"`
+- [ ] **Step 4: Commit**, `git add -A && git commit -m "feat(substreams): vault stores, eth_call share-price refresh, map_vault_metrics"`
 
-### Task 13: Substreams module — SQL sink, Neon, publish
+### Task 13: Substreams module, SQL sink, Neon, publish
 
 **Files:**
 - Create: `substreams/erc4626-vault-metrics/schema.sql`, `substreams/erc4626-vault-metrics/README.md`
@@ -1441,7 +1441,7 @@ Hosted sink (preferred if it works within 30 minutes): on thegraph.market, Hoste
 
 `substreams registry login` (GitHub) then `substreams registry publish ./erc4626-vault-metrics-v0.1.0.spkg`. Record the substreams.dev URL in `substreams/erc4626-vault-metrics/README.md` with: what the package does, module graph, how it composes Pinax `erc4626`, how to sink it, and the `initialBlock` policy.
 
-- [ ] **Step 5: Commit** — `git add -A && git commit -m "feat(substreams): SQL sink, Neon deployment, package published to substreams.dev"`
+- [ ] **Step 5: Commit**, `git add -A && git commit -m "feat(substreams): SQL sink, Neon deployment, package published to substreams.dev"`
 
 ### Task 14: Service skeleton, keys, well-known routes, catalog
 
@@ -1552,7 +1552,7 @@ export function buildAgentCard(c: Config, k: ServiceKeys) {
 
 `app.ts` builds the express app: `app.use(express.json({ limit: "256kb" }))` first, then wellknown, then (Task 16/19) rails when `rails.hedera`/`rails.arc` are true. `main.ts` loads config, keys, `LiveDataProvider` (Task 15), HCS queue (Task 17), and listens.
 
-- [ ] **Step 4: Run, expect pass. Commit** — `git add -A && git commit -m "feat(service): skeleton, seeded keys, signed agent card, UCP and ERC-8004 files, catalog"`
+- [ ] **Step 4: Run, expect pass. Commit**, `git add -A && git commit -m "feat(service): skeleton, seeded keys, signed agent card, UCP and ERC-8004 files, catalog"`
 
 ### Task 15: Scan and table handlers with data provider
 
@@ -1640,7 +1640,7 @@ export function makeScanHandler(d: HandlerDeps) {
 
 - [ ] **Step 3: Implement `data/provider.ts`** with `LiveDataProvider`: `catalog()` from the registry (`status`, count of cached vaults per deployment, refreshed every 5 minutes) plus `erc4626Chains` from `sql ? ["1", "8453"] : []`; `scan(ids)`: group ids by chain; for each chain run `fetchStandardized` over live deployments of that chain (cache results 60 s) and filter by id, plus `readErc4626Vaults(sql, chainId, addresses)`; merge by id preferring the entry with a `fresh` source and concatenating `sources`; `table(protocol, chainId)`: if `protocol === "erc4626"` → `readErc4626Vaults(sql, chainId, null)`, else all vaults from the matching deployments. Chain head: `createPublicClient({ transport: http(rpcUrl) }).getBlock()` → `Number(block.timestamp)`, cached 15 s; on failure use `now` and mark heads as failed so freshness becomes `stale` (pass `headTs = Number.MAX_SAFE_INTEGER` to force stale).
 
-- [ ] **Step 4: Run tests, expect pass. Commit** — `git add -A && git commit -m "feat(service): sealed scan/table handlers, attestations, receipts, live data provider"`
+- [ ] **Step 4: Run tests, expect pass. Commit**, `git add -A && git commit -m "feat(service): sealed scan/table handlers, attestations, receipts, live data provider"`
 
 ### Task 16: Hedera rail via Blocky402, payer capture, hello-x402 client
 
@@ -1707,7 +1707,7 @@ The `price` function receiving `HTTPRequestContext` is confirmed in the type fac
 
 - [ ] **Step 2: Payment tx id after settlement**
 
-Register an after-settle hook for the HCS commitment (Task 17 consumes it): `server.onAfterSettle?.(ctx => …)` if present on `x402ResourceServer` in 2.25.0; otherwise wrap `res.json` in `app.use` before the payment middleware to read the `PAYMENT-RESPONSE` header the middleware sets on the response (`res.getHeader("payment-response")`), decode with `decodePaymentResponseHeader` from `@x402/core/http`, and call `deps.onSettled?.(res.locals.receipt, settled.transaction)`. Implement the `res.json` wrapper path; it needs no hook API.
+Register an after-settle hook for the HCS commitment (Task 17 consumes it): `server.onAfterSettle?.(ctx => ...)` if present on `x402ResourceServer` in 2.25.0; otherwise wrap `res.json` in `app.use` before the payment middleware to read the `PAYMENT-RESPONSE` header the middleware sets on the response (`res.getHeader("payment-response")`), decode with `decodePaymentResponseHeader` from `@x402/core/http`, and call `deps.onSettled?.(res.locals.receipt, settled.transaction)`. Implement the `res.json` wrapper path; it needs no hook API.
 
 - [ ] **Step 3: hello-x402 client script (day-one de-risk)**
 
@@ -1732,7 +1732,7 @@ console.log("opened:", JSON.stringify(open(j.sealed, replySecret)).slice(0, 300)
 
 Prerequisites (spec §12): both accounts associated with `0.0.429274` (`TokenAssociateTransaction` via a tiny `scripts/associate.ts`, or through the Hedera portal), agent account holds testnet USDC from `faucet.circle.com`. Run the service with `HEDERA_*` set, then:
 
-`SERVICE_URL=http://localhost:8787 AGENT_HEDERA_ACCOUNT_ID=0.0.x AGENT_HEDERA_KEY=… bun run packages/service/scripts/hello-x402.ts`
+`SERVICE_URL=http://localhost:8787 AGENT_HEDERA_ACCOUNT_ID=0.0.x AGENT_HEDERA_KEY=... bun run packages/service/scripts/hello-x402.ts`
 
 Expected: `status 200`, a `payment-response` with a Hedera transaction id, `receipt ok: true`. Open HashScan testnet, search the transaction id, confirm the USDC transfer. Paste the HashScan URL into `docs/verification-log.md`.
 
@@ -1740,7 +1740,7 @@ Expected: `status 200`, a `payment-response` with a Hedera transaction id, `rece
 
 `hedera-rail.live.test.ts`: skipped unless `LIVE=1`; spins up the app with real config and `LiveDataProvider`, runs the same flow as the script, asserts 200 and a verified receipt.
 
-- [ ] **Step 5: Commit** — `git add -A && git commit -m "feat(service): Hedera x402 rail via Blocky402 with metered pricing and payer capture; hello-x402 client"`
+- [ ] **Step 5: Commit**, `git add -A && git commit -m "feat(service): Hedera x402 rail via Blocky402 with metered pricing and payer capture; hello-x402 client"`
 
 ### Task 17: HCS commitments and receipt lookup
 
@@ -1749,7 +1749,7 @@ Expected: `status 200`, a `payment-response` with a Hedera transaction id, `rece
 - Modify: `packages/service/src/app.ts`, `packages/service/src/rails/hedera.ts` (call `onSettled`)
 
 **Interfaces:**
-- Produces: `class HcsQueue { constructor(deps: { submit: (message: string) => Promise<{ sequence: string; consensusTimestamp: string }>; topicId: string }); enqueue(receipt: Receipt): void; lookup(receiptHash: string): Promise<LookupResult>; pending(): number }`; `LookupResult = { receipt_hash: string; topicId: string; sequence: string | null; consensus_timestamp: string | null; initial_transaction_id: string | null }`; `makeHederaSubmit(config): (message) => Promise<…>` using `@hashgraph/sdk` `TopicMessageSubmitTransaction`; `mirrorLookup(topicId, receiptHash)` scanning `https://testnet.mirrornode.hedera.com/api/v1/topics/{id}/messages?limit=100&order=desc` and reassembling chunks by `chunk_info.initial_transaction_id`.
+- Produces: `class HcsQueue { constructor(deps: { submit: (message: string) => Promise<{ sequence: string; consensusTimestamp: string }>; topicId: string }); enqueue(receipt: Receipt): void; lookup(receiptHash: string): Promise<LookupResult>; pending(): number }`; `LookupResult = { receipt_hash: string; topicId: string; sequence: string | null; consensus_timestamp: string | null; initial_transaction_id: string | null }`; `makeHederaSubmit(config): (message) => Promise<...>` using `@hashgraph/sdk` `TopicMessageSubmitTransaction`; `mirrorLookup(topicId, receiptHash)` scanning `https://testnet.mirrornode.hedera.com/api/v1/topics/{id}/messages?limit=100&order=desc` and reassembling chunks by `chunk_info.initial_transaction_id`.
 - Message format (spec §5.5): `{ v: 1, receipt_hash, sig: receipt.sig, issued_at }` as canonical JSON (about 4.6 KB → 5 chunks).
 
 - [ ] **Step 1: Failing test with a fake submit**
@@ -1803,7 +1803,7 @@ export function makeHederaSubmit(c: Config): Submit {
 
 Wire: `main.ts` constructs `HcsQueue` only when `HEDERA_HCS_TOPIC_ID` is set; `mountHederaRail(..., { onSettled: (receipt) => hcs.enqueue(receipt) })` and the Arc rail (Task 19) the same. `wellknown.ts` `/v1/receipts/:hash` delegates to `hcs.lookup`; when the in-memory map misses (after a restart) fall back to `mirrorLookup` which pages the mirror node and matches `receipt_hash` inside reassembled messages.
 
-- [ ] **Step 3: Run, expect pass. Commit** — `git add -A && git commit -m "feat(service): HCS commitment queue with retry and receipt lookup"`
+- [ ] **Step 3: Run, expect pass. Commit**, `git add -A && git commit -m "feat(service): HCS commitment queue with retry and receipt lookup"`
 
 ### Task 18: Identity bootstrap (HCS topic, ERC-8004 with on-chain PQ key hash)
 
@@ -1870,7 +1870,7 @@ Hedera EVM notes: the deployer must be an ECDSA account with an EVM alias (the H
 
 `bun -e 'import { readPqHash } from "./packages/service/src/erc8004"; console.log(await readPqHash("296", process.env.ERC8004_HEDERA_AGENT_ID!))'` → prints the pub hash equal to `/.well-known/erc8004.json`'s `pq.pub_hash`. Record both explorer links in `docs/verification-log.md`.
 
-- [ ] **Step 4: Commit** — `git add -A && git commit -m "feat(service): ERC-8004 registration with on-chain PQ key hash; HCS topic bootstrap"`
+- [ ] **Step 4: Commit**, `git add -A && git commit -m "feat(service): ERC-8004 registration with on-chain PQ key hash; HCS topic bootstrap"`
 
 ### Task 19: Arc rail via Circle Gateway (go/no-go by Thursday evening)
 
@@ -1879,7 +1879,7 @@ Hedera EVM notes: the deployer must be an ECDSA account with an EVM alias (the H
 - Modify: `packages/service/src/app.ts`
 
 **Interfaces:**
-- Produces: `mountArcRail(app, deps)` registering `POST /arc/v1/scan/s|m|l` and `POST /arc/v1/table` with `gateway.require(price)`; `arcPayerFromRequest(req) = req.payment?.payer ?? null`; `arcTxIdFromRequest(req) = req.payment?.transaction ?? "gateway-batch"`; the scan handler additionally validates that the bucket matches `X-VR-Count` (`s` 1–5, `m` 6–20, `l` 21–100) and returns 422 `bucket_mismatch` otherwise.
+- Produces: `mountArcRail(app, deps)` registering `POST /arc/v1/scan/s|m|l` and `POST /arc/v1/table` with `gateway.require(price)`; `arcPayerFromRequest(req) = req.payment?.payer ?? null`; `arcTxIdFromRequest(req) = req.payment?.transaction ?? "gateway-batch"`; the scan handler additionally validates that the bucket matches `X-VR-Count` (`s` 1-5, `m` 6-20, `l` 21-100) and returns 422 `bucket_mismatch` otherwise.
 
 - [ ] **Step 1: Rail**
 
@@ -1928,7 +1928,7 @@ Run with `DEPOSIT=2` once (USDC from `faucet.circle.com` on Arc testnet; Arc gas
 
 If this does not succeed by Thursday 2026-09-10 21:00 local after at most two hours of debugging, disable the Arc rail (`rails.arc=false`), drop Arc from the partner picks, and keep the dashboard minimal. Record the decision in `docs/verification-log.md`.
 
-- [ ] **Step 4: Commit** — `git add -A && git commit -m "feat(service): Arc rail via Circle Gateway nanopayments with bucketed pricing; hello-arc client"`
+- [ ] **Step 4: Commit**, `git add -A && git commit -m "feat(service): Arc rail via Circle Gateway nanopayments with bucketed pricing; hello-arc client"`
 
 ### Task 20: Deploy the service
 
@@ -1964,7 +1964,7 @@ curl https://vaultradar.fly.dev/health
 
 Then re-run `hello-x402` and `hello-arc` against the public URL (the registration `agentURI` must point at this URL; if you registered with a different URL, call `setAgentURI` or re-register). The Substreams sinks keep running from your laptop (or a second Fly machine) into Neon.
 
-- [ ] **Step 3: Commit** — `git add -A && git commit -m "chore(service): Dockerfile and Fly deployment"`
+- [ ] **Step 3: Commit**, `git add -A && git commit -m "chore(service): Dockerfile and Fly deployment"`
 
 ### Task 21: Agent client library (discover, quote, pay on both rails, verify, persist)
 
@@ -2057,7 +2057,7 @@ export class VaultRadarClient {
 
 `runs.ts`: `saveRun(dir, run)` writes pretty JSON to `runs/<startedAt ISO with colons replaced>-<id>.json`, returns the path; `listRuns(dir)`.
 
-- [ ] **Step 4: Run tests, expect pass. Commit** — `git add -A && git commit -m "feat(agent): VaultRadar client with discovery verification, sealed paid scans on Hedera and Arc"`
+- [ ] **Step 4: Run tests, expect pass. Commit**, `git add -A && git commit -m "feat(agent): VaultRadar client with discovery verification, sealed paid scans on Hedera and Arc"`
 
 ### Task 22: Policy: rail and tier selection, budget, independent age check, decisions
 
@@ -2086,7 +2086,7 @@ test("age check rejects old attestations regardless of service freshness; decisi
 
 - [ ] **Step 2: Implement** per the interface; `chooseRail` for `"cheapest"` sorts candidate rails by numeric quote, filtering out rails with `health=false`, `quote=null`, or `balance < quote`; for `"hedera"`/`"arc"` returns that rail if usable else falls back to the other with reason `"preferred_rail_unusable"`. `applyAgeCheck` uses `now - Number(a.timestamp) > p.max_age_seconds`. `decide` builds citations from the report's first evidence entry and `receiptHash(result.receipt)`.
 
-- [ ] **Step 3: Run, expect pass. Commit** — `git add -A && git commit -m "feat(agent): policy-driven rail/tier selection, independent age check, decisions with citations"`
+- [ ] **Step 3: Run, expect pass. Commit**, `git add -A && git commit -m "feat(agent): policy-driven rail/tier selection, independent age check, decisions with citations"`
 
 ### Task 23: Claude Agent SDK loop, tools, CLI
 
@@ -2094,7 +2094,7 @@ test("age check rejects old attestations regardless of service freshness; decisi
 - Create: `packages/agent/src/tools.ts`, `packages/agent/src/cli.ts`, `packages/agent/src/balances.ts`
 
 **Interfaces:**
-- Produces: tools exposed to the model via the Claude Agent SDK (`tool()` + `createSdkMcpServer()` from `@anthropic-ai/claude-agent-sdk`): `vaultradar_discover` (no input) → discovery summary; `vaultradar_quote` (`count`) → quotes plus balances plus the policy's rail choice; `vaultradar_scan` (`vaults: string[]`) → runs `chooseTier`/`chooseRail`, pays, verifies, applies the age check, returns `{ decisions, reports, receipt_hash, tx_id, rail, tier, sealed, rejected }` and appends to the run; `vaultradar_table` (`protocol, chainId`); `vaultradar_verify_receipt` (`receipt` JSON). CLI: `bun run agent watch --vaults 1:0x…,1:0x… --policy policy.json [--service URL]` (non-interactive: runs discover → quote → scan → prints decisions and citations, saves run); `bun run agent chat` (interactive loop with the SDK, `/wallets`, `/balance`, `/policy` commands in the Circle starter-kit style).
+- Produces: tools exposed to the model via the Claude Agent SDK (`tool()` + `createSdkMcpServer()` from `@anthropic-ai/claude-agent-sdk`): `vaultradar_discover` (no input) → discovery summary; `vaultradar_quote` (`count`) → quotes plus balances plus the policy's rail choice; `vaultradar_scan` (`vaults: string[]`) → runs `chooseTier`/`chooseRail`, pays, verifies, applies the age check, returns `{ decisions, reports, receipt_hash, tx_id, rail, tier, sealed, rejected }` and appends to the run; `vaultradar_table` (`protocol, chainId`); `vaultradar_verify_receipt` (`receipt` JSON). CLI: `bun run agent watch --vaults 1:0x...,1:0x... --policy policy.json [--service URL]` (non-interactive: runs discover → quote → scan → prints decisions and citations, saves run); `bun run agent chat` (interactive loop with the SDK, `/wallets`, `/balance`, `/policy` commands in the Circle starter-kit style).
 - Env: `ANTHROPIC_API_KEY`, `SERVICE_URL`, `AGENT_HEDERA_ACCOUNT_ID`, `AGENT_HEDERA_KEY`, `AGENT_ARC_KEY`, `POLICY_PATH`.
 - Balances: Hedera USDC via mirror node `GET /api/v1/accounts/{id}/tokens?token.id=0.0.429274`; Arc Gateway balance via `GatewayClient.getGatewayBalance` (name per the installed types; fall back to `getBalances`). Health: `GET /health` on the service plus a HEAD to each facilitator's `/supported` (Blocky402) and Gateway `/v1/x402/supported` (or the equivalent listed in the Circle docs); treat a non-2xx as unhealthy.
 
@@ -2108,7 +2108,7 @@ Follow the Claude Agent SDK docs for custom tools (`tool(name, description, zodS
 
 - [ ] **Step 3: Live check** against the deployed service: `SERVICE_URL=https://vaultradar.fly.dev bun run agent watch --vaults <two live ids> --policy packages/agent/policy.example.json`. Expected: one paid request, decisions printed, run saved. Repeat with `privacy: "strict"` to show a `table` purchase, and with a stale Messari deployment's vault to show `insufficient data`.
 
-- [ ] **Step 4: Commit** — `git add -A && git commit -m "feat(agent): Claude Agent SDK tools, watch and chat CLI"`
+- [ ] **Step 4: Commit**, `git add -A && git commit -m "feat(agent): Claude Agent SDK tools, watch and chat CLI"`
 
 ### Task 24: Dashboard (minimal, satisfies Arc's frontend requirement)
 
@@ -2134,7 +2134,7 @@ After Task 23's live check, copy a sanitized run (remove nothing sensitive; runs
 
 - [ ] **Step 4: Run** `cd packages/dashboard && SERVICE_URL=https://vaultradar.fly.dev bun run dev` → verify `/`, `/runs/<id>`, `/verify` render with live data. Deploy to Vercel (`vercel --prod`) or run locally for the video; record the URL in the README.
 
-- [ ] **Step 5: Commit** — `git add -A && git commit -m "feat(dashboard): catalog, runs with payments per rail and HCS sequences, receipt verifier"`
+- [ ] **Step 5: Commit**, `git add -A && git commit -m "feat(dashboard): catalog, runs with payments per rail and HCS sequences, receipt verifier"`
 
 ### Task 25: README, SKILL.md, demo script, verification log
 
@@ -2160,9 +2160,9 @@ Frontmatter `name: vaultradar`, `description: Buy cross-protocol vault risk data
 
 - [ ] **Step 3: `scripts/demo.sh`**
 
-Sequential: print the card (jq the endpoints and key hashes) → curl unpaid POST to show the 402 header decoded (`base64 -d`) → `bun run agent watch …` on Hedera → `bun run agent watch … --policy strict` (table tier) → `hello-arc` → `curl /v1/receipts/<hash>` showing the HCS sequence → mirror node URL of the topic. Each step echoes a heading. This is the video script.
+Sequential: print the card (jq the endpoints and key hashes) → curl unpaid POST to show the 402 header decoded (`base64 -d`) → `bun run agent watch ...` on Hedera → `bun run agent watch ... --policy strict` (table tier) → `hello-arc` → `curl /v1/receipts/<hash>` showing the HCS sequence → mirror node URL of the topic. Each step echoes a heading. This is the video script.
 
-- [ ] **Step 4: Commit** — `git add -A && git commit -m "docs: README, SKILL.md, demo script, standards leverage, verification log"`
+- [ ] **Step 4: Commit**, `git add -A && git commit -m "docs: README, SKILL.md, demo script, standards leverage, verification log"`
 
 ### Task 26: Video and submission (Saturday 2026-09-12)
 
@@ -2170,22 +2170,22 @@ Sequential: print the card (jq the endpoints and key hashes) → curl unpaid POS
 
 | Time | Segment |
 |---|---|
-| 0:00–0:20 | Problem: agents act on stale, siloed vault data, and buying data leaks the portfolio. |
-| 0:20–1:00 | Standards: one query across Messari deployments (show `verify-deployments` output and a scan spanning three protocols); the ERC-4626 module on substreams.dev running on two chains; 10 s of the one-prompt recording. |
-| 1:00–2:00 | Hedera: `demo.sh` shows the 402 with the metered price, the paid request, HashScan transfer, HCS message with the receipt hash; agent card and on-chain `pq.sig.pubhash`. |
-| 2:00–2:40 | Agent reasoning: decisions with citations; strict policy buys the table tier; stale deployment → insufficient data. |
-| 2:40–3:10 | Arc: `hello-arc` payment, Arcscan link, dashboard showing both rails and the receipt verifier. |
-| 3:10–3:30 | Recap: what is reusable (package, SKILL.md, service), boundary statement, links. |
+| 0:00-0:20 | Problem: agents act on stale, siloed vault data, and buying data leaks the portfolio. |
+| 0:20-1:00 | Standards: one query across Messari deployments (show `verify-deployments` output and a scan spanning three protocols); the ERC-4626 module on substreams.dev running on two chains; 10 s of the one-prompt recording. |
+| 1:00-2:00 | Hedera: `demo.sh` shows the 402 with the metered price, the paid request, HashScan transfer, HCS message with the receipt hash; agent card and on-chain `pq.sig.pubhash`. |
+| 2:00-2:40 | Agent reasoning: decisions with citations; strict policy buys the table tier; stale deployment → insufficient data. |
+| 2:40-3:10 | Arc: `hello-arc` payment, Arcscan link, dashboard showing both rails and the receipt verifier. |
+| 3:10-3:30 | Recap: what is reusable (package, SKILL.md, service), boundary statement, links. |
 
 - [ ] **Step 2: Submission checklist**
 
-Public repo with continuous history; video uploaded (2–4 min); partner picks: The Graph, Hedera, Arc (drop Arc if Task 19 failed); project description pasted from README section 1; live URLs (service, dashboard, substreams.dev package, HashScan and Arcscan transactions, HCS topic); `docs/verification-log.md` complete; ETHGlobal form submitted before 12:00 EDT Sunday; keep a copy of the submission text in `docs/submission.md`.
+Public repo with continuous history; video uploaded (2-4 min); partner picks: The Graph, Hedera, Arc (drop Arc if Task 19 failed); project description pasted from README section 1; live URLs (service, dashboard, substreams.dev package, HashScan and Arcscan transactions, HCS topic); `docs/verification-log.md` complete; ETHGlobal form submitted before 12:00 EDT Sunday; keep a copy of the submission text in `docs/submission.md`.
 
 ---
 
 ## Plan self-review notes
 
-- Spec coverage: §5.1 → Task 9; §5.2 → Tasks 11–13; §5.3 → Tasks 6–7; §5.4 → Tasks 3–5; §5.5 → Tasks 14–19; §5.6 → Tasks 21–23; §5.7 → Task 24; §5.8 (harness PR) → deliberately cut for the compressed window (Global Constraints); §6–§7 → Tasks 15–17; §8 → tests inside each task plus live checks in 16, 19, 23; §9 → Tasks 20, 25, 26; §12 → prerequisites referenced in Tasks 16, 18, 19.
+- Spec coverage: §5.1 → Task 9; §5.2 → Tasks 11-13; §5.3 → Tasks 6-7; §5.4 → Tasks 3-5; §5.5 → Tasks 14-19; §5.6 → Tasks 21-23; §5.7 → Task 24; §5.8 (harness PR) → deliberately cut for the compressed window (Global Constraints); §6-§7 → Tasks 15-17; §8 → tests inside each task plus live checks in 16, 19, 23; §9 → Tasks 20, 25, 26; §12 → prerequisites referenced in Tasks 16, 18, 19.
 - Type names used across tasks: `UnifiedVault`, `Source`, `SourceRef`, `Receipt`, `Attestation`, `Sealed`, `SealedRequest`, `NonceStore`, `RiskReport`, `DataProvider`, `HandlerDeps`, `PaidResult`, `Policy`, `Decision` are each defined once in the task that introduces them and imported by name afterwards.
 - Known uncertainties an implementer must confirm at the marked steps: the Hedera payment payload field name (Task 16), the sink cursor table shape (Tasks 10/13), Messari snapshot field names (Task 9), the `substreams` store trait imports (Task 12), the Circle Gateway balance method name (Task 23).
 
@@ -2202,9 +2202,9 @@ Public repo with continuous history; video uploaded (2–4 min); partner picks: 
 **Interfaces:**
 - Produces: `class Metrics { requests: { scan; table; rejected4xx; unavailableVerdicts; lastRequestAt }; settlements: { hedera: { count; revenueAtomic }; arc: { count; revenueUsd } }; recordRequest(tier, status, verdicts?); recordSettlement(rail, amount); recordDeployment(ref, outcome); recordHead(chainId, head, ok); snapshot(deps): Promise<AdminMetrics> }`; `mountAdmin(app, { config, metrics, hcs, keys, data, readPqHash })` registering `GET /v1/admin/metrics` with the bearer check; the JSON shape from spec §13.1 exactly.
 
-- [ ] **Step 1: Failing tests** — `metrics.test.ts`: counters increment; `snapshot()` produces every field with string numerics and `uptimeSeconds` monotonic; `admin.test.ts`: `GET /v1/admin/metrics` without token → 401 `{ reason: "unauthorized" }`; with token → 200 and a body matching the shape (zod schema in the test); rail health probe uses an injected fetch and reports `healthy: false` on a failed probe without throwing.
-- [ ] **Step 2: Implement** — `Metrics` as a plain class with a `startedAt`; handlers call `metrics.recordRequest`; rails call `metrics.recordSettlement` from their settlement hooks (Hedera: `onAfterSettle` with the requirement's atomic amount; Arc: `req.payment.amount`); `HcsQueue` gains `stats()` `{ pending, submitted, failed, lastSequence }`; `LiveDataProvider` records each deployment's last outcome and each chain head; `mountAdmin` assembles the snapshot with 30 s cached health probes and a 10 min cached identity check via `readPqHash`.
-- [ ] **Step 3: Run tests and typecheck; commit** — `git commit -m "feat(service): admin metrics endpoint with settlement, HCS, freshness and identity status"`
+- [ ] **Step 1: Failing tests**, `metrics.test.ts`: counters increment; `snapshot()` produces every field with string numerics and `uptimeSeconds` monotonic; `admin.test.ts`: `GET /v1/admin/metrics` without token → 401 `{ reason: "unauthorized" }`; with token → 200 and a body matching the shape (zod schema in the test); rail health probe uses an injected fetch and reports `healthy: false` on a failed probe without throwing.
+- [ ] **Step 2: Implement**, `Metrics` as a plain class with a `startedAt`; handlers call `metrics.recordRequest`; rails call `metrics.recordSettlement` from their settlement hooks (Hedera: `onAfterSettle` with the requirement's atomic amount; Arc: `req.payment.amount`); `HcsQueue` gains `stats()` `{ pending, submitted, failed, lastSequence }`; `LiveDataProvider` records each deployment's last outcome and each chain head; `mountAdmin` assembles the snapshot with 30 s cached health probes and a 10 min cached identity check via `readPqHash`.
+- [ ] **Step 3: Run tests and typecheck; commit**, `git commit -m "feat(service): admin metrics endpoint with settlement, HCS, freshness and identity status"`
 
 ### Task 28: Dashboard user view (portfolio) and admin view
 
@@ -2216,11 +2216,11 @@ Public repo with continuous history; video uploaded (2–4 min); partner picks: 
 - Consumes: `VaultRadarClient` from `@vaultradar/agent` (server-side only, inside the API route), `runWatch`-equivalent helpers (`chooseRail`, `chooseTier`, `applyAgeCheck`, `decide`, `saveRun`, `listRuns`), and `GET /v1/admin/metrics` per spec §13.1.
 - Produces: `POST /api/scan` `{ vaults: string[] }` → `{ runId, requests, decisions, txId, receiptHash, priceUsd }` or `{ error }` with 400 (bad input), 429 (rate limit), 503 (agent keys missing). Rate limit: one paid scan per client IP per 30 s (in-memory). Never returns key material.
 
-- [ ] **Step 1: Failing tests** — vault-list parsing and validation (`<chainId>:0x<40 hex>` per line, max 100, dedupe, lowercase); rate limiter; the `/api/scan` route against the in-process service harness (stub provider, raw handlers, `payingFetch: fetch`, injected `readPqHash`) returning decisions and writing a run file; 503 when keys are missing.
-- [ ] **Step 2: Implement `/portfolio`** — textarea plus "Scan now" (disabled while running), results table with colour-coded verdicts, decisions with citations, transaction and receipt links, and a "history" section listing prior runs that include any of the entered vaults (from `listRuns` plus run contents). When `AGENT_HEDERA_KEY` is absent, show a notice and link to the demo run.
-- [ ] **Step 3: Implement `/admin`** — server component fetching the metrics with the bearer token from `ADMIN_TOKEN`; sections per spec §13.1; auto-refresh every 15 s via a small client component; a clear "counters reset on restart" note; 401/unreachable states rendered inline.
-- [ ] **Step 4: Stretch (only if promised items are green and reviewed)** — wallet address input discovering ERC-4626 positions via `balanceOf` multicall over a new free service endpoint `GET /v1/vaults?chainId=` (Task 27 adds it if trivial); otherwise leave the input as vault list only.
-- [ ] **Step 5: Tests, typecheck, `next build`; commit** — `git commit -m "feat(dashboard): portfolio user view with server-side paid scans; admin metrics view"`
+- [ ] **Step 1: Failing tests**, vault-list parsing and validation (`<chainId>:0x<40 hex>` per line, max 100, dedupe, lowercase); rate limiter; the `/api/scan` route against the in-process service harness (stub provider, raw handlers, `payingFetch: fetch`, injected `readPqHash`) returning decisions and writing a run file; 503 when keys are missing.
+- [ ] **Step 2: Implement `/portfolio`**, textarea plus "Scan now" (disabled while running), results table with colour-coded verdicts, decisions with citations, transaction and receipt links, and a "history" section listing prior runs that include any of the entered vaults (from `listRuns` plus run contents). When `AGENT_HEDERA_KEY` is absent, show a notice and link to the demo run.
+- [ ] **Step 3: Implement `/admin`**, server component fetching the metrics with the bearer token from `ADMIN_TOKEN`; sections per spec §13.1; auto-refresh every 15 s via a small client component; a clear "counters reset on restart" note; 401/unreachable states rendered inline.
+- [ ] **Step 4: Stretch (only if promised items are green and reviewed)**, wallet address input discovering ERC-4626 positions via `balanceOf` multicall over a new free service endpoint `GET /v1/vaults?chainId=` (Task 27 adds it if trivial); otherwise leave the input as vault list only.
+- [ ] **Step 5: Tests, typecheck, `next build`; commit**, `git commit -m "feat(dashboard): portfolio user view with server-side paid scans; admin metrics view"`
 
 Ordering: Task 27 runs in the service worktree after Task 19 (Arc rail) so both rails' settlement hooks exist; Task 28's portfolio view and the admin page's static shell can start in the dashboard worktree immediately against the §13.1 contract, with the admin page wired to the live endpoint after Task 27 merges.
 
