@@ -1,4 +1,5 @@
 import type { ReactNode } from "react";
+import { Badge } from "@/components/ui/badge";
 import { VERDICT_MEANING, VERDICT_WORDS, scoreLabel, verdictOf, type Verdict } from "@/lib/verdict";
 
 /**
@@ -7,6 +8,23 @@ import { VERDICT_MEANING, VERDICT_WORDS, scoreLabel, verdictOf, type Verdict } f
  */
 export { verdictOf };
 export type { Verdict };
+
+/** Badge looks per verdict: tinted, so the four words are told apart at a glance. */
+const TONES: Record<string, string> = {
+  ok: "border-ok/40 bg-ok/10 text-ok",
+  watch: "border-warn/40 bg-warn/10 text-warn",
+  alert: "border-destructive/40 bg-destructive/10 text-destructive",
+  unavailable: "border-border bg-secondary text-muted-foreground",
+};
+
+/** Any of this product's states (verdicts, statuses, actions) as a tinted Badge. */
+export function ToneBadge({ tone, children, title }: { tone: string; children: ReactNode; title?: string }) {
+  return (
+    <Badge variant="outline" className={TONES[tone] ?? TONES.unavailable} title={title}>
+      {children}
+    </Badge>
+  );
+}
 
 /**
  * A verdict as a badge.
@@ -18,9 +36,9 @@ export type { Verdict };
 export function VerdictBadge({ verdict, title }: { verdict: Verdict; title?: string }): ReactNode {
   const tone = verdict === "unavailable" ? "unavailable" : verdict;
   return (
-    <span className={`badge ${tone}`} title={title ?? VERDICT_MEANING[verdict]}>
+    <ToneBadge tone={tone} title={title ?? VERDICT_MEANING[verdict]}>
       {VERDICT_WORDS[verdict]}
-    </span>
+    </ToneBadge>
   );
 }
 

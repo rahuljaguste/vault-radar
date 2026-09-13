@@ -1,4 +1,5 @@
 import Link from "next/link";
+import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { DOCS } from "@/lib/docs";
 
 export const metadata = { title: "VaultRadar — documentation" };
@@ -21,18 +22,30 @@ export default function DocsIndex() {
             first anyway, because it is the one thing here a newcomer should look at before the
             spec or the plan. Labelled `walkthrough` rather than given a filename, so the lede's
             claim that every document below is the file itself stays true. */}
-        <Link href="/docs/flow" className="card" style={{ textDecoration: "none" }}>
-          <h3>How one request flows</h3>
-          <p className="faint">
-            Eight steps of the x402 round trip, animated, with the checks each side performs between messages.
-          </p>
-          <p className="faint mono">walkthrough</p>
+        <Link href="/docs/flow" className="no-underline">
+          <Card className="h-full transition-colors hover:border-brand/50">
+            <CardHeader>
+              <CardTitle>How one request flows</CardTitle>
+              <CardDescription>
+                Eight steps of the x402 round trip, animated, with the checks each side performs between messages.
+              </CardDescription>
+            </CardHeader>
+            <CardContent>
+              <p className="faint mono">walkthrough</p>
+            </CardContent>
+          </Card>
         </Link>
         {DOCS.map((d) => (
-          <Link key={d.slug} href={`/docs/${d.slug}`} className="card" style={{ textDecoration: "none" }}>
-            <h3>{d.title}</h3>
-            <p className="faint">{d.summary}</p>
-            <p className="faint mono">{d.file}</p>
+          <Link key={d.slug} href={`/docs/${d.slug}`} className="no-underline">
+            <Card className="h-full transition-colors hover:border-brand/50">
+              <CardHeader>
+                <CardTitle>{d.title}</CardTitle>
+                <CardDescription>{d.summary}</CardDescription>
+              </CardHeader>
+              <CardContent>
+                <p className="faint mono">{d.file}</p>
+              </CardContent>
+            </Card>
           </Link>
         ))}
       </section>

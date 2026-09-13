@@ -1,5 +1,12 @@
 import type { ReactNode } from "react";
-
+import {
+  Table as ShadTable,
+  TableBody,
+  TableCell,
+  TableHead,
+  TableHeader,
+  TableRow,
+} from "@/components/ui/table";
 export type Column<T> = {
   key: string;
   label: string;
@@ -7,9 +14,9 @@ export type Column<T> = {
 };
 
 /**
- * Minimal table shared by every page. No client interactivity, so this can
- * be rendered from server components. Zebra striping and monospace font
- * come from `app/globals.css`.
+ * Minimal table shared by every page, now on shadcn/ui's Table primitives (which bring
+ * their own rounded border, sticky header treatment and mobile scroll container). No
+ * client interactivity, so this renders from server components.
  */
 export function Table<T>({
   columns,
@@ -26,23 +33,25 @@ export function Table<T>({
     return <p className="empty">{empty ?? "Nothing to show."}</p>;
   }
   return (
-    <table>
-      <thead>
-        <tr>
+    <ShadTable>
+      <TableHeader>
+        <TableRow>
           {columns.map((col) => (
-            <th key={col.key}>{col.label}</th>
+            <TableHead key={col.key}>{col.label}</TableHead>
           ))}
-        </tr>
-      </thead>
-      <tbody>
+        </TableRow>
+      </TableHeader>
+      <TableBody>
         {rows.map((row, i) => (
-          <tr key={rowKey(row, i)}>
+          <TableRow key={rowKey(row, i)}>
             {columns.map((col) => (
-              <td key={col.key}>{col.render ? col.render(row) : String((row as Record<string, unknown>)[col.key] ?? "")}</td>
+              <TableCell key={col.key}>
+                {col.render ? col.render(row) : String((row as Record<string, unknown>)[col.key] ?? "")}
+              </TableCell>
             ))}
-          </tr>
+          </TableRow>
         ))}
-      </tbody>
-    </table>
+      </TableBody>
+    </ShadTable>
   );
 }

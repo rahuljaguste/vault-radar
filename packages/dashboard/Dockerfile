@@ -27,11 +27,10 @@ RUN bun install --frozen-lockfile
 
 COPY packages ./packages
 # The /docs pages render these files, so the image has to carry every one the registry
-# names — including the licence, which the README links to. Missing one fails the build at the
-# prerender step rather than 404ing in production, which is how the omission was caught.
+# names. Missing one fails the build at the prerender step rather than 404ing in
+# production, which is how the omission was caught.
 COPY docs ./docs
 COPY README.md ./README.md
-COPY LICENSE ./LICENSE
 
 # The ARG is what makes the note at the top of this file true. Railway passes a service's
 # variables to a Dockerfile build only when the Dockerfile declares them, and without this

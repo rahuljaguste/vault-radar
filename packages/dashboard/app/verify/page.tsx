@@ -2,6 +2,9 @@
 
 import { Buffer as PolyfillBuffer } from "buffer";
 import { useState } from "react";
+import { Button } from "@/components/ui/button";
+import { Textarea } from "@/components/ui/textarea";
+import { Alert, AlertDescription } from "@/components/ui/alert";
 import { matchesIdentityPin, verifyReceipt, receiptHash, checkSig, fromB64, sha256Hex, type IdentityPin } from "@vaultradar/core";
 import type { Receipt, Sig } from "@vaultradar/core";
 import { checkAnchor, type AnchorState } from "@/lib/onchain";
@@ -204,25 +207,35 @@ export default function VerifyPage() {
 
       <section className="stack">
         <div className="row">
-          <button onClick={loadExample} disabled={loadingExample}>
+          <Button variant="outline" size="sm" onClick={loadExample} disabled={loadingExample}>
             {loadingExample ? "Loading…" : "Load an example receipt"}
-          </button>
+          </Button>
           <span className="faint">a real settled scan, 0.0015 USDC</span>
         </div>
-        {exampleError && <p className="error">{exampleError}</p>}
-        <textarea
+        {exampleError && (
+          <Alert variant="destructive">
+            <AlertDescription>{exampleError}</AlertDescription>
+          </Alert>
+        )}
+        <Textarea
           value={text}
           onChange={(e) => setText(e.target.value)}
           rows={14}
+          spellCheck={false}
           placeholder='{"v":1,"service":{"erc8004":[...]},"request_hash":"...","...":"..."}'
+          className="font-mono text-xs"
         />
         <div className="row">
-          <button onClick={onVerify} disabled={text.trim().length === 0 || result.status === "checking"}>
+          <Button onClick={onVerify} disabled={text.trim().length === 0 || result.status === "checking"}>
             Verify
-          </button>
+          </Button>
         </div>
-        {result.status === "checking" && <p>Checking&hellip;</p>}
-        {result.status === "error" && <p className="error">{result.message}</p>}
+        {result.status === "checking" && <p className="muted">Checking&hellip;</p>}
+        {result.status === "error" && (
+          <Alert variant="destructive">
+            <AlertDescription>{result.message}</AlertDescription>
+          </Alert>
+        )}
         {result.status === "done" && <Verdict result={result} />}
       </section>
 

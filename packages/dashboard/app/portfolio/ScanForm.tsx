@@ -2,6 +2,11 @@
 
 import { useCallback, useState } from "react";
 import Link from "next/link";
+import { Button } from "@/components/ui/button";
+import { Textarea } from "@/components/ui/textarea";
+import { Label } from "@/components/ui/label";
+import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
+import { Table } from "@/app/components/Table";
 import { explorerTxUrl, type Rail } from "@/lib/explorer";
 import { EXAMPLE_VAULT_ID, MAX_VAULTS, parseVaultList } from "@/lib/vaults";
 import type { RunMatch, RunRecord } from "@/lib/types";
@@ -86,72 +91,76 @@ export function ScanForm({ keysConfigured, demoRunId }: { keysConfigured: boolea
 
   return (
     <>
-      <section>
-        <h2>Your vaults</h2>
-        <label htmlFor="vaults">
-          One vault per line, as <code>&lt;chainId&gt;:0x&lt;40 hex address&gt;</code>. Up to {MAX_VAULTS} per scan.
-        </label>
-        <textarea
-          id="vaults"
-          rows={6}
-          spellCheck={false}
-          // One real example, which the service resolves. The second line used to be
-          // `8453:0x000…000` — an address that exists nowhere, on a chain the service
-          // currently returns no vaults for at all, so following the example failed twice.
-          placeholder={EXAMPLE_VAULT_ID}
-          value={text}
-          onChange={(e) => setText(e.target.value)}
-          disabled={running}
-        />
-        <p aria-live="polite" className={!empty && !parsed.ok ? "error" : "muted"}>
-          {empty
-            ? "Paste a vault list to begin."
-            : parsed.ok
-              ? `${parsed.vaults.length} vault${parsed.vaults.length === 1 ? "" : "s"} ready.`
-              : parsed.error}
-        </p>
+      <section className="stack">
+        <div className="stack tight">
+          <Label htmlFor="vaults">
+            One vault per line, as <code>&lt;chainId&gt;:0x&lt;40 hex address&gt;</code>. Up to {MAX_VAULTS} per scan.
+          </Label>
+          <Textarea
+            id="vaults"
+            rows={6}
+            spellCheck={false}
+            // One real example, which the service resolves. The second line used to be
+            // `8453:0x000…000` — an address that exists nowhere, on a chain the service
+            // currently returns no vaults for at all, so following the example failed twice.
+            placeholder={EXAMPLE_VAULT_ID}
+            value={text}
+            onChange={(e) => setText(e.target.value)}
+            disabled={running}
+            className="font-mono text-xs"
+          />
+          <p aria-live="polite" className={`text-sm ${!empty && !parsed.ok ? "error" : "muted"}`}>
+            {empty
+              ? "Paste a vault list to begin."
+              : parsed.ok
+                ? `${parsed.vaults.length} vault${parsed.vaults.length === 1 ? "" : "s"} ready.`
+                : parsed.error}
+          </p>
+        </div>
 
         {/* What the buttons do comes before the buttons. It used to sit underneath them, so a
             visitor met "Scan now" with no statement of what it costs or who pays until after
             they had read past it — and when the keys are missing, the reason both buttons are
             disabled arrived last instead of first. */}
         {keysConfigured ? (
-          <p className="muted">
+          <p className="muted text-sm">
             &ldquo;Scan now&rdquo; buys a real x402 request. The payer is the operator&apos;s agent account, not your
             wallet. One purchase is capped by the agent&apos;s policy budget and a per-scan ceiling; across everyone, a
             rolling daily spend cap and an hourly scan allowance apply as well (see above). One scan per 30 seconds per
             client on top of that.
           </p>
         ) : (
-          <div className="card">
-            <p className="error">Paid scans are unavailable: this dashboard has no agent payment keys.</p>
-            <p className="muted">
-              Set <code>AGENT_HEDERA_ACCOUNT_ID</code> and <code>AGENT_HEDERA_KEY</code> in the dashboard&apos;s
-              environment to enable purchases. The keys are read server-side only and never reach the browser.
+          <Alert>
+            <AlertTitle>Paid scans are unavailable</AlertTitle>
+            <AlertDescription>
+              This dashboard has no agent payment keys. Set <code>AGENT_HEDERA_ACCOUNT_ID</code> and{" "}
+              <code>AGENT_HEDERA_KEY</code> in the dashboard&apos;s environment to enable purchases. The keys are read
+              server-side only and never reach the browser.
               {demoRunId && (
                 <>
                   {" "}
-                  In the meantime, <Link href={`/runs/${encodeURIComponent(demoRunId)}`}>open a finished run</Link> to see
-                  the same verdicts, decisions and receipts a purchase produces.
+                  In the meantime, <Link href={`/runs/${encodeURIComponent(demoRunId)}`}>open a finished run</Link> to
+                  see the same verdicts, decisions and receipts a purchase produces.
                 </>
               )}
-            </p>
-          </div>
+            </AlertDescription>
+          </Alert>
         )}
 
-        <p className="toolbar">
-          <button type="button" onClick={onScan} disabled={running || !parsed.ok || !keysConfigured}>
+        <div className="toolbar">
+          <Button type="button" onClick={onScan} disabled={running || !parsed.ok || !keysConfigured}>
             {busy === "scanning" ? "Paying and scanning..." : "Scan now"}
-          </button>
-          <button type="button" onClick={onShowHistory} disabled={running || !parsed.ok}>
+          </Button>
+          <Button type="button" variant="outline" onClick={onShowHistory} disabled={running || !parsed.ok}>
             {busy === "history" ? "Loading..." : "Show history (free)"}
-          </button>
-        </p>
+          </Button>
+        </div>
 
         {error && (
-          <div className="card">
-            <p className="error">{error}</p>
-          </div>
+          <Alert variant="destructive">
+            <AlertTitle>The scan failed</AlertTitle>
+            <AlertDescription>{error}</AlertDescription>
+          </Alert>
         )}
       </section>
 
@@ -177,7 +186,7 @@ function Result({ result }: { result: ScanResponse }) {
             <Link href={`/runs/${encodeURIComponent(result.runId)}`}>{result.runId}</Link>
           </dd>
           <dt>Price</dt>
-          <dd>{result.priceUsd ? `${result.priceUsd} USD` : "-"}</dd>
+          <dd className="num">{result.priceUsd ? `${result.priceUsd} USD` : "-"}</dd>
           <dt>Payment</dt>
           <dd>
             {result.txId ? (
@@ -194,8 +203,7 @@ function Result({ result }: { result: ScanResponse }) {
           </dd>
           <dt>Receipt hash</dt>
           <dd>
-            <code>{result.receiptHash}</code>{" "}
-            <Link href="/verify">verify it</Link>
+            <code>{result.receiptHash}</code> <Link href="/verify">verify it</Link>
           </dd>
         </dl>
       </section>
@@ -203,46 +211,53 @@ function Result({ result }: { result: ScanResponse }) {
       {result.requests.map((req, i) => (
         <section key={`${req.receiptHash}-${i}`}>
           <h2>
-            Verdicts <span className="muted">({req.rail} rail, {req.tier} tier, {req.sealed ? "sealed" : "clear"})</span>
+            Verdicts <span className="muted text-sm">({req.rail} rail, {req.tier} tier, {req.sealed ? "sealed" : "clear"})</span>
           </h2>
           {req.verdicts.length === 0 ? (
             <p className="empty">The service returned no verdicts for this request.</p>
           ) : (
-            <table>
-              <thead>
-                <tr>
-                  <th>Vault</th>
-                  <th>Verdict</th>
-                  <th>Score</th>
-                  <th>Flags</th>
-                </tr>
-              </thead>
-              <tbody>
-                {req.verdicts.map((v) => (
-                  <tr key={v.vaultId}>
-                    <td>
-                      <code>{v.vaultId}</code>
-                    </td>
-                    <td className={verdictTone(v.verdict)}>{v.verdict}</td>
-                    <td>{String(v.score)}</td>
-                    <td>
-                      {v.flags.length === 0 ? (
-                        <span className="muted">none</span>
-                      ) : (
-                        v.flags.map((f) => (
-                          <span className="pill" key={f.name}>
-                            {f.name} {f.value} vs {f.threshold} over {f.window}
-                          </span>
-                        ))
-                      )}
-                    </td>
-                  </tr>
-                ))}
-              </tbody>
-            </table>
+            <Table
+              columns={[
+                {
+                  key: "vaultId",
+                  label: "Vault",
+                  render: (v: RunRecord["requests"][number]["verdicts"][number]) => <code>{v.vaultId}</code>,
+                },
+                {
+                  key: "verdict",
+                  label: "Verdict",
+                  render: (v: RunRecord["requests"][number]["verdicts"][number]) => (
+                    <span className={verdictTone(v.verdict)}>{v.verdict}</span>
+                  ),
+                },
+                {
+                  key: "score",
+                  label: "Score",
+                  render: (v: RunRecord["requests"][number]["verdicts"][number]) => (
+                    <span className="num">{String(v.score)}</span>
+                  ),
+                },
+                {
+                  key: "flags",
+                  label: "Flags",
+                  render: (v: RunRecord["requests"][number]["verdicts"][number]) =>
+                    v.flags.length === 0 ? (
+                      <span className="muted">none</span>
+                    ) : (
+                      v.flags.map((f) => (
+                        <span className="pill" key={f.name}>
+                          {f.name} {f.value} vs {f.threshold} over {f.window}
+                        </span>
+                      ))
+                    ),
+                },
+              ]}
+              rows={req.verdicts}
+              rowKey={(v) => v.vaultId}
+            />
           )}
           {req.rejected.length > 0 && (
-            <p className="warn">
+            <p className="warn text-sm">
               Rejected as too old by the agent&apos;s own max-age check:{" "}
               {req.rejected.map((r) => `${r.vaultId} (${r.ageSeconds}s)`).join(", ")}
             </p>
@@ -255,26 +270,26 @@ function Result({ result }: { result: ScanResponse }) {
         {result.decisions.length === 0 ? (
           <p className="empty">No decisions were reached.</p>
         ) : (
-          <table>
-            <thead>
-              <tr>
-                <th>Vault</th>
-                <th>Action</th>
-                <th>Reason</th>
-                <th>Evidence</th>
-              </tr>
-            </thead>
-            <tbody>
-              {result.decisions.map((d) => {
-                const citedUrl = rail && d.citations.txId ? explorerTxUrl(rail as Rail, d.citations.txId) : null;
-                return (
-                  <tr key={d.vaultId}>
-                    <td>
-                      <code>{d.vaultId}</code>
-                    </td>
-                    <td className={actionTone(d.action)}>{d.action}</td>
-                    <td>{d.reason}</td>
-                    <td>
+          <Table
+            columns={[
+              {
+                key: "vaultId",
+                label: "Vault",
+                render: (d: RunRecord["decisions"][number]) => <code>{d.vaultId}</code>,
+              },
+              {
+                key: "action",
+                label: "Action",
+                render: (d: RunRecord["decisions"][number]) => <span className={actionTone(d.action)}>{d.action}</span>,
+              },
+              { key: "reason", label: "Reason", render: (d: RunRecord["decisions"][number]) => d.reason },
+              {
+                key: "evidence",
+                label: "Evidence",
+                render: (d: RunRecord["decisions"][number]) => {
+                  const citedUrl = rail && d.citations.txId ? explorerTxUrl(rail as Rail, d.citations.txId) : null;
+                  return (
+                    <span className="text-sm">
                       block <code>{d.citations.block || "-"}</code>
                       <br />
                       source <code>{d.citations.source || "-"}</code>
@@ -293,12 +308,14 @@ function Result({ result }: { result: ScanResponse }) {
                           )}
                         </>
                       )}
-                    </td>
-                  </tr>
-                );
-              })}
-            </tbody>
-          </table>
+                    </span>
+                  );
+                },
+              },
+            ]}
+            rows={result.decisions}
+            rowKey={(d) => d.vaultId}
+          />
         )}
       </section>
     </>
@@ -314,54 +331,51 @@ function History({ matches, error }: { matches: RunMatch[]; error: string | null
       {error && <p className="error">{error}</p>}
       {!error && matches.length === 0 && <p className="empty">No earlier run covered any of these vaults.</p>}
       {matches.length > 0 && (
-        <table>
-          <thead>
-            <tr>
-              <th>Run</th>
-              <th>Started at</th>
-              <th>Matched vaults</th>
-              <th>Verdicts</th>
-              <th>Actions</th>
-            </tr>
-          </thead>
-          <tbody>
-            {matches.map((m) => (
-              <tr key={m.id}>
-                <td>
-                  <Link href={`/runs/${encodeURIComponent(m.id)}`}>{m.id}</Link>
-                </td>
-                <td>{m.startedAt}</td>
-                <td>
-                  {m.matched.map((v) => (
-                    <code key={v}>{v}</code>
-                  ))}
-                </td>
-                <td>
-                  {m.verdicts.length === 0 ? (
-                    <span className="muted">-</span>
-                  ) : (
-                    m.verdicts.map((v) => (
-                      <span className="pill" key={`${v.vaultId}-${v.verdict}`}>
-                        <span className={verdictTone(v.verdict)}>{v.verdict}</span> {String(v.score)}
-                      </span>
-                    ))
-                  )}
-                </td>
-                <td>
-                  {m.actions.length === 0 ? (
-                    <span className="muted">-</span>
-                  ) : (
-                    m.actions.map((a) => (
-                      <span className="pill" key={`${a.vaultId}-${a.action}`}>
-                        <span className={actionTone(a.action)}>{a.action}</span>
-                      </span>
-                    ))
-                  )}
-                </td>
-              </tr>
-            ))}
-          </tbody>
-        </table>
+        <Table
+          columns={[
+            {
+              key: "id",
+              label: "Run",
+              render: (m: RunMatch) => <Link href={`/runs/${encodeURIComponent(m.id)}`}>{m.id}</Link>,
+            },
+            { key: "startedAt", label: "Started at", render: (m: RunMatch) => <span className="num">{m.startedAt}</span> },
+            {
+              key: "matched",
+              label: "Matched vaults",
+              render: (m: RunMatch) => m.matched.map((v) => <code key={v}>{v}</code>),
+            },
+            {
+              key: "verdicts",
+              label: "Verdicts",
+              render: (m: RunMatch) =>
+                m.verdicts.length === 0 ? (
+                  <span className="muted">-</span>
+                ) : (
+                  m.verdicts.map((v) => (
+                    <span className="pill" key={`${v.vaultId}-${v.verdict}`}>
+                      <span className={verdictTone(v.verdict)}>{v.verdict}</span> {String(v.score)}
+                    </span>
+                  ))
+                ),
+            },
+            {
+              key: "actions",
+              label: "Actions",
+              render: (m: RunMatch) =>
+                m.actions.length === 0 ? (
+                  <span className="muted">-</span>
+                ) : (
+                  m.actions.map((a) => (
+                    <span className="pill" key={`${a.vaultId}-${a.action}`}>
+                      <span className={actionTone(a.action)}>{a.action}</span>
+                    </span>
+                  ))
+                ),
+            },
+          ]}
+          rows={matches}
+          rowKey={(m) => m.id}
+        />
       )}
     </section>
   );

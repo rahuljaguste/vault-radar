@@ -1,9 +1,11 @@
 import { notFound } from "next/navigation";
+import { Badge } from "@/components/ui/badge";
+import { Card, CardContent } from "@/components/ui/card";
 import { getRun } from "@/lib/runs";
 import { fetchReceiptLookup, type ReceiptLookup } from "@/lib/service";
 import { explorerTxUrl } from "@/lib/explorer";
 import { Id } from "@/app/components/Id";
-import { ScoreBar, VerdictBadge } from "@/app/components/Verdict";
+import { ScoreBar, ToneBadge, VerdictBadge } from "@/app/components/Verdict";
 import { Sparkline } from "@/app/components/Sparkline";
 import { flagPercent, flagLabel } from "@/lib/flags";
 import type { RunRecord } from "@/lib/types";
@@ -38,15 +40,16 @@ export default async function RunPage({ params }: { params: Promise<{ id: string
           <span className="pill">started {run.startedAt}</span>
           <span className="pill">policy {run.policy.privacy}</span>
           <span className="pill">max age {run.policy.max_age_seconds}s</span>
-          {alerts > 0 && <span className="badge alert">{alerts} alert</span>}
-          {watching > 0 && <span className="badge watch">{watching} watch</span>}
-          {unavailable > 0 && <span className="badge unavailable">{unavailable} no data</span>}
-          {alerts + watching + unavailable === 0 && <span className="badge ok">all clear</span>}
+          {alerts > 0 && <ToneBadge tone="alert">{alerts} alert</ToneBadge>}
+          {watching > 0 && <ToneBadge tone="watch">{watching} watch</ToneBadge>}
+          {unavailable > 0 && <ToneBadge tone="unavailable">{unavailable} no data</ToneBadge>}
+          {alerts + watching + unavailable === 0 && <ToneBadge tone="ok">all clear</ToneBadge>}
         </div>
       </section>
 
-      <section className="card">
-        <h3>Discovery</h3>
+      <Card>
+        <CardContent className="pt-6">
+        <h3 className="mb-3">Discovery</h3>
         <dl className="kv">
           <dt>Service</dt>
           <dd>
@@ -68,14 +71,18 @@ export default async function RunPage({ params }: { params: Promise<{ id: string
               <span className="error">no identity checked</span>
             ) : (
               run.discovery.onChain.map((o) => (
-                <span className={`badge ${o.matches === true ? "ok" : o.matches === false ? "alert" : "unavailable"}`} key={o.chainId}>
+                <ToneBadge
+                  key={o.chainId}
+                  tone={o.matches === true ? "ok" : o.matches === false ? "alert" : "unavailable"}
+                >
                   {o.chainId}:{o.agentId} {o.matches === null ? "unread" : o.matches ? "matches" : "MISMATCH"}
-                </span>
+                </ToneBadge>
               ))
             )}
           </dd>
         </dl>
-      </section>
+        </CardContent>
+      </Card>
 
       {run.requests.map((req, i) => (
         <RequestSection key={req.receiptHash} req={req} lookup={lookups[i] ?? null} />
@@ -100,6 +107,14 @@ function actionTone(action: string): "ok" | "watch" | "alert" | "unavailable" {
   if (action === "insufficient data") return "unavailable";
   return "ok";
 }
+
+/** The left-stripe colour that goes with each verdict/action tone, for the cards below. */
+const DECISION_BORDER: Record<string, string> = {
+  alert: "border-l-destructive",
+  watch: "border-l-warn",
+  ok: "border-l-ok",
+  unavailable: "border-l-absent",
+};
 
 /** Look up which rail a cited receipt was paid on, to pick the right explorer link. Defaults to hedera if not found. */
 function railForReceipt(run: RunRecord, receiptHash: string): "hedera" | "arc" {
@@ -163,10 +178,10 @@ function DecisionGrid({ decisions, run }: { decisions: RunRecord["decisions"]; r
   const folded = holds.slice(shown.length);
 
   const card = (d: RunRecord["decisions"][number], i: number) => (
-    <div className={`card verdict ${actionTone(d.action)}`} key={`${d.vaultId}-${i}`}>
+    <Card key={`${d.vaultId}-${i}`} className={`gap-2 border-l-2 p-4 ${DECISION_BORDER[actionTone(d.action)]}`}>
       <div className="row between">
         <Id value={d.vaultId} head={10} tail={4} />
-        <span className={`badge ${actionTone(d.action)}`}>{d.action}</span>
+        <ToneBadge tone={actionTone(d.action)}>{d.action}</ToneBadge>
       </div>
       <p>{d.reason}</p>
       <p className="faint">
@@ -181,7 +196,7 @@ function DecisionGrid({ decisions, run }: { decisions: RunRecord["decisions"]; r
       <p className="faint">
         receipt <Id value={d.citations.receiptHash} />
       </p>
-    </div>
+    </Card>
   );
 
   return (
@@ -210,10 +225,11 @@ function RequestSection({ req, lookup }: { req: RequestRecord; lookup: ReceiptLo
           {req.rail} / {req.tier}
           {req.sealed && <span className="pill">sealed</span>}
         </h3>
-        <span className="badge neutral">{req.priceUsd ?? "n/a"} USD</span>
+        <Badge variant="secondary" className="num">{req.priceUsd ?? "n/a"} USD</Badge>
       </div>
 
-      <div className="card">
+      <Card>
+        <CardContent className="py-4">
         <dl className="kv">
           <dt>Payment</dt>
           <dd>{req.txId ? <Id value={req.txId} href={explorerTxUrl(req.rail, req.txId)} head={16} tail={6} /> : "n/a"}</dd>
@@ -237,7 +253,8 @@ function RequestSection({ req, lookup }: { req: RequestRecord; lookup: ReceiptLo
             )}
           </dd>
         </dl>
-      </div>
+        </CardContent>
+      </Card>
 
       {req.verdicts.length === 0 ? (
         <p className="empty">
@@ -280,7 +297,7 @@ function VerdictCard({ v }: { v: VerdictRow }) {
   const showChart = v.history !== undefined && v.history.length > 1;
 
   return (
-    <div className={`card verdict ${v.verdict}`}>
+    <Card className={`gap-2 border-l-2 p-4 ${DECISION_BORDER[v.verdict]}`}>
       <div className="row between">
         <Id value={v.vaultId} head={10} tail={4} />
         <VerdictBadge verdict={v.verdict} />
@@ -305,7 +322,7 @@ function VerdictCard({ v }: { v: VerdictRow }) {
         <ul className="stack tight" style={{ listStyle: "none", margin: 0, padding: 0 }}>
           {v.flags.map((f) => (
             <li key={f.name} className="row" style={{ gap: "0.5rem" }}>
-              <span className={`badge ${v.verdict === "alert" ? "alert" : "watch"}`}>{f.window}</span>
+              <ToneBadge tone={v.verdict === "alert" ? "alert" : "watch"}>{f.window}</ToneBadge>
               <span>
                 <strong>{flagLabel(f.name)}</strong> {flagPercent(f.value).toFixed(1)}%{" "}
                 <span className="faint">(threshold {flagPercent(f.threshold).toFixed(1)}%)</span>
@@ -314,6 +331,6 @@ function VerdictCard({ v }: { v: VerdictRow }) {
           ))}
         </ul>
       )}
-    </div>
+    </Card>
   );
 }

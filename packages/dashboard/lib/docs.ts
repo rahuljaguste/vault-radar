@@ -62,12 +62,6 @@ export const DOCS: Doc[] = [
     file: "docs/ai-workflow/direction.md",
   },
   {
-    slug: "license",
-    title: "License",
-    summary: "MIT.",
-    file: "LICENSE",
-  },
-  {
     slug: "spec",
     title: "Design spec",
     summary: "The binding specification the implementation was held to.",

@@ -1,4 +1,5 @@
 import Link from "next/link";
+import { Button } from "@/components/ui/button";
 import { PaymentFlow, type Step } from "@/app/components/PaymentFlow";
 
 export const metadata = { title: "VaultRadar — how a request flows" };
@@ -71,15 +72,15 @@ export default function FlowPage() {
           to stop the animation there.
         </p>
         <div className="row">
-          <Link className="cta" href="/docs">
-            All documentation
-          </Link>
-          <Link className="cta" href="/runs/demo-run-1">
-            See a real run
-          </Link>
-          <Link className="cta" href="/verify">
-            Verify a receipt
-          </Link>
+          <Button asChild variant="outline" size="sm">
+            <Link href="/docs">All documentation</Link>
+          </Button>
+          <Button asChild variant="ghost" size="sm">
+            <Link href="/runs/demo-run-1">See a real run</Link>
+          </Button>
+          <Button asChild variant="ghost" size="sm">
+            <Link href="/verify">Verify a receipt</Link>
+          </Button>
         </div>
       </section>
 

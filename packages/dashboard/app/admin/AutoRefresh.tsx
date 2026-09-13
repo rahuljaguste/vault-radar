@@ -2,6 +2,7 @@
 
 import { useEffect, useState } from "react";
 import { useRouter } from "next/navigation";
+import { Button } from "@/components/ui/button";
 
 /**
  * Re-renders the `/admin` server component on an interval via
@@ -28,23 +29,25 @@ export function AutoRefresh({ intervalMs = 15_000 }: { intervalMs?: number }) {
   }, [paused, intervalMs, router]);
 
   return (
-    <p className="toolbar">
-      <span className={paused ? "muted" : "ok"}>
+    <div className="toolbar">
+      <span className={`text-sm ${paused ? "muted" : "ok"}`}>
         {paused ? "auto-refresh paused" : `auto-refreshing every ${Math.round(intervalMs / 1000)}s`}
       </span>
-      <button type="button" onClick={() => setPaused((p) => !p)}>
+      <Button type="button" variant="outline" size="sm" onClick={() => setPaused((p) => !p)}>
         {paused ? "resume" : "pause"}
-      </button>
-      <button
+      </Button>
+      <Button
         type="button"
+        variant="outline"
+        size="sm"
         onClick={() => {
           router.refresh();
           setLastRefresh(new Date().toLocaleTimeString());
         }}
       >
         refresh now
-      </button>
-      {lastRefresh && <span className="muted">last refresh {lastRefresh}</span>}
-    </p>
+      </Button>
+      {lastRefresh && <span className="muted text-sm">last refresh {lastRefresh}</span>}
+    </div>
   );
 }

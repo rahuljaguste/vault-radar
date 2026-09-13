@@ -1,5 +1,8 @@
 import Link from "next/link";
+import { Button } from "@/components/ui/button";
+import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Table } from "./components/Table";
+import { ToneBadge } from "./components/Verdict";
 import { Id } from "./components/Id";
 import { fetchCard, fetchCatalog, type AgentCard, type CatalogEntry } from "@/lib/service";
 import { listRuns, type RunSummary } from "@/lib/runs";
@@ -27,18 +30,18 @@ export default async function HomePage() {
           service&rsquo;s signing key is pinned on chain so a forged agent card cannot pass itself off as this one.
         </p>
         <div className="row">
-          <Link className="cta primary" href="/portfolio">
-            Scan a portfolio
-          </Link>
-          <Link className="cta" href="/verify">
-            Verify a receipt
-          </Link>
-          <Link className="cta" href="/docs/flow">
-            How a request flows
-          </Link>
-          <Link className="cta" href="/admin">
-            Operator metrics
-          </Link>
+          <Button asChild>
+            <Link href="/portfolio">Scan a portfolio</Link>
+          </Button>
+          <Button asChild variant="outline">
+            <Link href="/verify">Verify a receipt</Link>
+          </Button>
+          <Button asChild variant="ghost">
+            <Link href="/docs/flow">How a request flows</Link>
+          </Button>
+          <Button asChild variant="ghost">
+            <Link href="/admin">Operator metrics</Link>
+          </Button>
         </div>
       </section>
 
@@ -60,137 +63,144 @@ export default async function HomePage() {
         </div>
       </section>
 
-      <section className="stack">
-        <div className="row between">
-          <h3>Service</h3>
-          <span className="faint">
-            {byStatus("live")} live · {byStatus("stale")} stale · {byStatus("down")} down of {catalog?.protocols.length ?? 0} registrations
-          </span>
-        </div>
-        {card ? <CardSummary card={card} /> : <p className="error">Service unreachable — could not load /.well-known/agent.json.</p>}
-      </section>
+      <Card>
+        <CardHeader>
+          <CardTitle>Service</CardTitle>
+          <CardDescription>
+            {byStatus("live")} live · {byStatus("stale")} stale · {byStatus("down")} down of{" "}
+            {catalog?.protocols.length ?? 0} registrations
+          </CardDescription>
+        </CardHeader>
+        <CardContent>
+          {card ? <CardSummary card={card} /> : <p className="error">Service unreachable — could not load /.well-known/agent.json.</p>}
+        </CardContent>
+      </Card>
 
-      <section className="stack">
-        <h3>Catalog</h3>
-        {catalog ? (
-          <Table<CatalogEntry>
+      <Card>
+        <CardHeader>
+          <CardTitle>Catalog</CardTitle>
+        </CardHeader>
+        <CardContent>
+          {catalog ? (
+            <Table<CatalogEntry>
+              columns={[
+                { key: "protocol", label: "Protocol" },
+                { key: "chain", label: "Chain" },
+                {
+                  key: "status",
+                  label: "Status",
+                  render: (row) => (
+                    <ToneBadge tone={row.status === "live" ? "ok" : row.status === "down" ? "alert" : "unavailable"}>
+                      {row.status}
+                    </ToneBadge>
+                  ),
+                },
+                // No `vaultCount` column: see the note at the top of this component. It is
+                // zero except for the minute after a scan warms that chain's cache, so a
+                // "Vaults" column here is a column of zeroes that libels the index.
+              ]}
+              rows={catalog.protocols}
+              rowKey={(row, i) => `${row.protocol}-${row.chain}-${i}`}
+              empty="No protocols in the catalog."
+            />
+          ) : (
+            <p className="error">Service unreachable — could not load /v1/catalog.</p>
+          )}
+        </CardContent>
+      </Card>
+
+      <Card>
+        <CardHeader>
+          <CardTitle>Runs</CardTitle>
+        </CardHeader>
+        <CardContent>
+          <Table<RunSummary>
             columns={[
-              { key: "protocol", label: "Protocol" },
-              { key: "chain", label: "Chain" },
               {
-                key: "status",
-                label: "Status",
-                render: (row) => (
-                  <span className={`badge ${row.status === "live" ? "ok" : row.status === "down" ? "alert" : "unavailable"}`}>
-                    {row.status}
-                  </span>
-                ),
+                key: "id",
+                label: "Run",
+                render: (row) => <Link href={`/runs/${encodeURIComponent(row.id)}`}>{row.id}</Link>,
               },
-              // No `vaultCount` column: see the note at the top of this component. It is
-              // zero except for the minute after a scan warms that chain's cache, so a
-              // "Vaults" column here is a column of zeroes that libels the index.
+              { key: "startedAt", label: "Started at", render: (row) => <span className="num">{row.startedAt}</span> },
+              { key: "requestCount", label: "Requests", render: (row) => <span className="num">{row.requestCount}</span> },
             ]}
-            rows={catalog.protocols}
-            rowKey={(row, i) => `${row.protocol}-${row.chain}-${i}`}
-            empty="No protocols in the catalog."
+            rows={runs}
+            rowKey={(row) => row.id}
+            empty="No runs yet. Buy one from the portfolio page, or run the agent's watch loop."
           />
-        ) : (
-          <p className="error">Service unreachable — could not load /v1/catalog.</p>
-        )}
-      </section>
-
-      <section className="stack">
-        <h3>Runs</h3>
-        <Table<RunSummary>
-          columns={[
-            {
-              key: "id",
-              label: "Run",
-              render: (row) => <Link href={`/runs/${encodeURIComponent(row.id)}`}>{row.id}</Link>,
-            },
-            { key: "startedAt", label: "Started at" },
-            { key: "requestCount", label: "Requests" },
-          ]}
-          rows={runs}
-          rowKey={(row) => row.id}
-          empty="No runs yet. Buy one from the portfolio page, or run the agent's watch loop."
-        />
-      </section>
+        </CardContent>
+      </Card>
     </>
   );
 }
 
 function CardSummary({ card }: { card: AgentCard }) {
   return (
-    <div className="card">
-      <dl className="kv">
-        <dt>Name</dt>
-        <dd>
-          {card.name} v{card.version}
-        </dd>
+    <dl className="kv">
+      <dt>Name</dt>
+      <dd>
+        {card.name} v{card.version}
+      </dd>
 
-        <dt>Summary</dt>
-        <dd className="muted">{card.description}</dd>
+      <dt>Summary</dt>
+      <dd className="muted">{card.description}</dd>
 
-        <dt>ERC-8004</dt>
-        <dd>
-          {card.erc8004.length === 0 ? (
-            <span className="error">none registered — every paid request will be refused</span>
-          ) : (
-            card.erc8004.map((e) => {
-              const url = erc8004ExplorerUrl(e.chainId);
-              return (
-                <span key={e.chainId} className="badge ok">
-                  {url ? (
-                    <a href={url} target="_blank" rel="noopener noreferrer">
-                      {e.chainId}:{e.agentId}
-                    </a>
-                  ) : (
-                    <>
-                      {e.chainId}:{e.agentId}
-                    </>
-                  )}
-                </span>
-              );
-            })
-          )}
-        </dd>
+      <dt>ERC-8004</dt>
+      <dd>
+        {card.erc8004.length === 0 ? (
+          <span className="error">none registered — every paid request will be refused</span>
+        ) : (
+          card.erc8004.map((e) => {
+            const url = erc8004ExplorerUrl(e.chainId);
+            return (
+              <ToneBadge key={e.chainId} tone="ok">
+                {url ? (
+                  <a href={url} target="_blank" rel="noopener noreferrer" className="no-underline">
+                    {e.chainId}:{e.agentId}
+                  </a>
+                ) : (
+                  <>
+                    {e.chainId}:{e.agentId}
+                  </>
+                )}
+              </ToneBadge>
+            );
+          })
+        )}
+      </dd>
 
-        <dt>Signing key</dt>
-        <dd>
-          <Id value={card.pq.sig.pub_hash} /> <span className="faint">{card.pq.sig.alg}</span>
-        </dd>
+      <dt>Signing key</dt>
+      <dd>
+        <Id value={card.pq.sig.pub_hash} /> <span className="faint">{card.pq.sig.alg}</span>
+      </dd>
 
-        <dt>KEM key</dt>
-        <dd>
-          <span className="mono">{card.pq.kem.kid}</span> <span className="faint">{card.pq.kem.alg}</span>
-        </dd>
+      <dt>KEM key</dt>
+      <dd>
+        <span className="mono">{card.pq.kem.kid}</span> <span className="faint">{card.pq.kem.alg}</span>
+      </dd>
 
-        <dt>Prices</dt>
-        <dd>
-          <span className="mono">scan {card.prices.hedera_scan}</span>
-          <br />
-          <span className="faint">
-            table {card.prices.table} · arc buckets s {card.prices.arc_scan_buckets.s} / m {card.prices.arc_scan_buckets.m} / l{" "}
-            {card.prices.arc_scan_buckets.l}
-          </span>
-        </dd>
+      <dt>Prices</dt>
+      <dd>
+        <span className="num">scan {card.prices.hedera_scan}</span>
+        <br />
+        <span className="faint">
+          table {card.prices.table} · arc buckets s {card.prices.arc_scan_buckets.s} / m {card.prices.arc_scan_buckets.m} / l{" "}
+          {card.prices.arc_scan_buckets.l}
+        </span>
+      </dd>
 
-        <dt>Docs</dt>
-        <dd>
-          <Link href="/docs">the documentation</Link>{" "}
-          <span className="faint">— spec, plan, verification log</span>
-        </dd>
+      <dt>Docs</dt>
+      <dd>
+        <Link href="/docs">the documentation</Link> <span className="faint">— spec, plan, verification log</span>
+      </dd>
 
-        {/* Two audiences, and this row was conflating them. The card's `docs` field is the
-            machine-facing guide a buying agent reads, and it is the only pointer to that file
-            — so the human link goes to the documentation site without dropping it. */}
-        <dt>Agent guide</dt>
-        <dd>
-          <a href={card.docs}>skill.md</a>{" "}
-          <span className="faint">— the file a buying agent reads, served by the service</span>
-        </dd>
-      </dl>
-    </div>
+      {/* Two audiences, and this row was conflating them. The card's `docs` field is the
+          machine-facing guide a buying agent reads, and it is the only pointer to that file
+          — so the human link goes to the documentation site without dropping it. */}
+      <dt>Agent guide</dt>
+      <dd>
+        <a href={card.docs}>skill.md</a> <span className="faint">— the file a buying agent reads, served by the service</span>
+      </dd>
+    </dl>
   );
 }

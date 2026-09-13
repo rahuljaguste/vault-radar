@@ -1,1006 +1,391 @@
-/* VaultRadar's design tokens and primitives.
+@import "tailwindcss";
+@import "tw-animate-css";
+@plugin "@tailwindcss/typography";
+
+/* VaultRadar's design system: shadcn/ui on top of Tailwind v4, wearing the pitch deck's
+ * palette. One scheme, everywhere, for every visitor — ink background, panel surfaces,
+ * hairline borders, emerald accent — so the site, the deck and the exported diagrams
+ * read as one product.
  *
- * The look is a risk terminal: monospace, dense, hairline rules, colour reserved for
- * meaning. What it was missing was hierarchy — every element differed from every other only
- * by colour — so the tokens below exist mostly to separate *levels* (base / surface /
- * raised) and *roles* (label, value, identifier, verdict) rather than to add decoration.
- *
- * Two rules worth keeping:
- * - Colour carries meaning. `--ok`, `--warn`, `--error` and `--absent` are verdict states,
- *   never ornament. Anything that is merely "primary" is `--fg`.
- * - Numbers line up. Every figure that a reader compares down a column is `font-variant-
- *   numeric: tabular-nums`, or the columns wobble and the density becomes noise.
+ * Two rules carried over from the terminal look this replaces:
+ * - Colour carries meaning. `ok`, `warn`, `destructive` and `absent` are verdict states,
+ *   never ornament. Anything that is merely "primary" is the emerald.
+ * - Numbers line up. Figures a reader compares down a column get `font-mono` and
+ *   `tabular-nums`, or the columns wobble and the density becomes noise.
  */
 
+@custom-variant dark (&:is(.dark *));
+
+@theme inline {
+  --color-background: var(--background);
+  --color-foreground: var(--foreground);
+  --color-card: var(--card);
+  --color-card-foreground: var(--card-foreground);
+  --color-popover: var(--popover);
+  --color-popover-foreground: var(--popover-foreground);
+  --color-primary: var(--primary);
+  --color-primary-foreground: var(--primary-foreground);
+  --color-secondary: var(--secondary);
+  --color-secondary-foreground: var(--secondary-foreground);
+  --color-muted: var(--muted);
+  --color-muted-foreground: var(--muted-foreground);
+  --color-accent: var(--accent);
+  --color-accent-foreground: var(--accent-foreground);
+  --color-destructive: var(--destructive);
+  --color-destructive-foreground: var(--destructive-foreground);
+  --color-border: var(--border);
+  --color-input: var(--input);
+  --color-ring: var(--ring);
+  /* This product's own vocabulary, next to shadcn's: verdict colours and the brand
+     accent the wordmark shares with the logo. */
+  --color-ok: var(--ok);
+  --color-warn: var(--warn);
+  --color-absent: var(--absent);
+  --color-faint: var(--faint);
+  --color-brand: var(--brand);
+  --font-sans: -apple-system, "SF Pro Text", "Helvetica Neue", Arial, sans-serif;
+  --font-mono: ui-monospace, "SF Mono", "Cascadia Code", "Menlo", "Consolas", monospace;
+  --radius-sm: calc(var(--radius) - 4px);
+  --radius-md: calc(var(--radius) - 2px);
+  --radius-lg: var(--radius);
+  --radius-xl: calc(var(--radius) + 4px);
+}
+
+/* The deck's literal palette, as shadcn variables. `color-scheme: dark` also makes the
+   browser's own widget defaults — form control chrome, scrollbars — dark, instead of
+   light widgets under a dark page. */
 :root {
-  /* Both schemes are supported, so the browser's own widget defaults — form control
-     chrome, scrollbars, focus rings — follow the scheme instead of staying light under a
-     dark page. */
-  color-scheme: light dark;
+  color-scheme: dark;
 
-  --bg: #ffffff;
-  --surface: #fbfbfa;
-  --raised: #f4f4f2;
-  --border: #e0e0dd;
-  --border-strong: #c4c4c0;
+  --radius: 0.625rem;
 
-  --fg: #16161a;
-  --dim: #5c5c66;
-  --faint: #8a8a94;
+  --background: hsl(221 49% 8%);
+  --foreground: hsl(217 65% 95%);
 
-  --ok: #146c2e;
-  --ok-tint: #e8f5ec;
-  --warn: #8a5300;
-  --warn-tint: #fdf1dd;
-  --error: #a3202a;
-  --error-tint: #fdecee;
-  --absent: #5c5c66;
-  --absent-tint: #f0f0ee;
+  --card: hsl(221 46% 10%);
+  --card-foreground: hsl(217 65% 95%);
+  --popover: hsl(221 46% 12%);
+  --popover-foreground: hsl(217 65% 95%);
 
-  --focus: #1a56db;
+  --primary: hsl(158 64% 52%);
+  --primary-foreground: hsl(221 49% 8%);
 
-  /* Type ramp. Four steps, because a fifth would not be distinguishable at this size. */
-  --t-xs: 11px;
-  --t-sm: 12px;
-  --t-base: 13.5px;
-  --t-lg: 16px;
-  --t-xl: 21px;
-  --t-2xl: 30px;
+  --secondary: hsl(221 46% 12%);
+  --secondary-foreground: hsl(217 65% 95%);
 
-  --s1: 0.25rem;
-  --s2: 0.5rem;
-  --s3: 0.75rem;
-  --s4: 1rem;
-  --s5: 1.5rem;
-  --s6: 2.5rem;
+  --muted: hsl(221 46% 12%);
+  --muted-foreground: hsl(216 31% 71%);
 
-  --r: 6px;
-  --r-sm: 4px;
-  --mono: ui-monospace, "SF Mono", "Cascadia Code", "Menlo", "Consolas", monospace;
+  --accent: hsl(221 42% 15%);
+  --accent-foreground: hsl(217 65% 95%);
+
+  --destructive: hsl(0 91% 71%);
+  --destructive-foreground: hsl(221 49% 8%);
+
+  --border: hsl(221 37% 21%);
+  --input: hsl(221 33% 26%);
+  --ring: hsl(158 64% 52%);
+
+  --ok: hsl(158 64% 52%);
+  --warn: hsl(45 96% 56%);
+  --absent: hsl(216 31% 71%);
+  --faint: hsl(216 25% 53%);
+  --brand: hsl(158 64% 52%);
 }
 
-@media (prefers-color-scheme: dark) {
-  :root {
-    --bg: #0b0b0d;
-    --surface: #121215;
-    --raised: #1a1a1e;
-    --border: #26262c;
-    --border-strong: #3a3a44;
+@layer base {
+  * {
+    @apply border-border;
+  }
 
-    --fg: #e8e8ea;
-    --dim: #9a9aa4;
-    --faint: #6e6e78;
+  html,
+  body {
+    margin: 0;
+    padding: 0;
+  }
 
-    --ok: #4ade80;
-    --ok-tint: #0f2417;
-    --warn: #fbbf24;
-    --warn-tint: #2a1f08;
-    --error: #f87171;
-    --error-tint: #2c1113;
-    --absent: #9a9aa4;
-    --absent-tint: #1a1a1e;
+  body {
+    @apply bg-background text-foreground font-sans antialiased;
+    /* The deck slides' own ambient wash, at the same strengths: an emerald glow off
+       the top-right and a blue one off the bottom-left, over the ink. Fixed so it
+       never scrolls with the content. */
+    background:
+      radial-gradient(1100px 600px at 85% -10%, hsl(158 64% 52% / 0.06), transparent 60%),
+      radial-gradient(900px 500px at -5% 110%, hsl(213 94% 68% / 0.05), transparent 55%),
+      var(--background);
+    background-attachment: fixed;
+  }
 
-    --focus: #7aa2f7;
+  ::selection {
+    background: hsl(158 64% 52% / 0.25);
+  }
+
+  /* Base typography: headings, inline code and links get product defaults here so the
+     pages do not repeat them, and every page's headings agree. */
+  h1,
+  h2,
+  h3 {
+    @apply font-semibold tracking-tight;
+  }
+  h1 {
+    @apply text-2xl;
+  }
+  h2 {
+    @apply text-lg;
+  }
+  h3 {
+    @apply text-base;
+  }
+  p {
+    @apply m-0;
+  }
+  code {
+    @apply rounded-sm border bg-secondary/60 px-1 py-0.5 font-mono text-[0.9em];
+  }
+  a {
+    @apply text-foreground underline underline-offset-4 decoration-border hover:decoration-foreground;
+  }
+  details summary {
+    @apply cursor-pointer;
+  }
+
+  /* Long identifiers are single tokens hundreds of pixels wide; without `anywhere`
+     they push /admin and the rendered README past the viewport instead of wrapping. */
+  code,
+  a,
+  p,
+  li,
+  dd,
+  td,
+  summary {
+    overflow-wrap: anywhere;
   }
 }
 
-* {
-  box-sizing: border-box;
-}
+/* ------------------------------------------------------- layout vocabulary */
+/* Layout helpers shadcn has no primitive for. Kept as classes so pages stay readable;
+   every rule is Tailwind, so they compose with utilities on the same element. */
 
-html,
-body {
-  margin: 0;
-  padding: 0;
-}
-
-body {
-  font-family: var(--mono);
-  font-size: var(--t-base);
-  line-height: 1.55;
-  color: var(--fg);
-  background: var(--bg);
-  -webkit-font-smoothing: antialiased;
-}
-
-/* Any element that can receive focus gets a visible ring, in one place. */
-:focus-visible {
-  outline: 2px solid var(--focus);
-  outline-offset: 2px;
-  border-radius: var(--r-sm);
-}
-
-::selection {
-  background: var(--fg);
-  color: var(--bg);
-}
-
-/* ------------------------------------------------------------------ chrome */
-
-header {
-  display: flex;
-  align-items: baseline;
-  /* Wraps rather than shoving the page sideways. Seven nav links in one row measured 565px,
-     so `document.scrollWidth` exceeded the viewport on every page at phone width and the
-     whole site scrolled horizontally — the nav was the only cause. */
-  flex-wrap: wrap;
-  gap: var(--s3) var(--s5);
-  padding: var(--s4) var(--s5);
-  border-bottom: 1px solid var(--border);
-  background: var(--surface);
-  position: sticky;
-  top: 0;
-  z-index: 10;
-}
-
-/* Once the nav wraps it occupies several rows, and a sticky header holding four rows of
-   links over the content for the whole scroll costs more than the shortcut is worth. */
-@media (max-width: 720px) {
-  header {
-    position: static;
+@layer components {
+  .stack {
+    @apply flex flex-col gap-4;
   }
-}
-
-header a {
-  color: var(--fg);
-  text-decoration: none;
-  font-weight: 600;
-  letter-spacing: -0.01em;
-}
-
-header nav {
-  display: flex;
-  flex-wrap: wrap;
-  gap: var(--s2) var(--s4);
-  color: var(--dim);
-  font-size: var(--t-sm);
-}
-
-/* The nav is a row of dim, regular-weight words with the underline stripped, which reads as
-   a caption rather than as navigation — "docs" is indistinguishable from a label, so the
-   write-up, the spec and the verification log behind it are effectively unfindable. The
-   convention already exists ten lines up: body links are underlined in `--border-strong` and
-   brighten on hover. The nav now follows it, which makes it legible as links at rest without
-   making it loud. */
-header nav a {
-  color: var(--dim);
-  font-weight: 400;
-  text-decoration: underline;
-  text-decoration-color: currentColor;
-  text-underline-offset: 3px;
-}
-
-/* `currentColor` on the underline means brightening the text brightens the underline with
-   it, so there is nothing else to set here. */
-header nav a:hover {
-  color: var(--fg);
-}
-
-main {
-  max-width: 1040px;
-  margin: 0 auto;
-  padding: var(--s5);
-  display: flex;
-  flex-direction: column;
-  gap: var(--s6);
-}
-
-/* Flexbox's floor: a flex item defaults to `min-width: auto`, so it refuses to shrink below
-   its content's min-content width. Without this a section cannot narrow at all, and
-   `overflow-wrap` below would have nothing to work with. */
-main > * {
-  min-width: 0;
-}
-
-/* What actually set the page's minimum width, measured rather than guessed.
- *
- * A 64-character key hash in a `<code>` and a mirror-node URL in a link are single tokens
- * hundreds of pixels wide; they pushed /admin to 619px and the rendered README to 617px
- * inside a 390px viewport, and neither was a table — the tables were already scrolling in
- * their own boxes. `overflow-wrap: break-word` would not have helped: it allows a break when
- * a word does not fit, but leaves the element's min-content width alone, which is the number
- * the layout is honouring. `anywhere` lowers it.
- */
-code,
-a,
-p,
-li,
-dd,
-td,
-summary {
-  overflow-wrap: anywhere;
-}
-
-/* Paragraphs get the same measure as the hero's lede, which already caps itself at 72ch.
- *
- * Uncapped, a paragraph in a 1040px column set at 13.5px monospace runs to about 118
- * characters a line — and the pages with the longest prose, the ones explaining what a scan
- * costs and what a receipt proves, were exactly the ones with no cap. `article.doc` is not a
- * section, so the rendered documents keep their own 78ch column.
- */
-main section > p {
-  max-width: 72ch;
-}
-
-/* ------------------------------------------------------------------ type */
-
-h1,
-h2,
-h3 {
-  margin: 0;
-  font-weight: 600;
-  letter-spacing: -0.015em;
-  line-height: 1.25;
-}
-
-h1 {
-  font-size: var(--t-2xl);
-}
-h2 {
-  font-size: var(--t-xl);
-}
-h3 {
-  font-size: var(--t-lg);
-}
-
-p {
-  margin: 0;
-}
-
-/* The underline is the text's own colour, not `--border-strong`. That token is calibrated for
-   hairlines between surfaces, and in the dark scheme it resolves to #3a3a44 on a #0b0b0d
-   background: an underline that is present in the DOM and invisible on screen. It is how a
-   page full of links comes to look like a page with none — including every link inside the
-   documentation pages, and "docs" in the nav. `currentColor` is visible in both schemes by
-   construction, because it is whatever the text already is. */
-a {
-  color: var(--fg);
-  text-underline-offset: 3px;
-  text-decoration-color: currentColor;
-}
-
-/* Thicker rather than brighter: the colour is already the text's, so there is nothing to
-   brighten, and thickness does not move anything on the page. */
-a:hover {
-  text-decoration-thickness: 2px;
-}
-
-code {
-  font-family: var(--mono);
-  font-size: 0.95em;
-  background: var(--raised);
-  border: 1px solid var(--border);
-  border-radius: var(--r-sm);
-  padding: 0.05em 0.35em;
-}
-
-/* Identifiers: full length in the tooltip and the clipboard, abbreviated on screen. Long
-   hex is the enemy of a dense layout — a 64-character hash once wrapped a table cell into
-   a four-line ribbon. */
-.mono {
-  font-family: var(--mono);
-  white-space: nowrap;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  max-width: 100%;
-  display: inline-block;
-  vertical-align: bottom;
-}
-
-.num {
-  font-variant-numeric: tabular-nums;
-}
-
-.muted {
-  color: var(--dim);
-}
-
-.faint {
-  color: var(--faint);
-  font-size: var(--t-sm);
-}
-
-/* ------------------------------------------------------------------ colour as meaning */
-
-.ok {
-  color: var(--ok);
-}
-.warn {
-  color: var(--warn);
-}
-.error {
-  color: var(--error);
-}
-.absent {
-  color: var(--absent);
-}
-
-/* ------------------------------------------------------------------ surfaces */
-
-.card {
-  background: var(--surface);
-  border: 1px solid var(--border);
-  border-radius: var(--r);
-  padding: var(--s4);
-}
-
-/* A card that leads with a status stripe, for anything carrying a verdict. */
-.card.verdict {
-  border-left: 3px solid var(--absent);
-  display: flex;
-  flex-direction: column;
-  gap: var(--s3);
-}
-
-.card.verdict.ok {
-  border-left-color: var(--ok);
-}
-.card.verdict.watch {
-  border-left-color: var(--warn);
-}
-.card.verdict.alert {
-  border-left-color: var(--error);
-}
-
-.stack {
-  display: flex;
-  flex-direction: column;
-  gap: var(--s3);
-}
-
-.stack.tight {
-  gap: var(--s2);
-}
-
-.row {
-  display: flex;
-  align-items: center;
-  gap: var(--s3);
-  flex-wrap: wrap;
-}
-
-.row.between {
-  justify-content: space-between;
-}
-
-.grid {
-  display: grid;
-  gap: var(--s4);
-  grid-template-columns: repeat(auto-fill, minmax(340px, 1fr));
-}
-
-.grid.stats {
-  grid-template-columns: repeat(auto-fit, minmax(150px, 1fr));
-}
-
-/* ------------------------------------------------------------------ hero */
-
-.hero {
-  display: flex;
-  flex-direction: column;
-  gap: var(--s4);
-  padding: var(--s5) 0 var(--s4);
-  border-bottom: 1px solid var(--border);
-}
-
-.hero h1 {
-  max-width: 24ch;
-}
-
-.hero .lede {
-  color: var(--dim);
-  font-size: var(--t-base);
-  max-width: 72ch;
-}
-
-.hero .row {
-  gap: var(--s2);
-}
-
-.cta {
-  display: inline-block;
-  padding: var(--s2) var(--s4);
-  border: 1px solid var(--border-strong);
-  border-radius: var(--r-sm);
-  background: var(--raised);
-  color: var(--fg);
-  text-decoration: none;
-  font-size: var(--t-sm);
-}
-
-.cta:hover {
-  border-color: var(--fg);
-  text-decoration: none;
-}
-
-.cta.primary {
-  background: var(--fg);
-  color: var(--bg);
-  border-color: var(--fg);
-}
-
-/* Three-step explainer. Numbered because the order is the point. */
-.steps {
-  display: grid;
-  gap: var(--s4);
-  grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
-  counter-reset: step;
-}
-
-.steps > div {
-  border-top: 2px solid var(--border);
-  padding-top: var(--s3);
-  font-size: var(--t-sm);
-  color: var(--dim);
-}
-
-.steps > div::before {
-  counter-increment: step;
-  content: counter(step) ".";
-  display: block;
-  color: var(--faint);
-  font-size: var(--t-xs);
-  margin-bottom: var(--s1);
-}
-
-.steps strong {
-  display: block;
-  color: var(--fg);
-  font-weight: 600;
-  margin-bottom: var(--s1);
-}
-
-/* ------------------------------------------------------------------ badges and pills */
-
-.badge {
-  display: inline-flex;
-  align-items: center;
-  gap: 0.35em;
-  font-size: var(--t-xs);
-  letter-spacing: 0.06em;
-  text-transform: uppercase;
-  padding: 0.15em 0.5em;
-  border-radius: 999px;
-  border: 1px solid currentColor;
-  white-space: nowrap;
-  font-weight: 600;
-}
-
-.badge.ok {
-  color: var(--ok);
-  background: var(--ok-tint);
-}
-.badge.watch {
-  color: var(--warn);
-  background: var(--warn-tint);
-}
-.badge.alert {
-  color: var(--error);
-  background: var(--error-tint);
-}
-.badge.unavailable,
-.badge.neutral {
-  color: var(--absent);
-  background: var(--absent-tint);
-}
-
-.pill {
-  display: inline-flex;
-  align-items: center;
-  gap: 0.35em;
-  font-size: var(--t-xs);
-  padding: 0.1em 0.45em;
-  border: 1px solid var(--border);
-  border-radius: var(--r-sm);
-  background: var(--raised);
-  margin-right: var(--s2);
-  white-space: nowrap;
-}
-
-/* ------------------------------------------------------------------ key/value lists */
-
-/* Every `<dl>` is a label/value grid, not only the ones carrying `.kv`.
- *
- * Styling this by class meant six `<dl>`s across `/admin` and `/portfolio` rendered as the
- * browser's default — each label on its own line with the value indented beneath it, which
- * reads as a broken list rather than as a table of two columns. It was the single largest
- * reason those two pages looked unfinished, and it was a class someone had to remember.
- * There is no `<dl>` in this app that wants the stacked form, so the default is the grid and
- * the class is kept only for the places that already pass it.
- */
-dl,
-.kv {
-  display: grid;
-  grid-template-columns: max-content 1fr;
-  gap: var(--s1) var(--s4);
-  margin: 0;
-  font-size: var(--t-sm);
-}
-
-dl dt,
-.kv dt {
-  color: var(--dim);
-}
-
-dl dd,
-.kv dd {
-  margin: 0;
-  min-width: 0;
-}
-
-/* ------------------------------------------------------------------ score bar */
-
-.score {
-  display: flex;
-  align-items: center;
-  gap: var(--s2);
-  font-size: var(--t-sm);
-  color: var(--dim);
-  font-variant-numeric: tabular-nums;
-}
-
-.score .track {
-  flex: 1;
-  height: 6px;
-  border-radius: 999px;
-  background: var(--absent-tint);
-  overflow: hidden;
-  min-width: 60px;
-}
-
-.score .fill {
-  display: block;
-  height: 100%;
-  border-radius: 999px;
-  background: var(--absent);
-}
-
-.score.ok .fill {
-  background: var(--ok);
-}
-.score.watch .fill {
-  background: var(--warn);
-}
-.score.alert .fill {
-  background: var(--error);
-}
-
-/* ------------------------------------------------------------------ sparkline */
-
-.spark {
-  display: block;
-  width: 100%;
-  height: 48px;
-  /* Clipped: with `overflow: visible` a series that spans the full x-range drew over the
-     card's border and outside its padding, which read as a rendering bug rather than data. */
-  overflow: hidden;
-}
-
-.spark .line {
-  fill: none;
-  stroke: var(--fg);
-  stroke-width: 1.5;
-  stroke-linejoin: round;
-  stroke-linecap: round;
-  vector-effect: non-scaling-stroke;
-}
-
-.spark .window {
-  fill: var(--error-tint);
-}
-
-.spark .axis {
-  stroke: var(--border);
-  stroke-width: 1;
-}
-
-/* ------------------------------------------------------------------ flow scene */
-
-/* The three.js host on /docs/flow. Every rule here is load-bearing and was lost once
-   already: when this was called `.universe` and the risk-universe page was replaced by the
-   ranked table, the class went with it, leaving PaymentFlow rendering a container with no
-   border, no rounded corners, no surface, and — the one that matters — no `overflow: hidden`
-   and no forced canvas size. `renderer.setSize` runs once from `el.clientWidth || 800`, so a
-   canvas measured before layout settles is 800px wide and, unclipped, pushes the page wider
-   than the viewport. It is renamed for what it actually is: the flow page's scene, not the
-   universe's. */
-.scene {
-  width: 100%;
-  border: 1px solid var(--border);
-  border-radius: var(--r);
-  background: var(--surface);
-  overflow: hidden;
-}
-
-.scene canvas {
-  display: block;
-  width: 100% !important;
-  height: 100% !important;
-}
-
-/* ------------------------------------------------------------------ vault ranking */
-
-/* A disclosure per vault laid out on one grid, so the collapsed rows read as the columns the
-   header names without needing a table element — a table cannot hold an expanding panel
-   inside a row without a second `<tr>` per vault, which at a hundred vaults is a hundred
-   lines of nothing. Scrolls sideways rather than reflowing, because a column that reflows
-   stops lining up with its header. */
-.vaults {
-  display: block;
-  overflow-x: auto;
-}
-
-.vaults .headline,
-.vaults summary {
-  display: grid;
-  /* The price column takes the slack rather than the flags column. Most rows carry no flag,
-     so a flexible flags column is a wide empty gap with every sparkline squeezed into a
-     corner — and the sparkline is the one cell whose readability grows with its width. */
-  grid-template-columns: 9rem minmax(11rem, 16rem) 6rem minmax(7rem, 15rem) minmax(9rem, 1fr);
-  gap: var(--s3);
-  align-items: center;
-  min-width: 44rem;
-}
-
-.vaults .headline {
-  padding: var(--s2) var(--s3) var(--s2) calc(var(--s3) + 1.1rem);
-  border-bottom: 1px solid var(--border-strong);
-  color: var(--dim);
-  font-size: var(--t-xs);
-  text-transform: uppercase;
-  letter-spacing: 0.06em;
-}
-
-.vaults summary {
-  /* The left padding is the disclosure marker's room, because `display: grid` above means
-     there is no marker to make room for: `::marker` is generated only for `display:
-     list-item`, so every one of these rows lost its triangle and read as a static table row
-     — on the page whose lede says "Open a row for the flags behind the score". The chevron
-     below is a real element instead, absolutely positioned in this padding. */
-  position: relative;
-  padding: var(--s2) var(--s3) var(--s2) calc(var(--s3) + 1.1rem);
-  border-bottom: 1px solid var(--border);
-}
-
-.vaults summary::before {
-  content: "▸";
-  position: absolute;
-  left: var(--s3);
-  color: var(--faint);
-  font-size: var(--t-xs);
-}
-
-.vaults details[open] > summary::before {
-  content: "▾";
-}
-
-.vaults summary:hover {
-  background: var(--raised);
-}
-
-.vaults details[open] summary {
-  border-bottom: none;
-}
-
-/* A column of pills would set the row height from the longest flag name, so the cell is
-   allowed to run past its track and clip instead. The full sentence is a `title`, and the
-   panel below spells it out, so nothing is lost by clipping here. */
-.vaults .flagcell {
-  display: flex;
-  gap: var(--s1);
-  overflow: hidden;
-  white-space: nowrap;
-}
-
-.vaults .flagcell .pill {
-  margin-right: 0;
-  max-width: 100%;
-  overflow: hidden;
-  text-overflow: ellipsis;
-}
-
-.vaults .detail {
-  padding: var(--s2) var(--s3) var(--s4);
-  border-bottom: 1px solid var(--border);
-  background: var(--surface);
-}
-
-.vaults .detail .kv {
-  margin-top: var(--s3);
-}
-
-.vaults .flaglist {
-  margin: 0;
-  padding-left: 1.1em;
-}
-
-details summary {
-  cursor: pointer;
-  padding: var(--s2) 0;
-}
-
-details[open] summary {
-  margin-bottom: var(--s3);
-}
-
-/* ------------------------------------------------------------------ tables */
-
-table {
-  width: 100%;
-  border-collapse: collapse;
-  font-size: var(--t-sm);
-}
-
-/* A table cannot shrink below the widest thing in it, so at phone width the page scrolled
-   sideways again: /admin reached 714px and the rendered README 617px inside a 390px
-   viewport, both over facilitator URLs and repo paths in `<code>`. Below this width the table
-   becomes its own scroll container — the box scrolls, the table keeps its natural width, and
-   the columns stay aligned with their headers. */
-@media (max-width: 720px) {
-  table {
+  .stack.tight {
+    @apply gap-2;
+  }
+  .row {
+    @apply flex flex-wrap items-center gap-3;
+  }
+  .row.between {
+    @apply justify-between;
+  }
+  .grid {
+    @apply grid gap-4 [grid-template-columns:repeat(auto-fill,minmax(340px,1fr))];
+  }
+
+  /* The top of a page: one h1, an optional lede, optional actions. */
+  .hero {
+    @apply flex flex-col gap-4 border-b pb-6;
+  }
+  .hero h1 {
+    @apply text-2xl font-semibold tracking-tight;
+  }
+  .hero .lede {
+    @apply max-w-[72ch] text-sm leading-relaxed text-muted-foreground;
+  }
+
+  /* Label/value pairs. */
+  dl,
+  .kv {
+    @apply grid grid-cols-[max-content_1fr] gap-x-4 gap-y-1 text-sm;
+  }
+  dl dt,
+  .kv dt {
+    @apply text-muted-foreground;
+  }
+  dl dd,
+  .kv dd {
+    @apply m-0 min-w-0;
+  }
+
+  .muted {
+    @apply text-muted-foreground;
+  }
+  .faint {
+    @apply text-sm text-faint;
+  }
+  .mono {
+    @apply font-mono;
+  }
+  .num {
+    @apply font-mono tabular-nums;
+  }
+  .ok {
+    @apply text-ok;
+  }
+  .warn {
+    @apply text-warn;
+  }
+  .error {
+    @apply text-destructive;
+  }
+  .empty {
+    @apply py-4 text-sm italic text-faint;
+  }
+
+  /* Small identifier chips, e.g. risk flags inside table cells. */
+  .pill {
+    @apply mr-2 inline-flex max-w-full items-center whitespace-nowrap rounded-md border bg-secondary px-1.5 py-0.5 font-mono text-[11px] text-muted-foreground;
+  }
+
+  .toolbar {
+    @apply flex flex-wrap items-center gap-3;
+  }
+
+  /* Three-step explainer. Numbered because the order is the point. */
+  .steps {
+    @apply grid gap-4 [grid-template-columns:repeat(auto-fit,minmax(220px,1fr))];
+  }
+  .steps > div {
+    @apply border-t-2 border-border pt-3 text-sm leading-relaxed text-muted-foreground;
+  }
+  .steps > div::before {
+    counter-increment: step;
+    content: counter(step) ".";
+    @apply mb-1 block font-mono text-[11px] text-faint;
+  }
+  .steps {
+    counter-reset: step;
+  }
+  .steps strong {
+    @apply mb-1 block font-semibold text-foreground;
+  }
+
+  /* ------------------------------------------------------------------ vault ranking */
+  /* A disclosure per vault on one grid, so collapsed rows read as the columns the
+     header names. Scrolls sideways rather than reflowing, because a column that
+     reflows stops lining up with its header. */
+  .vaults {
+    @apply block overflow-x-auto rounded-lg border bg-card;
+  }
+  .vaults .headline,
+  .vaults summary {
+    @apply grid grid-cols-[9rem_minmax(11rem,16rem)_6rem_minmax(7rem,15rem)_minmax(9rem,1fr)] gap-3 items-center min-w-[44rem];
+  }
+  .vaults .headline {
+    @apply border-b px-3 py-2 text-[11px] uppercase tracking-wider text-muted-foreground;
+  }
+  .vaults summary {
+    @apply relative border-b py-2 pr-3 pl-[1.85rem] cursor-pointer hover:bg-secondary/50;
+  }
+  .vaults summary::before {
+    content: "▸";
+    @apply absolute left-3 text-[11px] text-faint;
+  }
+  .vaults details[open] > summary::before {
+    content: "▾";
+  }
+  .vaults details[open] summary {
+    @apply border-b-0;
+  }
+  .vaults .flagcell {
+    @apply flex gap-1 overflow-hidden whitespace-nowrap;
+  }
+  .vaults .flagcell .pill {
+    @apply mr-0 overflow-hidden text-ellipsis;
+  }
+  .vaults .detail {
+    @apply border-b bg-card/60 px-3 pt-2 pb-4 pl-[1.85rem];
+  }
+  .vaults .detail .kv {
+    @apply mt-3;
+  }
+  .vaults .flaglist {
+    @apply m-0 pl-4;
+  }
+
+  /* ------------------------------------------------------------------ sparkline */
+  .spark {
+    @apply block h-12 w-full overflow-hidden;
+  }
+  .spark .line {
+    fill: none;
+    stroke: var(--foreground);
+    stroke-width: 1.5;
+    stroke-linejoin: round;
+    stroke-linecap: round;
+    vector-effect: non-scaling-stroke;
+  }
+  .spark .line.ok {
+    stroke: var(--ok);
+  }
+  .spark .line.watch {
+    stroke: var(--warn);
+  }
+  .spark .line.alert {
+    stroke: var(--destructive);
+  }
+  .spark .line.absent {
+    stroke: var(--faint);
+  }
+  .spark .window {
+    fill: hsl(0 91% 71% / 0.12);
+  }
+  .spark .axis {
+    stroke: var(--border);
+    stroke-width: 1;
+  }
+
+  /* The three.js host on /docs/flow. `overflow: hidden` and the forced canvas size
+     matter: `renderer.setSize` runs once from `el.clientWidth || 800`, so a canvas
+     measured before layout settles pushes the page wider than the viewport. */
+  .scene {
+    @apply w-full overflow-hidden rounded-lg border bg-card;
+  }
+  .scene canvas {
     display: block;
-    overflow-x: auto;
+    width: 100% !important;
+    height: 100% !important;
   }
-}
 
-th {
-  text-align: left;
-  font-weight: 600;
-  color: var(--dim);
-  font-size: var(--t-xs);
-  text-transform: uppercase;
-  letter-spacing: 0.06em;
-  padding: var(--s2) var(--s3);
-  border-bottom: 1px solid var(--border-strong);
-  position: sticky;
-  top: 0;
-  background: var(--bg);
-}
+  /* ------------------------------------------------------- score bar (verdicts) */
+  .score {
+    @apply flex items-center gap-2 font-mono text-xs tabular-nums text-muted-foreground;
+  }
+  .score .track {
+    @apply h-1.5 min-w-[60px] flex-1 overflow-hidden rounded-full bg-secondary;
+  }
+  .score .fill {
+    @apply block h-full rounded-full bg-absent;
+  }
+  .score.ok .fill {
+    @apply bg-ok;
+  }
+  .score.watch .fill {
+    @apply bg-warn;
+  }
+  .score.alert .fill {
+    @apply bg-destructive;
+  }
 
-td {
-  padding: var(--s2) var(--s3);
-  border-bottom: 1px solid var(--border);
-  vertical-align: top;
-}
-
-tbody tr:hover td {
-  background: var(--surface);
-}
-
-td.num,
-th.num {
-  font-variant-numeric: tabular-nums;
-  text-align: right;
-}
-
-/* ------------------------------------------------------------------ rendered documents */
-
-/* Prose rendered from the repository's Markdown. The app is dense and monospace by design;
-   a document is not, so this scope loosens the line height and caps the measure, and gives
-   the elements Markdown actually emits the styling the rest of the site gets from classes. */
-/* One column, and the wrapper owns the measure rather than the article.
- *
- * With `max-width` on `article.doc` alone, the page had two content widths: the hero's
- * bottom rule and the prev/next nav spanned `main` (992px) while the prose was 634px. Every
- * left edge agreed at 224px and the right edges disagreed by 358px, so the rule read as
- * belonging to a wider page than the text beneath it.
- *
- * `display: flex` because `main` is a flex column with a `--s6` gap, and wrapping three
- * children in one element would otherwise silently drop the spacing between them. */
-.docpage {
-  display: flex;
-  flex-direction: column;
-  gap: var(--s6);
-  width: 100%;
-  max-width: 78ch;
-  margin-inline: auto;
-}
-
-.doc {
-  line-height: 1.7;
-  font-size: var(--t-base);
-}
-
-.doc > * + * {
-  margin-top: var(--s4);
-}
-
-.doc h1,
-.doc h2,
-.doc h3,
-.doc h4 {
-  margin-top: var(--s6);
-  padding-top: var(--s3);
-  border-top: 1px solid var(--border);
-}
-
-.doc h1:first-child,
-.doc h2:first-child {
-  margin-top: 0;
-  border-top: 0;
-  padding-top: 0;
-}
-
-.doc h2 {
-  font-size: var(--t-xl);
-}
-.doc h3 {
-  font-size: var(--t-lg);
-}
-.doc h4 {
-  font-size: var(--t-base);
-  color: var(--dim);
-}
-
-.doc p,
-.doc li {
-  color: var(--fg);
-}
-
-.doc ul,
-.doc ol {
-  padding-left: 1.4rem;
-}
-
-.doc li + li {
-  margin-top: var(--s1);
-}
-
-.doc li::marker {
-  color: var(--faint);
-}
-
-.doc blockquote {
-  margin: 0;
-  padding: var(--s2) var(--s4);
-  border-left: 3px solid var(--border-strong);
-  color: var(--dim);
-}
-
-.doc code {
-  /* Long identifiers inside prose wrap rather than pushing the page wide. */
-  white-space: pre-wrap;
-  word-break: break-word;
-}
-
-.doc pre {
-  background: var(--surface);
-  border: 1px solid var(--border);
-  border-radius: var(--r);
-  padding: var(--s3) var(--s4);
-  overflow-x: auto;
-}
-
-.doc pre code {
-  background: none;
-  border: 0;
-  padding: 0;
-  font-size: var(--t-sm);
-  white-space: pre;
-}
-
-.doc table {
-  font-size: var(--t-sm);
-}
-
-.doc img {
-  max-width: 100%;
-  border: 1px solid var(--border);
-  border-radius: var(--r);
-}
-
-.doc hr {
-  border: 0;
-  border-top: 1px solid var(--border);
-  margin: var(--s5) 0;
-}
-
-/* Same reason as the global `a` rule: `--border-strong` is a hairline colour, and in the dark
-   scheme it is invisible against the page. This rule exists to quiet the underline inside a
-   rendered document — it now only keeps the offset consistent. */
-.doc a {
-  text-decoration-color: currentColor;
-}
-
-/* ------------------------------------------------------------------ forms */
-
-label {
-  display: block;
-  color: var(--dim);
-  font-size: var(--t-sm);
-  margin-bottom: var(--s2);
-}
-
-textarea,
-input {
-  width: 100%;
-  font-family: var(--mono);
-  font-size: var(--t-sm);
-  padding: var(--s3);
-  border: 1px solid var(--border);
-  border-radius: var(--r-sm);
-  color: var(--fg);
-  background: var(--bg);
-}
-
-textarea:focus,
-input:focus {
-  border-color: var(--border-strong);
-  outline: none;
-}
-
-button {
-  font-family: var(--mono);
-  font-size: var(--t-sm);
-  padding: var(--s2) var(--s4);
-  cursor: pointer;
-  color: var(--fg);
-  background: var(--raised);
-  border: 1px solid var(--border-strong);
-  border-radius: var(--r-sm);
-}
-
-button:hover:not(:disabled) {
-  border-color: var(--fg);
-}
-
-button:disabled {
-  cursor: not-allowed;
-  opacity: 0.45;
-}
-
-.toolbar {
-  display: flex;
-  gap: var(--s3);
-  align-items: center;
-  flex-wrap: wrap;
-}
-
-.empty {
-  color: var(--faint);
-  font-size: var(--t-sm);
-  font-style: italic;
-  padding: var(--s4) 0;
-}
-
-/* ------------------------------------------------------------------ identifier with copy */
-
-.id {
-  display: inline-flex;
-  align-items: center;
-  gap: var(--s1);
-  min-width: 0;
-  max-width: 100%;
-}
-
-/* Appears on hover or focus, because a page of six truncated identifiers otherwise carries
-   six identical "copy" labels and the eye reads them as content. Always visible on coarse
-   pointers, where there is no hover to reveal them. */
-.copy {
-  border: 1px solid transparent;
-  background: none;
-  color: var(--faint);
-  padding: 0 0.3em;
-  font-size: var(--t-xs);
-  line-height: 1.4;
-  border-radius: var(--r-sm);
-  flex: none;
-  opacity: 0;
-}
-
-.id:hover .copy,
-.copy:focus-visible {
-  opacity: 1;
-}
-
-.copy:hover:not(:disabled) {
-  color: var(--fg);
-  border-color: var(--border);
-}
-
-@media (hover: none) {
+  /* Identifier with copy button. */
+  .id {
+    @apply inline-flex min-w-0 max-w-full items-center gap-1;
+  }
   .copy {
-    opacity: 1;
+    @apply rounded-md px-1 py-0 font-mono text-[11px] leading-snug text-faint opacity-0;
+  }
+  .id:hover .copy,
+  .copy:focus-visible {
+    @apply opacity-100;
+  }
+  .copy:hover:not(:disabled) {
+    @apply text-foreground;
+  }
+  @media (hover: none) {
+    .copy {
+      @apply opacity-100;
+    }
   }
 }
 

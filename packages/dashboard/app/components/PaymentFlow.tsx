@@ -1,8 +1,17 @@
 "use client";
 
 import { useEffect, useRef, useState, type ReactNode } from "react";
+import { Button } from "@/components/ui/button";
+import { Card } from "@/components/ui/card";
 
 /** The round trip, in order. `edge` is which pair of nodes the token travels between. */
+
+/** Left-stripe colours for the current step card, the same vocabulary the run pages use. */
+const STRIPE: Record<string, string> = {
+  ok: "border-l-ok",
+  warn: "border-l-warn",
+  neutral: "border-l-warn",
+};
 export type Step = {
   label: string;
   detail: string;
@@ -81,12 +90,12 @@ export function PaymentFlow({
 
         const nodeGeo = new THREE.SphereGeometry(0.28, 20, 20);
         for (const p of positions) {
-          const m = new THREE.Mesh(nodeGeo, new THREE.MeshBasicMaterial({ color: 0x8a8a94 }));
+          const m = new THREE.Mesh(nodeGeo, new THREE.MeshBasicMaterial({ color: 0x9db0cc }));
           m.position.copy(p);
           scene.add(m);
         }
 
-        const edgeMaterial = new THREE.LineBasicMaterial({ color: 0x2f2f38 });
+        const edgeMaterial = new THREE.LineBasicMaterial({ color: 0x22304a });
         for (let i = 0; i < positions.length - 1; i++) {
           scene.add(new THREE.Line(new THREE.BufferGeometry().setFromPoints([positions[i], positions[i + 1]]), edgeMaterial));
         }
@@ -94,7 +103,7 @@ export function PaymentFlow({
         // The travelling token: a brighter sphere that hops along an edge per step.
         const token = new THREE.Mesh(
           new THREE.SphereGeometry(0.17, 16, 16),
-          new THREE.MeshBasicMaterial({ color: 0x7aa2f7 }),
+          new THREE.MeshBasicMaterial({ color: 0x34d399 }),
         );
         scene.add(token);
 
@@ -152,13 +161,21 @@ export function PaymentFlow({
   return (
     <div className="stack">
       <div className="row between">
-        <div className="row" style={{ gap: "var(--s2)" }}>
-          <button type="button" onClick={() => setPlaying((p) => !p)}>
+        <div className="row gap-2">
+          <Button type="button" variant="outline" size="sm" onClick={() => setPlaying((p) => !p)}>
             {playing ? "pause" : "play"}
-          </button>
-          <button type="button" onClick={() => { setPlaying(false); setCurrent((c) => (c + 1) % steps.length); }}>
+          </Button>
+          <Button
+            type="button"
+            variant="outline"
+            size="sm"
+            onClick={() => {
+              setPlaying(false);
+              setCurrent((c) => (c + 1) % steps.length);
+            }}
+          >
             step
-          </button>
+          </Button>
         </div>
         <span className="faint">
           step {current + 1} of {steps.length}
@@ -175,9 +192,9 @@ export function PaymentFlow({
           blurs at any zoom or a DOM overlay that drifts out of register with the camera. A
           legend in reading order is neither, and the pair each step travels between is named
           on its own card anyway. */}
-      <div className="row" style={{ gap: "var(--s2)" }}>
+      <div className="row gap-2">
         {nodes.map((n, i) => (
-          <span key={n} className="row" style={{ gap: "var(--s2)" }}>
+          <span key={n} className="row gap-1">
             <span className={step && (step.edge[0] === i || step.edge[1] === i) ? "mono" : "mono faint"}>{n}</span>
             {i < nodes.length - 1 && <span className="faint">·</span>}
           </span>
@@ -185,22 +202,32 @@ export function PaymentFlow({
       </div>
 
       <div className="grid">
-        {steps.map((s, i) => (
-          <div
-            key={s.label}
-            className={`card verdict ${i === current ? (s.tone === "neutral" ? "watch" : s.tone) : ""}`}
-            onClick={() => { setPlaying(false); setCurrent(i); }}
-            style={{ cursor: "pointer", opacity: i === current ? 1 : 0.55 }}
-          >
-            <div className="row between">
-              <strong>
-                {i + 1}. {s.label}
-              </strong>
-              <span className="mono faint">{nodes[s.edge[0]]} → {nodes[s.edge[1]]}</span>
-            </div>
-            <p className="faint">{s.detail}</p>
-          </div>
-        ))}
+        {steps.map((s, i) => {
+          const active = i === current;
+          // The current step carries the stripe; `neutral` steps read amber while active,
+          // matching the old vocabulary's mapping.
+          const stripe = active ? STRIPE[s.tone === "neutral" ? "watch" : s.tone] : "";
+          return (
+            <Card
+              key={s.label}
+              className={`cursor-pointer gap-2 p-4 transition-opacity ${active ? `border-l-2 ${stripe}` : "opacity-55"}`}
+              onClick={() => {
+                setPlaying(false);
+                setCurrent(i);
+              }}
+            >
+              <div className="row between">
+                <strong>
+                  {i + 1}. {s.label}
+                </strong>
+                <span className="mono faint">
+                  {nodes[s.edge[0]]} → {nodes[s.edge[1]]}
+                </span>
+              </div>
+              <p className="faint">{s.detail}</p>
+            </Card>
+          );
+        })}
       </div>
       <p className="faint" aria-live="polite">
         {step ? `Step ${current + 1}: ${step.label}` : ""}

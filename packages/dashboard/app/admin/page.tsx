@@ -1,4 +1,5 @@
 import type { ReactNode } from "react";
+import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
 import { Table } from "../components/Table";
 import { PageHeader } from "../components/PageHeader";
 import { AutoRefresh } from "./AutoRefresh";
@@ -58,61 +59,53 @@ export default async function AdminPage() {
 function Unavailable({ result }: { result: Exclude<AdminResult, { state: "ok" }> }) {
   return (
     <section>
-      <div className="card">
-        {result.state === "not-configured" && (
-          <>
-            <p className="error">ADMIN_TOKEN is not set for this dashboard.</p>
-            <p className="muted">
+      <Alert variant="destructive">
+        <AlertTitle>
+          {result.state === "not-configured" && "ADMIN_TOKEN is not set for this dashboard."}
+          {result.state === "unauthorized" && "The service rejected this dashboard's ADMIN_TOKEN."}
+          {result.state === "not-implemented" && "This service has no admin metrics endpoint."}
+          {result.state === "bad-status" && `The service answered ${result.status}.`}
+          {result.state === "malformed" && "The metrics response was not the expected shape."}
+          {result.state === "unreachable" && "Endpoint unreachable."}
+        </AlertTitle>
+        <AlertDescription>
+          {result.state === "not-configured" && (
+            <>
               Set <code>ADMIN_TOKEN</code> in the dashboard&apos;s environment to the same value the service was started
               with, then restart the dashboard. The token is read server-side only and is never sent to the browser.
-            </p>
-          </>
-        )}
-        {result.state === "unauthorized" && (
-          <>
-            <p className="error">The service rejected this dashboard&apos;s ADMIN_TOKEN.</p>
-            <p className="muted">
+            </>
+          )}
+          {result.state === "unauthorized" && (
+            <>
               <code>{adminMetricsUrl()}</code> answered 401/403. The dashboard&apos;s <code>ADMIN_TOKEN</code> and the
               service&apos;s do not match.
-            </p>
-          </>
-        )}
-        {result.state === "not-implemented" && (
-          <>
-            <p className="error">This service has no admin metrics endpoint.</p>
-            <p className="muted">
+            </>
+          )}
+          {result.state === "not-implemented" && (
+            <>
               <code>{result.url}</code> answered 404. The service is up but <code>GET /v1/admin/metrics</code> is not
               deployed on it yet, so there is nothing to show.
-            </p>
-          </>
-        )}
-        {result.state === "bad-status" && (
-          <>
-            <p className="error">The service answered {result.status}.</p>
-            <p className="muted">
+            </>
+          )}
+          {result.state === "bad-status" && (
+            <>
               <code>{result.url}</code> returned an unexpected status. Check the service logs.
-            </p>
-          </>
-        )}
-        {result.state === "malformed" && (
-          <>
-            <p className="error">The metrics response was not the expected shape.</p>
-            <p className="muted">
-              <code>{result.url}</code> answered, but the body is not the spec §13.1 metrics object. The dashboard and the
-              service are out of sync.
-            </p>
-          </>
-        )}
-        {result.state === "unreachable" && (
-          <>
-            <p className="error">Endpoint unreachable.</p>
-            <p className="muted">
+            </>
+          )}
+          {result.state === "malformed" && (
+            <>
+              <code>{result.url}</code> answered, but the body is not the spec §13.1 metrics object. The dashboard and
+              the service are out of sync.
+            </>
+          )}
+          {result.state === "unreachable" && (
+            <>
               Could not reach <code>{result.url}</code>: {result.detail}. Check that the service is running and that{" "}
               <code>SERVICE_URL</code> points at it.
-            </p>
-          </>
-        )}
-      </div>
+            </>
+          )}
+        </AlertDescription>
+      </Alert>
     </section>
   );
 }

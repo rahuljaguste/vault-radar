@@ -254,6 +254,6 @@ Honest scope notes, so nothing here is read as more than it is:
 
 ## License
 
-MIT. See [LICENSE](LICENSE).
+MIT.
 
 Built with Claude Code: https://claude.ai/code/session_01GP7VEZFF8kYLm28Syzbar8
