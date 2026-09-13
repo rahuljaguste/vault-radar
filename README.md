@@ -14,7 +14,6 @@ Built for ETHOnline 2026. Partner tracks targeted below.
 
 Live service: <https://vaultradar-service-production.up.railway.app>
 Dashboard: <https://vaultradar-dashboard-production.up.railway.app>
-Video: `<<FILL: 2-4 minute demo video URL>>`
 
 ## How this was built (AI attribution)
 
@@ -28,7 +27,7 @@ the deployment and key-management decisions, and the interactive steps that need
 
 Every artifact of that process ships in the repository, as the rules require:
 [`docs/ai-workflow/`](docs/ai-workflow/README.md) holds the prompts in sequence, the decision ledger, the per-task
-briefs and reports, and the three review reports, alongside the
+briefs and reports, and the review reports, alongside the
 [spec](docs/superpowers/specs/2026-09-05-vaultradar-design.md) and
 [plan](docs/superpowers/plans/2026-09-09-vaultradar.md). Start with the ledger: it records
 every ruling made when the plan met reality, with the reasoning and what each would cost if
@@ -98,7 +97,7 @@ A risk verdict is only as good as the block it was computed from, so freshness i
 | Source kind | Reference block | Fresh within |
 |---|---|---|
 | Messari subgraph | `_meta.block` | 60 minutes of chain head |
-| Substreams sink | the sink's cursor block | 20 minutes of chain head (the sink indexes finalized blocks, so it trails the head by Ethereum's finality lag) |
+| Substreams sink | the sink's cursor block | 30 minutes of chain head (the sink indexes finalized blocks, so it trails the head by Ethereum's finality lag) |
 
 Anything past the threshold is `stale`. A failed query, or `_meta.hasIndexingErrors`, is `unavailable`. Chain head comes from a per-chain JSON-RPC provider, cached 15 seconds. If that RPC call fails, every source on that chain is marked stale rather than assumed current.
 
@@ -139,7 +138,7 @@ ERC-8004 agent ids: Hedera chain 296 `112` (registration tx `0x0f23d2a0c2c3a820e
 
 ### Prerequisites
 
-- Bun 1.3 or newer, and Node 22 for the diagram renderer.
+- Bun 1.3 or newer.
 - A Subgraph Studio API key.
 - Two Hedera testnet ECDSA accounts, one for the service `payTo` and one for the agent. Both must associate HTS USDC `0.0.429274`. Fund the agent account with testnet USDC from Circle's faucet and with HBAR for its own signature.
 - A Circle developer account, Arc testnet USDC deposited to Gateway for the agent, and separate native Arc testnet USDC for ERC-8004 registration gas.
@@ -248,12 +247,11 @@ Honest scope notes, so nothing here is read as more than it is:
 - **Falcon signatures are not implemented.** Signatures are ML-DSA-65 only. Falcon was considered as a smaller-signature option and dropped.
 - **The upstream x402 payment to The Graph gateway was cut.** Standardized queries use a Studio API key. The service does not pay the gateway per query.
 - **Both rails have settled real payments.** Hedera: 0.0015 USDC for one sealed scan, verified on chain. Arc: 0.003 USDC through Circle Gateway's batcher, receipt verified, sealed reply opened. The service is registered on both chains (HCS topic `0.0.10483981`; ERC-8004 agent ids `112` on Hedera and `894342` on Arc), the agent's own discovery resolves both anchors, `/v1/receipts/:hash` returns the HCS sequence for a committed receipt, and the Substreams sink is indexing into the same Postgres the service reads.
-- **What is still missing.** The video, and the published package URL on substreams.dev (`substreams registry publish`, which needs an interactive GitHub login). The identity rule applies to every purchase: a card with no ERC-8004 identity, or an identity whose registry read fails, is refused by both the agent and the dashboard before they pay.
+- **What is still missing.** The published package is up. What remains is the demo video, which is recorded and cut but not yet hosted; its link will be added here when it is.
+- **The identity rule applies to every purchase.** A card with no ERC-8004 identity, or an identity whose registry read fails, is refused by both the agent and the dashboard before they pay — the pin in the section above is what makes that a check on a *specific* service rather than on any service.
 
 - **KEM key rotation and forward secrecy are out of scope.** So are on-chain PQ payment signatures and zero-knowledge proofs of the risk computation.
 
 ## License
 
 MIT.
-
-Built with Claude Code: https://claude.ai/code/session_01GP7VEZFF8kYLm28Syzbar8
