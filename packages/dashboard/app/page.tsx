@@ -191,7 +191,7 @@ function CardSummary({ card }: { card: AgentCard }) {
 
       <dt>Docs</dt>
       <dd>
-        <Link href="/docs">the documentation</Link> <span className="faint">— spec, plan, verification log</span>
+        <Link href="/docs">the documentation</Link> <span className="faint">(spec, plan, verification log)</span>
       </dd>
 
       {/* Two audiences, and this row was conflating them. The card's `docs` field is the
@@ -199,7 +199,7 @@ function CardSummary({ card }: { card: AgentCard }) {
          , so the human link goes to the documentation site without dropping it. */}
       <dt>Agent guide</dt>
       <dd>
-        <a href={card.docs}>skill.md</a> <span className="faint">— the file a buying agent reads, served by the service</span>
+        <a href={card.docs}>skill.md</a> <span className="faint">(the file a buying agent reads, served by the service)</span>
       </dd>
     </dl>
   );
