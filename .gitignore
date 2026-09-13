@@ -20,3 +20,8 @@ substreams/**/target/
 packages/dashboard/.next/
 deck
 render-deck.mjs
+
+# The demo video: frames and clips are rebuilt by scripts/video/capture.mjs, and the
+# voice is recorded by hand. Only the scripts belong in the repository.
+scripts/video/out/
+scripts/video/voice/
