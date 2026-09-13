@@ -42,7 +42,11 @@ export default function RootLayout({ children }: { children: ReactNode }) {
               aria-label="VaultRadar home"
             >
               <BrandMark />
-              Vault<span className="text-brand">Radar</span>
+              {/* One flex item, so the layout's `gap-2` (mark ↔ wordmark) cannot also
+                  open a space between "Vault" and "Radar". */}
+              <span>
+                Vault<span className="text-brand">Radar</span>
+              </span>
             </Link>
             <NavLinks />
           </div>
