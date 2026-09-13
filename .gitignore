@@ -21,7 +21,6 @@ packages/dashboard/.next/
 deck
 render-deck.mjs
 
-# The demo video: frames and clips are rebuilt by scripts/video/capture.mjs, and the
-# voice is recorded by hand. Only the scripts belong in the repository.
-scripts/video/out/
-scripts/video/voice/
+# The demo-video pipeline. A local production tool for making the submission video, not
+# part of the project the repository is about, so it is not carried here.
+scripts/video/
