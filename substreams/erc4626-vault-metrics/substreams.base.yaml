@@ -2,7 +2,7 @@ specVersion: v0.1.0
 package:
   name: erc4626_vault_metrics
   version: v0.1.0
-  url: https://github.com/rahuljaguste/vaultradar
+  url: https://github.com/rahuljaguste/vault-radar
   doc: ERC-4626 vault share price, flows and depositor metrics composed from the Pinax erc4626 events package.
 imports:
   # Pinned to commit 970a665 rather than `main`, so this manifest compiles against one fixed
