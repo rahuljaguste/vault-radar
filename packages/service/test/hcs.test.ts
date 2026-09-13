@@ -43,7 +43,7 @@ test("enqueue submits once, retries on failure, lookup returns the sequence", as
 });
 
 test("enqueue is synchronous: it returns void immediately, so a caller never has to await it", () => {
-  const submit = () => new Promise<never>(() => {}); // never resolves — proves nothing here waits on it
+  const submit = () => new Promise<never>(() => {}); // never resolves, proves nothing here waits on it
   const q = new HcsQueue({ submit, topicId: "0.0.5", fetchImpl: emptyMirrorPage });
   const returned = q.enqueue(r);
   expect(returned).toBeUndefined();

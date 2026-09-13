@@ -49,7 +49,7 @@ test("recordSettlement no-ops (does not throw, does not count) on a malformed am
   expect(() => m.recordSettlement("hedera", "not-a-number")).not.toThrow();
   expect(() => m.recordSettlement("hedera", "12.5")).not.toThrow(); // decimal: hedera amounts are always atomic integers
   expect(() => m.recordSettlement("hedera", "-5")).not.toThrow(); // negative: never a valid atomic amount
-  expect(() => m.recordSettlement("arc", "0.003")).not.toThrow(); // a dollar-decimal string, NOT what req.payment.amount actually sends (see ATOMIC_AMOUNT_RE's comment in metrics.ts) — still must not throw
+  expect(() => m.recordSettlement("arc", "0.003")).not.toThrow(); // a dollar-decimal string, NOT what req.payment.amount actually sends (see ATOMIC_AMOUNT_RE's comment in metrics.ts), still must not throw
   expect(() => m.recordSettlement("arc", "")).not.toThrow();
 
   expect(m.settlements.hedera.count).toBe(0);

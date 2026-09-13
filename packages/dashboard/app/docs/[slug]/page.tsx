@@ -7,7 +7,7 @@ export function generateStaticParams() {
   return DOCS.map((d) => ({ slug: d.slug }));
 }
 
-export const metadata = { title: "VaultRadar — documentation" };
+export const metadata = { title: "VaultRadar: documentation" };
 
 /**
  * One document. Rendered on the server from the file in the repository, so the page cannot

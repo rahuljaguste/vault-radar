@@ -129,7 +129,7 @@ export default function VerifyPage() {
       return;
     }
     if (!receipt || typeof receipt !== "object" || !receipt.sig || !receipt.sig.value) {
-      setResult({ status: "error", message: "That doesn't look like a receipt — missing sig.value." });
+      setResult({ status: "error", message: "That doesn't look like a receipt, missing sig.value." });
       return;
     }
 
@@ -241,7 +241,7 @@ export default function VerifyPage() {
 
       {/* What the check actually establishes is the substance of this page, but as one
           hundred-and-seventy-word paragraph above the box it was the only thing a visitor
-          saw — and none of it answers "what do I do here". It belongs after the action, as
+          saw, and none of it answers "what do I do here". It belongs after the action, as
           the five claims it is. */}
       <section>
         <details>
@@ -253,7 +253,7 @@ export default function VerifyPage() {
             </li>
             <li>
               <strong>The key.</strong> That key&rsquo;s hash is compared against the value pinned on the ERC-8004 registry,
-              for every identity the receipt names. A receipt that names none cannot be verified, only read — and if this
+              for every identity the receipt names. A receipt that names none cannot be verified, only read, and if this
               dashboard has an expected identity configured, that identity has to be among the ones it names.
             </li>
             <li>
@@ -332,7 +332,7 @@ function Verdict({ result }: { result: Done }) {
           {result.pins.length === 0 ? (
             <span className="warn">
               none configured, so the checks above establish that the service is internally consistent and that its key
-              is registered under <em>an</em> agent id — not that the id belongs to the service you meant to reach
+              is registered under <em>an</em> agent id, not that the id belongs to the service you meant to reach
             </span>
           ) : result.pinMatched ? (
             <span className="ok">
@@ -347,7 +347,7 @@ function Verdict({ result }: { result: Done }) {
       </dl>
       {result.anchors.some((a) => a.state === "unavailable") && (
         <p className="muted">
-          &ldquo;unavailable&rdquo; means the registry could not be read, or holds no hash for that agent — not that the
+          &ldquo;unavailable&rdquo; means the registry could not be read, or holds no hash for that agent, not that the
           key is wrong. Nothing is claimed either way, which is why the verdict above is unproven rather than a refusal.
         </p>
       )}

@@ -68,7 +68,7 @@ export function loadPolicy(path: string): Policy {
   const parsed = PolicySchema.safeParse(raw);
   if (!parsed.success) {
     const issues = parsed.error.issues.map(i => `${i.path.join(".") || "(root)"}: ${i.message}`).join("; ");
-    throw new Error(`policy at ${path} is invalid — ${issues}`);
+    throw new Error(`policy at ${path} is invalid, ${issues}`);
   }
   return parsed.data;
 }

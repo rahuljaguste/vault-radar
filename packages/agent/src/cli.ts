@@ -182,7 +182,7 @@ function printAssistant(message: { content?: unknown }): void {
 
 async function chatCommand(flags: Flags, env: NodeJS.ProcessEnv): Promise<void> {
   if (!env.ANTHROPIC_API_KEY?.trim()) {
-    die("chat needs ANTHROPIC_API_KEY (watch does not — it is deterministic and uses no model)");
+    die("chat needs ANTHROPIC_API_KEY (watch does not, it is deterministic and uses no model)");
   }
   // Imported lazily so `watch` never loads the agent SDK.
   const { query } = await import("@anthropic-ai/claude-agent-sdk");
@@ -234,7 +234,7 @@ async function chatCommand(flags: Flags, env: NodeJS.ProcessEnv): Promise<void> 
         return true;
       }
       default:
-        console.log(`unknown command ${line} — try /help`);
+        console.log(`unknown command ${line}, try /help`);
         return true;
     }
   };

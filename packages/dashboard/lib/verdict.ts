@@ -43,11 +43,11 @@ export const VERDICT_WORDS: Record<Verdict, string> = {
  * cannot be read as "this vault is safe".
  */
 export const VERDICT_MEANING: Record<Verdict, string> = {
-  ok: "Score 0–19: nothing this engine watches for crossed a threshold — no sharp price drop over an hour, a day or a week, no heavy outflow, no deposit limit reached. It means nothing was flagged, not that the vault is safe.",
-  watch: "Score 20–49: at least one threshold was crossed, so the vault is worth a look. The agent still holds; it is not an instruction to exit.",
+  ok: "Score 0-19: nothing this engine watches for crossed a threshold, no sharp price drop over an hour, a day or a week, no heavy outflow, no deposit limit reached. It means nothing was flagged, not that the vault is safe.",
+  watch: "Score 20-49: at least one threshold was crossed, so the vault is worth a look. The agent still holds; it is not an instruction to exit.",
   alert: "Score 50 or more: several thresholds were crossed at once, or one severe one. The agent's policy withdraws on this.",
   unavailable:
-    "No verdict was computed: the data source was stale, or the share price could not be read. This is a refusal to answer, not a low score — nothing about the vault was assessed.",
+    "No verdict was computed: the data source was stale, or the share price could not be read. This is a refusal to answer, not a low score, nothing about the vault was assessed.",
 };
 
 /**

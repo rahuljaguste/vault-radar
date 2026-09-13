@@ -8,7 +8,7 @@ import { compactFlag, formatFlag } from "@/lib/flags";
 import { explorerTxUrl } from "@/lib/explorer";
 import { VERDICT_MEANING } from "@/lib/verdict";
 
-export const metadata = { title: "VaultRadar — vault ranking" };
+export const metadata = { title: "VaultRadar: vault ranking" };
 
 /** Sparkline tones, which say `absent` where the verdict vocabulary says `unavailable`. */
 const toneOf = (v: Verdict) => (v === "unavailable" ? "absent" : v);
@@ -104,7 +104,7 @@ export default async function UniversePage({ searchParams }: { searchParams: Pro
       </section>
 
       {/* The four words are this project's own, and `ok` at score 0 against `no data` at score 0
-          was the single most confusing thing on the page — they are opposite findings that
+          was the single most confusing thing on the page, they are opposite findings that
           printed identically. So the definitions are on the page, not only in a tooltip. */}
       <section className="stack tight">
         <h3>What the verdicts mean</h3>
@@ -221,7 +221,7 @@ export default async function UniversePage({ searchParams }: { searchParams: Pro
                       <>
                         <dt>Decision</dt>
                         <dd>
-                          <strong>{r.action}</strong> — {r.reason}
+                          <strong>{r.action}</strong>, {r.reason}
                         </dd>
                       </>
                     )}

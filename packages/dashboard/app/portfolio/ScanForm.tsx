@@ -120,7 +120,7 @@ export function ScanForm({ keysConfigured, demoRunId }: { keysConfigured: boolea
 
         {/* What the buttons do comes before the buttons. It used to sit underneath them, so a
             visitor met "Scan now" with no statement of what it costs or who pays until after
-            they had read past it — and when the keys are missing, the reason both buttons are
+            they had read past it, and when the keys are missing, the reason both buttons are
             disabled arrived last instead of first. */}
         {keysConfigured ? (
           <p className="muted text-sm">

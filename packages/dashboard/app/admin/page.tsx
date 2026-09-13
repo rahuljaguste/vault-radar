@@ -18,7 +18,7 @@ import {
 // Live operator counters: never prerendered, never cached.
 export const dynamic = "force-dynamic";
 
-export const metadata = { title: "VaultRadar — service metrics" };
+export const metadata = { title: "VaultRadar: service metrics" };
 
 export default async function AdminPage() {
   const result = await fetchAdminMetrics();

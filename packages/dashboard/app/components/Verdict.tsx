@@ -65,7 +65,7 @@ export function ScoreBar({ score, verdict }: { score: number; verdict?: Verdict 
   }
   const pct = Math.max(0, Math.min(100, score));
   return (
-    <span className={`score ${tone}`} title={`${score} / 100 — ${VERDICT_MEANING[tone]}`}>
+    <span className={`score ${tone}`} title={`${score} / 100, ${VERDICT_MEANING[tone]}`}>
       <span className="track">
         <span className="fill" style={{ width: `${pct}%` }} />
       </span>

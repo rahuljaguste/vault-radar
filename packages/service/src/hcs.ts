@@ -311,14 +311,14 @@ export async function mirrorLookup(topicId: string, hash: string, fetchImpl: Fet
         }
         text = fromUtf8(combined);
       } catch {
-        continue; // not valid base64 — not one of our messages
+        continue; // not valid base64, not one of our messages
       }
 
       let parsed: { receipt_hash?: string } | null;
       try {
         parsed = JSON.parse(text);
       } catch {
-        continue; // not JSON — not one of our messages
+        continue; // not JSON, not one of our messages
       }
       if (parsed?.receipt_hash !== hash) continue;
 

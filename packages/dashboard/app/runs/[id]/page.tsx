@@ -246,7 +246,7 @@ function RequestSection({ req, lookup }: { req: RequestRecord; lookup: ReceiptLo
                   {lookup.consensus_timestamp && <> · {new Date(Number(lookup.consensus_timestamp.split(".")[0]) * 1000).toISOString()}</>}
                 </span>
               ) : (
-                <span className="warn">pending — the commitment is asynchronous</span>
+                <span className="warn">pending, the commitment is asynchronous</span>
               )
             ) : (
               <span className="error">could not fetch /v1/receipts/{req.receiptHash.slice(0, 12)}…</span>

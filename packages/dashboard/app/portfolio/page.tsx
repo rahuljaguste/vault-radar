@@ -6,7 +6,7 @@ import { microToUsd, scanSpendLedger } from "@/lib/spend";
 // Reads the runs directory and the agent-key environment on every request.
 export const dynamic = "force-dynamic";
 
-export const metadata = { title: "VaultRadar — scan your portfolio" };
+export const metadata = { title: "VaultRadar: scan your portfolio" };
 
 /**
  * Are paid scans possible at all? Only the boolean crosses into the client
@@ -38,7 +38,7 @@ export default async function PortfolioPage() {
             Paste the vaults you hold. The dashboard buys a risk scan over x402, verifies the ML-DSA-65 receipt and every
             per-vault attestation, and shows one action per vault with the evidence behind it. The payer is the
             operator&apos;s funded agent account, not a wallet in your browser, and requests are sealed before they leave
-            this server — so no intermediary on the path learns which vaults you asked about.
+            this server, so no intermediary on the path learns which vaults you asked about.
           </>
         }
       />

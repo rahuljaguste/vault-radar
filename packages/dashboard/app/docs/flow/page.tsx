@@ -2,7 +2,7 @@ import Link from "next/link";
 import { Button } from "@/components/ui/button";
 import { PaymentFlow, type Step } from "@/app/components/PaymentFlow";
 
-export const metadata = { title: "VaultRadar — how a request flows" };
+export const metadata = { title: "VaultRadar: how a request flows" };
 
 const NODES = ["buyer", "service", "facilitator", "chain", "HCS"];
 
@@ -90,7 +90,7 @@ export default function FlowPage() {
         <h3>What is private, and from whom</h3>
         <p className="muted">
           The buyer&rsquo;s vault list is sealed to the service&rsquo;s hybrid KEM key before it leaves, so no
-          intermediary on the path learns which vaults were asked about. The service decrypts it — unless the policy
+          intermediary on the path learns which vaults were asked about. The service decrypts it, unless the policy
           chose the <code>table</code> tier, which buys every vault of one protocol and filters locally, so the vendor
           never learns which one mattered either.
         </p>

@@ -34,7 +34,7 @@ async function main() {
   app.listen(config.port, () => {
     const enabledRails = Object.entries(rails).filter(([, on]) => on).map(([name]) => name);
     console.log(
-      `VaultRadar service listening on :${config.port} (${config.publicUrl}) — ` +
+      `VaultRadar service listening on :${config.port} (${config.publicUrl}), ` +
       `rails: ${enabledRails.length ? enabledRails.join(",") : "none"}; hcs: ${hcs ? "enabled" : "disabled"}`,
     );
   });

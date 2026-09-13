@@ -254,19 +254,19 @@ function railSummary(p: Policy, quotes: Quotes, balances: Amounts, health: RailH
  * be paid on); a single contradicted anchor refuses regardless of how many others passed.
  */
 export function identityRefusal(disc: Discovery, pins: IdentityPin[] = []): string | null {
-  if (!disc.cardSignatureValid) return "the service's agent card signature did not verify — refusing to pay";
+  if (!disc.cardSignatureValid) return "the service's agent card signature did not verify, refusing to pay";
   if (!disc.keyBindingValid) {
-    return "the service's agent card claims a key hash that is not the hash of the key it published — refusing to pay";
+    return "the service's agent card claims a key hash that is not the hash of the key it published, refusing to pay";
   }
   const mismatch = disc.onChain.find(e => e.matches === false);
   if (mismatch) {
-    return `the service's key hash does not match its on-chain ERC-8004 registration (chain ${mismatch.chainId}, agent ${mismatch.agentId}) — refusing to pay`;
+    return `the service's key hash does not match its on-chain ERC-8004 registration (chain ${mismatch.chainId}, agent ${mismatch.agentId}), refusing to pay`;
   }
   if (disc.onChain.length === 0) {
-    return "the service's agent card lists no on-chain ERC-8004 identity, so nothing anchors its key — refusing to pay";
+    return "the service's agent card lists no on-chain ERC-8004 identity, so nothing anchors its key, refusing to pay";
   }
   if (!disc.onChain.some(e => e.matches === true)) {
-    return "the on-chain ERC-8004 registration could not be read for any identity the card lists, so the key is unverified — refusing to pay";
+    return "the on-chain ERC-8004 registration could not be read for any identity the card lists, so the key is unverified, refusing to pay";
   }
   // The anchor proves the key is registered under *an* agent id, not that the id belongs to
   // the service meant to be called — the registry is permissionless, so an impostor can
@@ -274,7 +274,7 @@ export function identityRefusal(disc: Discovery, pins: IdentityPin[] = []): stri
   // that expectation is enforced.
   if (!matchesIdentityPin(disc.card.erc8004, pins)) {
     const claimed = disc.card.erc8004.map(i => `${i.chainId}:${i.agentId}`).join(", ") || "none";
-    return `the service's ERC-8004 identity (${claimed}) is not any identity this policy expects (${formatPins(pins)}) — refusing to pay`;
+    return `the service's ERC-8004 identity (${claimed}) is not any identity this policy expects (${formatPins(pins)}), refusing to pay`;
   }
   return null;
 }
@@ -360,7 +360,7 @@ export async function executePurchase(plan: PurchasePlan, serviceUrl: string, de
   const forced = deps.rail ?? null;
   const choice = chooseRail(forced ? { ...policy, rail_preference: forced } : policy, quotes, balances, health);
   if (choice.rail == null) {
-    return { ok: false, ctx, reason: `no usable rail — ${railSummary(policy, quotes, balances, health)}`, purchases: [], decisions: [] };
+    return { ok: false, ctx, reason: `no usable rail, ${railSummary(policy, quotes, balances, health)}`, purchases: [], decisions: [] };
   }
   if (forced && choice.rail !== forced) {
     // An operator or model that named a rail gets told it is unusable rather than
@@ -368,7 +368,7 @@ export async function executePurchase(plan: PurchasePlan, serviceUrl: string, de
     return {
       ok: false,
       ctx,
-      reason: `requested rail ${forced} is unusable — ${railSummary(policy, quotes, balances, health)}`,
+      reason: `requested rail ${forced} is unusable, ${railSummary(policy, quotes, balances, health)}`,
       purchases: [],
       decisions: [],
     };
@@ -421,8 +421,8 @@ export async function executePurchase(plan: PurchasePlan, serviceUrl: string, de
         ctx,
         reason:
           purchases.length === 1
-            ? `verification failed (${failed}) — the purchase is recorded but no action was taken on it`
-            : `verification failed (${failed}) on payment ${purchases.length} of ${purchases.length} — all ${purchases.length} purchases are recorded, but nothing was derived from the failed one${carried}`,
+            ? `verification failed (${failed}), the purchase is recorded but no action was taken on it`
+            : `verification failed (${failed}) on payment ${purchases.length} of ${purchases.length}, all ${purchases.length} purchases are recorded, but nothing was derived from the failed one${carried}`,
         purchases,
         decisions,
       };

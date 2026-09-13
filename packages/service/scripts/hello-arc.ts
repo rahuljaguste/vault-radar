@@ -44,7 +44,7 @@ const card = await (await fetch(`${base}/.well-known/agent.json`)).json();
 // and the card came from the same place, not that either is VaultRadar.
 const sigPk = fromB64(card.pq.sig.public_key);
 if (!checkSig(card, sigPk)) {
-  console.error("agent card signature did not verify — refusing to pay this service");
+  console.error("agent card signature did not verify, refusing to pay this service");
   process.exit(1);
 }
 

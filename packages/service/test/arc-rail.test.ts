@@ -494,7 +494,7 @@ test("a corrupted sealed envelope is rejected 422 envelope_open_failed before an
   }
 });
 
-test("a sealed request's nonce, once committed by a successful paid round trip, is rejected as a replay on resubmission — with no further facilitator calls", async () => {
+test("a sealed request's nonce, once committed by a successful paid round trip, is rejected as a replay on resubmission, with no further facilitator calls", async () => {
   const fac = fakeFacilitator({
     verify: { isValid: true, payer: "0xtestpayer" },
     settle: { success: true, transaction: "0xfirsttx", payer: "0xtestpayer" },

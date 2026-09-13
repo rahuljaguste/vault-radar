@@ -19,7 +19,7 @@ test("kem keys are deterministic from seed", () => {
   expect(Buffer.from(a.publicKey).equals(Buffer.from(b.publicKey))).toBe(true);
   expect(a.kid).toBe(b.kid);
 });
-test("KEM seed derivation feeds the domain label as HKDF info, not salt — regression pin", () => {
+test("KEM seed derivation feeds the domain label as HKDF info, not salt, regression pin", () => {
   // Guards the argument order of hkdf(hash, ikm, salt, info, length) inside deriveKemKeys.
   // If salt and info are ever swapped again, this pinned prefix changes and the test fails.
   const k = deriveKemKeys("22".repeat(64));

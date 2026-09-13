@@ -275,7 +275,7 @@ export function vaultradarTools(ctx: AgentContext, log: RunLog = new RunLog(ctx)
           .array(z.string().regex(VAULT_ID_RE, "must be <chainId>:<0x address>"))
           .max(100)
           .optional()
-          .describe("The vault ids themselves, if known — needed to price a strict-tier (table) purchase correctly"),
+          .describe("The vault ids themselves, if known, needed to price a strict-tier (table) purchase correctly"),
       },
       async ({ count, vaults }) => {
         const tier = chooseTier(ctx.policy);

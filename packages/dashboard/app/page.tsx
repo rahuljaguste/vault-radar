@@ -72,7 +72,7 @@ export default async function HomePage() {
           </CardDescription>
         </CardHeader>
         <CardContent>
-          {card ? <CardSummary card={card} /> : <p className="error">Service unreachable — could not load /.well-known/agent.json.</p>}
+          {card ? <CardSummary card={card} /> : <p className="error">Service unreachable, could not load /.well-known/agent.json.</p>}
         </CardContent>
       </Card>
 
@@ -104,7 +104,7 @@ export default async function HomePage() {
               empty="No protocols in the catalog."
             />
           ) : (
-            <p className="error">Service unreachable — could not load /v1/catalog.</p>
+            <p className="error">Service unreachable, could not load /v1/catalog.</p>
           )}
         </CardContent>
       </Card>
@@ -148,7 +148,7 @@ function CardSummary({ card }: { card: AgentCard }) {
       <dt>ERC-8004</dt>
       <dd>
         {card.erc8004.length === 0 ? (
-          <span className="error">none registered — every paid request will be refused</span>
+          <span className="error">none registered, every paid request will be refused</span>
         ) : (
           card.erc8004.map((e) => {
             const url = erc8004ExplorerUrl(e.chainId);
@@ -196,7 +196,7 @@ function CardSummary({ card }: { card: AgentCard }) {
 
       {/* Two audiences, and this row was conflating them. The card's `docs` field is the
           machine-facing guide a buying agent reads, and it is the only pointer to that file
-          — so the human link goes to the documentation site without dropping it. */}
+         , so the human link goes to the documentation site without dropping it. */}
       <dt>Agent guide</dt>
       <dd>
         <a href={card.docs}>skill.md</a> <span className="faint">— the file a buying agent reads, served by the service</span>
