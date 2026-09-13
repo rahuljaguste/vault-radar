@@ -18,8 +18,12 @@ keys/
 /runs/
 substreams/**/target/
 packages/dashboard/.next/
+# The pitch deck and the two scripts that render from it. The deck is a local production
+# artefact, so its renderers are local tools as well — the PNGs they produce are committed,
+# and those are what the repository actually distributes.
 deck
 render-deck.mjs
+render-diagrams.mjs
 
 # The demo-video pipeline. A local production tool for making the submission video, not
 # part of the project the repository is about, so it is not carried here.
