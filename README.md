@@ -14,7 +14,7 @@ Built for ETHOnline 2026. Partner tracks targeted below.
 
 Live service: <https://vaultradar-service-production.up.railway.app>
 Dashboard: <https://vaultradar-dashboard-production.up.railway.app>
-Demo video: [vaultradar-demo.mp4](vaultradar-demo.mp4) — 3 minutes 28. It walks one paid request end to end: the ranking from a real hundred-vault purchase, the run it produced, a receipt verified in the browser against both chains, and the x402 round trip step by step.
+Demo video: [vaultradar-demo.mp4](https://github.com/rahuljaguste/vault-radar/blob/main/vaultradar-demo.mp4) — 3 minutes 28, in this repository. It walks one paid request end to end: the ranking from a real hundred-vault purchase, the run it produced, a receipt verified in the browser against both chains, and the x402 round trip step by step.
 
 ## How this was built (AI attribution)
 
